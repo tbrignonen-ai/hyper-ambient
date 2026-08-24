@@ -1,0 +1,274 @@
+"""
+BRAIN: OpenAI-compatible chat backend.
+
+One client, two deployments:
+  - remote  : StepFun, OpenAI, Mistral, xAI, ... (any /v1/chat/completions)
+  - local   : llama.cpp `llama-server` (same protocol, same SSE framing)
+
+This is the whole point of the abstraction — swapping BRAIN between a distant
+service and a local GGUF is a config change, not a code change.
+
+Streaming yields deltas as they arrive and reports time-to-first-token (TTFT),
+which is the number that actually feeds the NFR-01 latency budget.
+"""
+import json
+import logging
+import os
+import time
+from typing import Any, AsyncIterator, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+# Single source of truth: MOUTH owns what "speakable" means, BRAIN just asks
+# for it. Stripping markup downstream is the safety net, not the plan.
+from src.mouth.normalize import VOICE_SYSTEM_PROMPT as DEFAULT_SYSTEM  # noqa: E402
+
+
+class OpenAICompatBrain:
+    """Chat backend speaking the OpenAI /v1/chat/completions protocol."""
+
+    name = "openai-compat"
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        api_endpoint: Optional[str] = None,
+        model: Optional[str] = None,
+        timeout_ms: int = 30000,
+        max_tokens: int = 1024,
+    ):
+        self.api_key = api_key or os.getenv("BRAIN_API_KEY", "")
+        self.api_endpoint = api_endpoint or os.getenv(
+            "BRAIN_API_ENDPOINT", "http://localhost:8080/v1/chat/completions"
+        )
+        self.model = model or os.getenv("BRAIN_MODEL", "default")
+        self.timeout_ms = timeout_ms
+        self.max_tokens = max_tokens
+        self.client = None
+        logger.info(f"{self.name} brain configured: {self.model} @ {self.api_endpoint}")
+
+    # -- lifecycle ---------------------------------------------------------
+
+    async def initialize(self):
+        """Create the HTTP client. Without it the backend stays in stub mode."""
+        try:
+            import httpx
+
+            self.client = httpx.AsyncClient(timeout=self.timeout_ms / 1000.0)
+            logger.info(f"{self.name} client ready ({self.api_endpoint})")
+        except ImportError:
+            logger.warning("httpx not available, staying in stub mode")
+            self.client = None
+
+    async def close(self):
+        if self.client:
+            await self.client.aclose()
+            self.client = None
+        logger.info(f"{self.name} client closed")
+
+    async def health(self) -> Dict[str, Any]:
+        """Cheap reachability probe. Returns {ok, detail, latency_ms}."""
+        if self.client is None:
+            return {"ok": False, "detail": "stub mode (not initialized)", "latency_ms": 0}
+        start = time.perf_counter()
+        try:
+            base = self.api_endpoint.split("/chat/completions")[0]
+            r = await self.client.get(f"{base}/models", headers=self._headers())
+            return {
+                "ok": r.status_code == 200,
+                "detail": f"HTTP {r.status_code}",
+                "latency_ms": (time.perf_counter() - start) * 1000,
+            }
+        except Exception as e:
+            return {
+                "ok": False,
+                "detail": str(e),
+                "latency_ms": (time.perf_counter() - start) * 1000,
+            }
+
+    # -- internals ---------------------------------------------------------
+
+    def _headers(self) -> Dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
+    def _payload(
+        self,
+        prompt: str,
+        system: Optional[str],
+        temperature: float,
+        stream: bool,
+        history: Optional[List[Dict[str, str]]],
+    ) -> Dict[str, Any]:
+        messages = [{"role": "system", "content": system or DEFAULT_SYSTEM}]
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": prompt})
+        return {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": self.max_tokens,
+            "stream": stream,
+        }
+
+    # -- inference ---------------------------------------------------------
+
+    async def query(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        temperature: float = 0.7,
+        history: Optional[List[Dict[str, str]]] = None,
+    ) -> Dict[str, Any]:
+        """Non-streaming completion. Use only for tests and batch work."""
+        if self.client is None:
+            return {
+                "response": "[stub response]",
+                "stop_reason": "stub",
+                "tokens_used": 0,
+                "latency_ms": 0,
+            }
+
+        start = time.perf_counter()
+        try:
+            response = await self.client.post(
+                self.api_endpoint,
+                json=self._payload(prompt, system, temperature, False, history),
+                headers=self._headers(),
+            )
+            latency_ms = (time.perf_counter() - start) * 1000
+            result = response.json()
+
+            if response.status_code != 200:
+                logger.error(f"{self.name} error {response.status_code}: {result}")
+                return {
+                    "response": "",
+                    "stop_reason": "error",
+                    "tokens_used": 0,
+                    "latency_ms": latency_ms,
+                    "error": str(result),
+                }
+
+            choice = result.get("choices", [{}])[0]
+            return {
+                "response": choice.get("message", {}).get("content", ""),
+                "stop_reason": choice.get("finish_reason", "unknown"),
+                "tokens_used": result.get("usage", {}).get("completion_tokens", 0),
+                "latency_ms": latency_ms,
+            }
+
+        except Exception as e:
+            logger.error(f"{self.name} query error: {e}")
+            return {
+                "response": "",
+                "stop_reason": "error",
+                "tokens_used": 0,
+                "latency_ms": (time.perf_counter() - start) * 1000,
+                "error": str(e),
+            }
+
+    async def query_streaming(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        temperature: float = 0.7,
+        history: Optional[List[Dict[str, str]]] = None,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        Stream deltas as they arrive.
+
+        Yields {"delta": str, "stop_reason": None|str, "ttft_ms": float|None}.
+        ttft_ms is set on the first delta only — that is the value MOUTH needs
+        to start synthesising before BRAIN has finished thinking.
+        """
+        if self.client is None:
+            yield {"delta": "[stub]", "stop_reason": "stub", "ttft_ms": 0}
+            return
+
+        start = time.perf_counter()
+        ttft_ms: Optional[float] = None
+        reasoning_deltas = 0
+
+        try:
+            async with self.client.stream(
+                "POST",
+                self.api_endpoint,
+                json=self._payload(prompt, system, temperature, True, history),
+                headers=self._headers(),
+            ) as response:
+                if response.status_code != 200:
+                    body = (await response.aread()).decode("utf-8", "replace")
+                    logger.error(f"{self.name} stream error {response.status_code}: {body}")
+                    yield {
+                        "delta": "",
+                        "stop_reason": "error",
+                        "ttft_ms": None,
+                        "error": f"HTTP {response.status_code}: {body[:200]}",
+                    }
+                    return
+
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+                    payload = line[6:].strip()
+                    if payload == "[DONE]":
+                        break
+
+                    try:
+                        chunk = json.loads(payload)
+                    except json.JSONDecodeError:
+                        logger.debug(f"skipped non-JSON SSE line: {payload[:60]}")
+                        continue
+
+                    choice = (chunk.get("choices") or [{}])[0]
+                    delta_obj = choice.get("delta", {})
+                    delta = delta_obj.get("content") or ""
+                    finish = choice.get("finish_reason")
+
+                    # Reasoning models stream chain-of-thought in a separate
+                    # field. It must never reach MOUTH — the user would hear
+                    # the model thinking out loud — but it must be counted, or
+                    # an all-reasoning response looks like silent success.
+                    if delta_obj.get("reasoning") or delta_obj.get("reasoning_content"):
+                        reasoning_deltas += 1
+                        continue
+
+                    if delta:
+                        if ttft_ms is None:
+                            ttft_ms = (time.perf_counter() - start) * 1000
+                            yield {"delta": delta, "stop_reason": None, "ttft_ms": ttft_ms}
+                        else:
+                            yield {"delta": delta, "stop_reason": None, "ttft_ms": None}
+                    if finish:
+                        if ttft_ms is None and reasoning_deltas:
+                            # Thinking consumed the whole budget: no answer.
+                            yield {
+                                "delta": "",
+                                "stop_reason": "error",
+                                "ttft_ms": None,
+                                "error": (
+                                    f"{reasoning_deltas} reasoning deltas, zero content "
+                                    f"(finish_reason={finish}). This backend is a reasoning "
+                                    f"model with no usable off switch — unfit for realtime voice."
+                                ),
+                            }
+                            return
+                        yield {"delta": "", "stop_reason": finish, "ttft_ms": None}
+
+        except Exception as e:
+            logger.error(f"{self.name} streaming error: {e}")
+            yield {"delta": "", "stop_reason": "error", "ttft_ms": None, "error": str(e)}
+
+
+class LlamaCppBrain(OpenAICompatBrain):
+    """Local BRAIN backed by llama.cpp `llama-server` (GGUF, CUDA)."""
+
+    name = "llama.cpp"
+
+    def __init__(self, host: str = "http://localhost:8080", model: str = "local", **kw):
+        kw.setdefault("api_endpoint", f"{host.rstrip('/')}/v1/chat/completions")
+        kw.setdefault("api_key", "")  # llama-server needs no key by default
+        super().__init__(model=model, **kw)

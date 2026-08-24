@@ -1,0 +1,24 @@
+# MOTHER — extras installed AFTER the base layer.
+# Kept in a separate file so requirements.txt / torch layers stay cache-hits.
+
+# --- Framework bump (base pins were too old for anyio>=4 / starlette>=1) ---
+fastapi>=0.115
+uvicorn[standard]>=0.32
+sse-starlette>=2.1
+httpx-sse>=0.4
+
+# --- EARS: ASR ---
+faster-whisper>=1.1        # CTranslate2 backend, int8_float16 on GPU
+av>=13                     # audio demux/decode
+
+# --- TURN: endpointing ---
+silero-vad>=5.1            # ONNX VAD, L1 fallback for endpoint detection
+
+# --- MOUTH: TTS ---
+piper-tts>=1.3             # ONNX neural TTS, streaming, French voices
+
+# --- Runtime for ONNX models (VAD + Piper) ---
+onnxruntime-gpu>=1.20
+
+# --- ACOUSTIC: descriptors ---
+pyloudnorm>=0.1            # EBU R128 loudness

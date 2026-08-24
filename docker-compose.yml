@@ -1,0 +1,48 @@
+version: '3.9'
+
+services:
+  mother-core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mother-core-dev
+    image: mother-core:latest
+    # Secrets come from .env.local (git-ignored). Mounted read-only as well so
+    # scripts that call load_dotenv() find it at the expected path.
+    env_file:
+      - .env.local
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+      - HF_HOME=/workspace/models/hf-cache
+      - LLAMA_CACHE=/workspace/models/gguf
+    # GPU reservation — without this torch.cuda.is_available() == False
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./src:/workspace/src
+      - ./dev:/workspace/dev
+      - ./models:/workspace/models
+      - ./data:/workspace/data
+      - ./logs:/workspace/logs
+      - ./.env.local:/workspace/.env.local:ro
+    ports:
+      - "8000:8000"  # MOTHER core API
+      - "8001:8001"  # WebSocket (host-agent transport)
+      - "8090:8080"  # llama-server (BRAIN local / OpenAI-compatible) — 8080 taken by SearXNG
+      - "8091:8081"  # whisper-server (EARS local)
+    shm_size: '2gb'
+    stdin_open: true
+    tty: true
+    working_dir: /workspace
+    command: /bin/bash
+
+# NOTE: no /dev/snd passthrough — Docker Desktop on Windows has no ALSA device.
+# Audio capture/render is the native host-agent's job (see ARCHITECTURE.md).
