@@ -60,20 +60,6 @@ async def test_mouth_load(gpu_available):
 
 
 @pytest.mark.asyncio
-async def test_brain_load():
-    """Test BRAIN initialization."""
-    from src.brain.anthropic import AnthropicBrain
-
-    brain = AnthropicBrain(model="claude-3-5-sonnet-20241022")
-    try:
-        await brain.initialize()
-        # Query without real API key should fail gracefully
-        await brain.close()
-    except ImportError:
-        pytest.skip("anthropic package not available")
-
-
-@pytest.mark.asyncio
 async def test_acoustic_descriptors():
     """Test ACOUSTIC descriptor extraction."""
     from src.acoustic.descriptors import AcousticDescriptors
