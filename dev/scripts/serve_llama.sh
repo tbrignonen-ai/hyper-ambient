@@ -5,7 +5,12 @@
 # Same protocol as StepFun, so src/brain/openai_compat.py drives both.
 set -euo pipefail
 
-MODEL="${MODEL:-$(ls -S /workspace/models/gguf/*.gguf 2>/dev/null | head -1)}"
+# Default to the GGUF this project actually retained (Luth-2-2B, 1.4 GB), not the
+# largest file on disk. `ls -S | head -1` picked Ministral-8B (4.9 GB) — 3.5x the
+# intended model — which is what exhausted memory and killed the Docker backend
+# on 2026-08-25. Override with MODEL=/workspace/models/gguf/<file>.gguf
+MODEL="${MODEL:-$(ls /workspace/models/gguf/Luth-2-2B*.gguf 2>/dev/null | head -1)}"
+MODEL="${MODEL:-$(ls -Sr /workspace/models/gguf/*.gguf 2>/dev/null | head -1)}"
 [ -n "$MODEL" ] || { echo "No GGUF in /workspace/models/gguf — run fetch_models.sh brain"; exit 1; }
 
 echo "BRAIN(local) <- $(basename "$MODEL")"

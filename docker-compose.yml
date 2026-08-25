@@ -38,6 +38,13 @@ services:
       - "8001:8001"  # WebSocket (host-agent transport)
       - "8090:8080"  # llama-server (BRAIN local / OpenAI-compatible) — 8080 taken by SearXNG
       - "8091:8081"  # whisper-server (EARS local)
+    # Memory ceiling — NOT optional. Without it a runaway process inside this
+    # container exhausts the shared WSL2 VM and takes down the whole Docker
+    # backend, including every unrelated container on this host. Measured on
+    # 2026-08-25: loading a 4.9 GB GGUF here killed the daemon.
+    # With this cap an OOM kills the container alone (exit 137) and nothing else.
+    mem_limit: 8g
+    memswap_limit: 8g
     shm_size: '2gb'
     stdin_open: true
     tty: true
