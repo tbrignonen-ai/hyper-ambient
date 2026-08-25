@@ -21,3 +21,13 @@ def test_alert_raised_expose_les_cinq_champs():
     assert alert.subject == "delegation_timeout"
     assert alert.evidence == "agent muet depuis 30 s"
     assert alert.raised_at == raised_at
+
+
+def test_watch_se_tait_quand_aucune_regle_ne_correspond():
+    """Sans règle déclarée, Watch reste silencieux : aucune parole n'est publiée."""
+    from src.watch.policy import Watch
+
+    publie = []
+    watch = Watch(rules=[], publish=publie.append)
+    watch.observe({"kind": "delegation_timeout", "agent": "hermes"})
+    assert publie == []
