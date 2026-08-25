@@ -9,9 +9,14 @@ class Watch:
         self.publish = publish
 
     def observe(self, event: dict) -> None:
-        """L'évaluation des règles arrive au T-N01-5.
+        """WATCH est le point de contrôle unique de l'initiation de parole.
 
-        Le silence par défaut est l'invariant de WATCH — une saillance
-        non déclarée ne produit aucune parole.
+        Le silence est le régime par défaut — une saillance non déclarée
+        par une règle ne produit aucune parole. La symétrie avec GATE
+        est voulue : GATE refuse par défaut l'exécution, WATCH se tait
+        par défaut.
         """
-        return None
+        for rule in self.rules:
+            result = rule(event)
+            if result is not None:
+                self.publish(result)
