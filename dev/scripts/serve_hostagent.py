@@ -290,6 +290,11 @@ def main() -> None:
         port=PORT,
         log_level="info",
         ws_max_size=16 * 1024 * 1024,
+        # websockets 17 a supprime l'API historique qu'utilise l'implementation
+        # « websockets » d'uvicorn : la poignee de main s'ouvrait puis restait
+        # muette jusqu'au timeout du client. L'implementation sans-io est celle
+        # prevue pour cette version.
+        ws="websockets-sansio",
     )
 
 

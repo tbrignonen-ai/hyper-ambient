@@ -19,7 +19,12 @@ if str(_ROOT) not in sys.path:
 from native.hostagent.windows_audio import PushToTalkCapture
 from src.hostagent.audio import SAMPLE_RATE
 
-URL_DEFAUT = "ws://localhost:8001/hostagent"
+# Adresse en IPv4 explicite, jamais « localhost ». Sous Windows, localhost se
+# resout vers ::1 en premier, et avec networkingMode=mirrored dans .wslconfig la
+# boucle locale IPv6 n'atteint pas le conteneur : la poignee de main WebSocket
+# s'ouvre puis expire sans que rien n'arrive cote serveur. Mesure du 2026-08-26 :
+# 127.0.0.1 repond, ::1 et localhost expirent tous les deux.
+URL_DEFAUT = "ws://127.0.0.1:8001/hostagent"
 SECRET_DEVELOPPEMENT = "partage-installation"
 NOM_MICRO_PREFERE = "USB Desk Microphone"
 
