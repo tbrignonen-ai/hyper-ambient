@@ -29,6 +29,9 @@ services:
     volumes:
       - ./src:/workspace/src
       - ./dev:/workspace/dev
+      # host-agent : tourne sur l'hote, mais monte ici pour que la suite de tests
+      # du conteneur voie la source vivante et non une copie figee dans la couche.
+      - ./native:/workspace/native
       - ./models:/workspace/models
       - ./data:/workspace/data
       - ./logs:/workspace/logs
