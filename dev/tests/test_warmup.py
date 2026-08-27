@@ -270,3 +270,59 @@ async def test_un_rechantillonnage_qui_echoue_n_empeche_pas_le_demarrage():
 async def test_le_rechantillonnage_est_optionnel():
     rapport = await prechauffer(ears=_Ears(), mouth=_Mouth())
     assert "resample" not in rapport.etages_chauffes
+
+
+# --- Chauffer le decodeur, pas seulement l'encodeur ------------------------
+#
+# Un sinus ne porte aucune parole : faster-whisper detecte l'absence de
+# segment et saute la boucle de decodage. L'encodeur chauffe, le decodeur
+# reste froid, et la premiere vraie phrase paie encore 525 ms contre 193 ms
+# a chaud. On chauffe donc EARS avec de la parole reelle -- celle que MOUTH
+# vient de synthetiser, rechantillonnee au taux du canal. Aucun fichier n'est
+# lu : le signal est produit sur place par la chaine elle-meme.
+
+
+class _MouthQuiParle(_Mouth):
+    """MOUTH qui rend un vrai bloc de PCM, comme le fait Piper."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sample_rate = 22050
+
+    async def synthesize(self, text):
+        await super().synthesize(text)
+        return {
+            "audio": np.ones(22050, dtype=np.int16),
+            "sample_rate": 22050,
+        }
+
+
+@pytest.mark.asyncio
+async def test_ears_est_chauffe_avec_la_parole_de_mouth_et_non_avec_le_sinus():
+    ears, mouth = _Ears(), _MouthQuiParle()
+
+    await prechauffer(
+        ears=ears,
+        mouth=mouth,
+        rechantillonner=lambda pcm, sr: np.asarray(pcm, dtype=np.float32),
+    )
+
+    assert ears.calls.count("transcribe") == 1, (
+        "une seule transcription : chauffer deux fois double le cout de demarrage"
+    )
+    audio = ears.audios[-1]
+    assert audio.size == 22050, (
+        "EARS doit recevoir la synthese de MOUTH, pas le sinus de repli"
+    )
+
+
+@pytest.mark.asyncio
+async def test_le_sinus_reste_le_repli_quand_mouth_ne_rend_rien():
+    ears = _Ears()
+
+    await prechauffer(ears=ears, mouth=_Mouth())
+
+    assert ears.calls.count("transcribe") == 1
+    assert ears.audios[-1].size > 0, (
+        "MOUTH muet ne doit pas priver EARS de tout prechauffage"
+    )

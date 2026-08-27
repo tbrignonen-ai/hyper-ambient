@@ -52,9 +52,17 @@ class RapportPrechauffage:
     durees_ms: dict[str, float] = field(default_factory=dict)
 
 
-def _signal_synthetique() -> np.ndarray:
-    """Une seconde de sinus 440 Hz, float32, 16 kHz — assez pour les noyaux, zéro fichier."""
-    t = np.linspace(0.0, 1.0, SAMPLE_RATE, endpoint=False, dtype=np.float32)
+def _vers_float32(pcm) -> np.ndarray:
+    """Normalise le PCM int16 de MOUTH. Frontiere materielle, la conversion est ici légitime."""
+    tableau = np.asarray(pcm)
+    if tableau.dtype == np.int16:
+        return (tableau.astype(np.float32) / 32768.0).astype(np.float32)
+    return tableau.astype(np.float32)
+
+
+def _signal_synthetique(taux: int = SAMPLE_RATE) -> np.ndarray:
+    """Une seconde de sinus 440 Hz, float32 — repli sans parole, et zéro fichier."""
+    t = np.linspace(0.0, 1.0, taux, endpoint=False, dtype=np.float32)
     return (np.float32(0.1) * np.sin(np.float32(2.0 * np.pi * 440.0) * t)).astype(
         np.float32
     )
@@ -76,31 +84,44 @@ async def prechauffer(
     """Sollicite EARS, MOUTH, puis le rééchantillonnage. `brain` est accepté et ignoré."""
     rapport = RapportPrechauffage()
 
+    # MOUTH d'abord : sa sortie est la matiere qui chauffera EARS.
+    pcm_mouth = None
+    sr_mouth = SAMPLE_RATE_MOUTH
     try:
         debut = time.monotonic()
-        await ears.transcribe(_signal_synthetique())
+        sortie = await mouth.synthesize(_PHRASE_MOUTH) or {}
+        rapport.durees_ms["mouth"] = (time.monotonic() - debut) * 1000.0
+        rapport.etages_chauffes.append("mouth")
+        audio = np.asarray(sortie.get("audio", []))
+        if audio.size:
+            pcm_mouth = _vers_float32(audio)
+            sr_mouth = int(sortie.get("sample_rate") or SAMPLE_RATE_MOUTH)
+    except Exception as exc:
+        _consigner(journal, f"MOUTH : préchauffage échoué — {exc}")
+
+    # Rééchantillonnage : construit le filtre, et convertit au passage la
+    # parole de MOUTH au taux du canal, celui qu'attend EARS.
+    parole = None
+    if rechantillonner is not None:
+        source = pcm_mouth if pcm_mouth is not None else _signal_synthetique(SAMPLE_RATE_MOUTH)
+        try:
+            debut = time.monotonic()
+            converti = rechantillonner(source, sr_mouth)
+            rapport.durees_ms["resample"] = (time.monotonic() - debut) * 1000.0
+            rapport.etages_chauffes.append("resample")
+            if pcm_mouth is not None:
+                parole = np.asarray(converti, dtype=np.float32)
+        except Exception as exc:
+            _consigner(journal, f"RESAMPLE : préchauffage échoué — {exc}")
+
+    # EARS en dernier, sur de la parole reelle quand on en a. Le sinus de
+    # repli chauffe l'encodeur ; seule la parole chauffe le decodeur.
+    try:
+        debut = time.monotonic()
+        await ears.transcribe(parole if parole is not None else _signal_synthetique())
         rapport.durees_ms["ears"] = (time.monotonic() - debut) * 1000.0
         rapport.etages_chauffes.append("ears")
     except Exception as exc:
         _consigner(journal, f"EARS : préchauffage échoué — {exc}")
-
-    try:
-        debut = time.monotonic()
-        await mouth.synthesize(_PHRASE_MOUTH)
-        rapport.durees_ms["mouth"] = (time.monotonic() - debut) * 1000.0
-        rapport.etages_chauffes.append("mouth")
-    except Exception as exc:
-        _consigner(journal, f"MOUTH : préchauffage échoué — {exc}")
-
-    if rechantillonner is not None:
-        try:
-            debut = time.monotonic()
-            rechantillonner(
-                np.zeros(SAMPLE_RATE_MOUTH, dtype=np.float32), SAMPLE_RATE_MOUTH
-            )
-            rapport.durees_ms["resample"] = (time.monotonic() - debut) * 1000.0
-            rapport.etages_chauffes.append("resample")
-        except Exception as exc:
-            _consigner(journal, f"RESAMPLE : préchauffage échoué — {exc}")
 
     return rapport
