@@ -183,19 +183,50 @@ class HostPipeline:
         for debut in range(0, len(trames), paquet):
             await websocket.send_json(_json_trames(trames[debut : debut + paquet]))
 
+    async def _envoyer_rapport(
+        self,
+        websocket,
+        *,
+        transcript: str,
+        reply: str,
+        timings_ms: dict,
+    ) -> None:
+        """Émet le rapport après l'audio : transcript, réponse, durées d'étages."""
+        if websocket is None:
+            return
+        await websocket.send_json(
+            {
+                "type": "report",
+                "transcript": transcript,
+                "reply": reply,
+                "timings_ms": timings_ms,
+            }
+        )
+
     async def _tour(self, frames, websocket) -> None:
         async with self._lock:
             await self._enchainer(frames, websocket)
 
     async def _enchainer(self, frames, websocket) -> None:
         leftover = [np.zeros(0, dtype=np.float32)]
+        # Horloge monotone, jamais l'heure murale. BRAIN streame pendant
+        # que MOUTH synthétise déjà les premiers tokens : les deux
+        # étages se CHEVAUCHENT. ears / brain / mouth ne sont donc pas
+        # des tranches disjointes qu'on additionnerait pour reconstituer
+        # total. total est le mur d'horloge du tour (réception de la fin
+        # du tour → dernière trame envoyée) ; il reste ≥ à la somme
+        # parce qu'il englobe l'envoi, pas parce que les étages
+        # s'enchaînent sans recouvrement.
+        t_tour = time.monotonic()
         try:
             if not frames:
                 await self._envoyer(websocket, [])
                 return
 
             audio = np.concatenate([trame.samples for trame in frames])
+            t_ears = time.monotonic()
             result = await self.asr.transcribe(audio)
+            ears_ms = (time.monotonic() - t_ears) * 1000.0
             prompt = (result.get("text") or "").strip()
             print(
                 f"EARS  : \"{prompt}\" — {result.get('latency_ms', 0):.0f} ms",
@@ -209,9 +240,15 @@ class HostPipeline:
             ttft_ms = None
             full_text = []
             brain_error = None
+            brain_ms = 0.0
+            mouth_ms = 0.0
+            t_derniere_trame = None
+
+            # Départ commun : le flux BRAIN alimente MOUTH en recouvrement.
+            t_brain_mouth = time.monotonic()
 
             async def deltas():
-                nonlocal ttft_ms, brain_error
+                nonlocal ttft_ms, brain_error, brain_ms
                 async for chunk in self.brain.query_streaming(prompt):
                     if chunk.get("ttft_ms") is not None:
                         ttft_ms = chunk["ttft_ms"]
@@ -220,6 +257,7 @@ class HostPipeline:
                     if chunk["delta"]:
                         full_text.append(chunk["delta"])
                         yield chunk["delta"]
+                brain_ms = (time.monotonic() - t_brain_mouth) * 1000.0
 
             t_gen = time.perf_counter()
             n_chunks = 0
@@ -233,15 +271,22 @@ class HostPipeline:
                     continue
                 n_chunks += 1
                 if n_chunks == 1:
+                    # Première trame synthétisée — et déjà partie, avant
+                    # tout rapport : NFR-01 se joue sur mic_to_audible.
+                    mouth_ms = (time.monotonic() - t_brain_mouth) * 1000.0
                     print(
                         f"MOUTH : premier audio après {(time.perf_counter() - t_gen) * 1000:.0f} ms",
                         flush=True,
                     )
                 await self._envoyer(websocket, trames)
+                t_derniere_trame = time.monotonic()
 
             queue = _vider_reliquat(leftover)
             if queue:
+                if n_chunks == 0:
+                    mouth_ms = (time.monotonic() - t_brain_mouth) * 1000.0
                 await self._envoyer(websocket, queue)
+                t_derniere_trame = time.monotonic()
 
             text = "".join(full_text).strip()
             if not text:
@@ -251,6 +296,23 @@ class HostPipeline:
                 print(f"BRAIN : \"{text[:120]}{suffixe}\"", flush=True)
                 if ttft_ms is not None:
                     print(f"BRAIN : TTFT {ttft_ms:.0f} ms", flush=True)
+
+            # Le rapport suit la première trame (ici : toutes les trames
+            # utiles). On a transcript, reply, et total une fois la
+            # dernière trame partie. Le marqueur vide vient après.
+            if t_derniere_trame is not None:
+                total_ms = (t_derniere_trame - t_tour) * 1000.0
+                await self._envoyer_rapport(
+                    websocket,
+                    transcript=prompt,
+                    reply=text,
+                    timings_ms={
+                        "ears": ears_ms,
+                        "brain": brain_ms,
+                        "mouth": mouth_ms,
+                        "total": total_ms,
+                    },
+                )
 
             await self._envoyer(websocket, [])
         except Exception as exc:

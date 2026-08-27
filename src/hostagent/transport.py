@@ -45,17 +45,36 @@ def _trame_depuis_json(raw: object) -> AudioFrame:
     return AudioFrame(samples=np.asarray(raw, dtype=np.float32))
 
 
+def _json_trames_sortantes(trames) -> dict:
+    """Même encodage qu'à l'aller : listes de flottants, une par trame."""
+    return {
+        "type": "invoke",
+        "primitive": "audio.render",
+        "frames": [trame.samples.tolist() for trame in trames],
+    }
+
+
 def create_transport_app(
     secret: str,
     on_frames,
     journal=None,
     peer_address_of=None,
+    on_report=None,
 ):
     """Application FastAPI exposant LocalChannel sur WS /hostagent.
 
     ``peer_address_of(websocket) -> str`` est injectée en test. Par
     défaut elle lit ``websocket.client.host``. Le contrôle de localité
     s'exécute toujours sur l'adresse fournie, jamais contourné.
+
+    ``on_frames`` peut renvoyer une liste de ``AudioFrame`` : le
+    transport les émet alors. ``None``, le retour actuel, ne produit
+    pas d'audio sortant par ce chemin.
+
+    ``on_report(frames) -> dict`` est optionnel. On l'appelle après
+    qu'au moins une trame a quitté le serveur, jamais avant : le
+    rapport ne doit pas retarder la première voix (NFR-01). Absent,
+    ou ``on_frames`` qui ne rend rien : pas de message ``report``.
     """
     app = FastAPI()
     canal = LocalChannel(secret, journal=journal)
@@ -102,7 +121,21 @@ def create_transport_app(
                     )
                     continue
                 canal.handle(message)
-                on_frames(decoded)
+                trames_sortantes = on_frames(decoded)
+                audio_emis = False
+                if trames_sortantes:
+                    await websocket.send_json(
+                        _json_trames_sortantes(trames_sortantes)
+                    )
+                    audio_emis = True
+                # Le rapport part après la première trame, jamais avant :
+                # journaliser ne doit pas faire attendre la voix.
+                if on_report is not None and audio_emis:
+                    rapport = on_report(decoded)
+                    if rapport:
+                        await websocket.send_json(
+                            {**rapport, "type": "report"}
+                        )
         except WebSocketDisconnect:
             return
 
