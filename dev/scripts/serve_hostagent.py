@@ -23,6 +23,7 @@ if str(_ROOT) not in sys.path:
 
 from src.hostagent.audio import FRAME_SAMPLES, SAMPLE_RATE, AudioFrame
 from src.hostagent.transport import create_transport_app
+from src.hostagent.warmup import prechauffer
 
 HOST = "0.0.0.0"
 PORT = 8001
@@ -146,9 +147,6 @@ class HostPipeline:
         if not await self.asr.load_model():
             print("EARS  : modèle indisponible", flush=True)
             raise SystemExit(1)
-        await self.asr.transcribe(
-            np.zeros(SAMPLE_RATE, dtype=np.float32), beam_size=1
-        )
 
         self.brain = await build_brain_with_fallback()
         health = await self.brain.health()
@@ -165,8 +163,6 @@ class HostPipeline:
                 flush=True,
             )
             raise SystemExit(1)
-
-        print(f"écoute sur {HOST}:{PORT} /hostagent", flush=True)
 
     async def close(self) -> None:
         if self.brain is not None:
@@ -337,6 +333,19 @@ def main() -> None:
     @contextlib.asynccontextmanager
     async def lifespan(_app):
         await pipeline.load()
+        journal: list = []
+        rapport = await prechauffer(
+            ears=pipeline.asr,
+            mouth=pipeline.tts,
+            brain=pipeline.brain,
+            rechantillonner=_rechantillonner,
+            journal=journal,
+        )
+        for entree in journal:
+            print(entree, flush=True)
+        for etage, duree in rapport.durees_ms.items():
+            print(f"{etage} : préchauffé en {duree:.0f} ms", flush=True)
+        print(f"écoute sur {HOST}:{PORT} /hostagent", flush=True)
         try:
             yield
         finally:
