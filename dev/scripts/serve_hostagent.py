@@ -134,7 +134,6 @@ class HostPipeline:
         """Charge EARS, BRAIN et MOUTH une seule fois, avant d'accepter un client."""
         from src.brain.factory import build_brain_with_fallback
         from src.ears.faster_whisper_asr import FasterWhisperASR
-        from src.mouth.piper_tts import PiperTTS
 
         model_size = os.getenv("EARS_MODEL", "large-v3-turbo")
         device = os.getenv("EARS_DEVICE", "cuda")
@@ -155,8 +154,26 @@ class HostPipeline:
             flush=True,
         )
 
-        print(f"MOUTH : chargement {voix}…", flush=True)
-        self.tts = PiperTTS(model_path=voix)
+        # MOUTH : Pocket TTS par défaut. Piper reste joignable par MOUTH_BACKEND=piper,
+        # parce qu'il ne coûte aucune VRAM — c'est le repli si le GPU est saturé.
+        backend = os.getenv("MOUTH_BACKEND", "pocket").lower()
+        if backend == "pocket":
+            from src.mouth.pocket_tts import PocketTTS
+
+            langue = os.getenv("MOUTH_LANGUAGE", "french_24l")
+            nom_voix = os.getenv("MOUTH_VOICE_NAME", "caro_davy")
+            print(f"MOUTH : chargement pocket-tts {langue} / {nom_voix}…", flush=True)
+            self.tts = PocketTTS(
+                language=langue,
+                voice=nom_voix,
+                device=os.getenv("MOUTH_DEVICE", "cuda"),
+            )
+        else:
+            from src.mouth.piper_tts import PiperTTS
+
+            print(f"MOUTH : chargement piper {voix}…", flush=True)
+            self.tts = PiperTTS(model_path=voix)
+
         if not await self.tts.load_model():
             print(
                 "MOUTH : voix indisponible — lancer dev/scripts/fetch_models.sh core",
