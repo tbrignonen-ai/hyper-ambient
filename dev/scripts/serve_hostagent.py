@@ -24,6 +24,7 @@ if str(_ROOT) not in sys.path:
 from src.hostagent.audio import FRAME_SAMPLES, SAMPLE_RATE, AudioFrame
 from src.hostagent.transport import create_transport_app
 from src.hostagent.warmup import prechauffer
+from src.mouth.secours import LIMITE_ENONCE_S, est_silence, phrase_de_secours
 
 HOST = "0.0.0.0"
 PORT = 8001
@@ -216,6 +217,48 @@ class HostPipeline:
             }
         )
 
+    async def _dire_secours(
+        self,
+        websocket,
+        leftover: list,
+        *,
+        phrase: str,
+        transcript: str,
+        t_tour: float,
+        ears_ms: float,
+        brain_ms: float,
+    ) -> None:
+        """Prononce la phrase de secours, puis le rapport, puis le marqueur vide.
+
+        Même ordre que le tour réussi : l'audio part avant le rapport.
+        La recette lit `reply` : sans la phrase ici, elle afficherait
+        une réponse vide et on ne saurait pas quel étage a lâché.
+        """
+        t_mouth = time.monotonic()
+        out = await self.tts.synthesize(phrase)
+        pcm = _rechantillonner(
+            _vers_float32(out.get("audio", [])),
+            int(out.get("sample_rate") or self.tts.sample_rate),
+        )
+        trames = _trames_depuis_pcm(pcm, leftover) + _vider_reliquat(leftover)
+        t_derniere = time.monotonic()
+        mouth_ms = (t_derniere - t_mouth) * 1000.0
+        if trames:
+            await self._envoyer(websocket, trames)
+            t_derniere = time.monotonic()
+        await self._envoyer_rapport(
+            websocket,
+            transcript=transcript,
+            reply=phrase,
+            timings_ms={
+                "ears": ears_ms,
+                "brain": brain_ms,
+                "mouth": mouth_ms,
+                "total": (t_derniere - t_tour) * 1000.0,
+            },
+        )
+        await self._envoyer(websocket, [])
+
     async def _tour(self, frames, websocket) -> None:
         async with self._lock:
             await self._enchainer(frames, websocket)
@@ -237,6 +280,65 @@ class HostPipeline:
                 return
 
             audio = np.concatenate([trame.samples for trame in frames])
+            duree_audio_s = float(audio.size) / SAMPLE_RATE
+
+            # Silence mesuré sur le signal, jamais déduit du transcript :
+            # Whisper hallucine sur du vide (« Sous-titrage ST' 501 » observé
+            # sur ce serveur), donc un transcript non vide ne prouve rien.
+            if est_silence(audio):
+                print(
+                    f"EARS  : {duree_audio_s:.1f} s sous le seuil d'énergie — "
+                    "silence, transcription sautée",
+                    flush=True,
+                )
+                phrase = phrase_de_secours(
+                    transcript="",
+                    reply="",
+                    brain_injoignable=False,
+                    duree_audio_s=0.0,
+                )
+                if phrase:
+                    await self._dire_secours(
+                        websocket,
+                        leftover,
+                        phrase=phrase,
+                        transcript="",
+                        t_tour=t_tour,
+                        ears_ms=0.0,
+                        brain_ms=0.0,
+                    )
+                else:
+                    await self._envoyer(websocket, [])
+                return
+
+            # Au-delà de la limite on sait déjà que la transcription
+            # sera mauvaise : on l'économise, et on dit la longueur.
+            if duree_audio_s > LIMITE_ENONCE_S:
+                print(
+                    f"EARS  : {duree_audio_s:.1f} s — au-delà de "
+                    f"{LIMITE_ENONCE_S:.0f} s, transcription sautée",
+                    flush=True,
+                )
+                phrase = phrase_de_secours(
+                    transcript="",
+                    reply="",
+                    brain_injoignable=False,
+                    duree_audio_s=duree_audio_s,
+                )
+                if phrase:
+                    await self._dire_secours(
+                        websocket,
+                        leftover,
+                        phrase=phrase,
+                        transcript="",
+                        t_tour=t_tour,
+                        ears_ms=0.0,
+                        brain_ms=0.0,
+                    )
+                else:
+                    await self._envoyer(websocket, [])
+                return
+
             t_ears = time.monotonic()
             result = await self.asr.transcribe(audio)
             ears_ms = (time.monotonic() - t_ears) * 1000.0
@@ -246,8 +348,25 @@ class HostPipeline:
                 flush=True,
             )
             if not prompt:
-                print("EARS  : rien transcrit — tour abandonné", flush=True)
-                await self._envoyer(websocket, [])
+                print("EARS  : rien transcrit", flush=True)
+                phrase = phrase_de_secours(
+                    transcript=prompt,
+                    reply="",
+                    brain_injoignable=False,
+                    duree_audio_s=duree_audio_s,
+                )
+                if phrase:
+                    await self._dire_secours(
+                        websocket,
+                        leftover,
+                        phrase=phrase,
+                        transcript=prompt,
+                        t_tour=t_tour,
+                        ears_ms=ears_ms,
+                        brain_ms=0.0,
+                    )
+                else:
+                    await self._envoyer(websocket, [])
                 return
 
             ttft_ms = None
@@ -304,6 +423,23 @@ class HostPipeline:
             text = "".join(full_text).strip()
             if not text:
                 print(f"BRAIN : rien produit — {brain_error}", flush=True)
+                phrase = phrase_de_secours(
+                    transcript=prompt,
+                    reply=text,
+                    brain_injoignable=brain_error is not None,
+                    duree_audio_s=duree_audio_s,
+                )
+                if phrase:
+                    await self._dire_secours(
+                        websocket,
+                        leftover,
+                        phrase=phrase,
+                        transcript=prompt,
+                        t_tour=t_tour,
+                        ears_ms=ears_ms,
+                        brain_ms=brain_ms,
+                    )
+                    return
             else:
                 suffixe = "..." if len(text) > 120 else ""
                 print(f"BRAIN : \"{text[:120]}{suffixe}\"", flush=True)

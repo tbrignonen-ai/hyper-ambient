@@ -1,0 +1,88 @@
+"""
+Parole de repli : un silence est indistinguable d'une panne pour
+quelqu'un qui écoute.
+
+Les quatre cas dégradés — micro muet, énoncé trop long, BRAIN
+injoignable, modèle muet — sont ce qui casse une démonstration en
+direct. Jamais la fonctionnalité principale : le tour réussi tient
+déjà, et une phrase de secours qui se déclenche à tort le ruinerait.
+
+Cette décision est pure. Le harnais appelle, MOUTH prononce.
+"""
+from __future__ import annotations
+
+LIMITE_ENONCE_S = 30.0
+
+# fr / en / es. Le tu, pas le vous : c'est la voix du produit
+# (« Je suis là. Prends ton temps, je t'écoute. »).
+_PHRASES: dict[str, dict[str, str]] = {
+    "fr": {
+        "silence": "Je n'ai rien entendu. Reprends, je suis là.",
+        "trop_long": "C'était un peu long. Plus court, je t'écoute.",
+        "injoignable": "Je n'arrive pas à réfléchir. Reprends dans un instant.",
+        "muet": "Je n'ai rien à dire. Reprends, je t'écoute.",
+    },
+    "en": {
+        "silence": "I didn't hear anything. I'm here, take your time.",
+        "trop_long": "That ran a little long. Shorter, and I'm listening.",
+        "injoignable": "I can't quite think right now. Try again in a moment.",
+        "muet": "I have nothing to say. I'm here when you're ready.",
+    },
+    "es": {
+        "silence": "No he oído nada. Tómate tu tiempo, estoy aquí.",
+        "trop_long": "Ha sido un poco largo. Dilo más corto, te escucho.",
+        "injoignable": "No consigo pensar ahora. Vuelve a intentarlo en un momento.",
+        "muet": "No tengo nada que decir. Cuando quieras, estoy aquí.",
+    },
+}
+
+
+def phrase_de_secours(
+    *,
+    transcript: str,
+    reply: str,
+    brain_injoignable: bool,
+    duree_audio_s: float,
+    langue: str = "fr",
+) -> str | None:
+    """Rend la phrase à prononcer quand le tour a mal tourné, ou None si tout va bien."""
+    voix = _PHRASES.get(langue, _PHRASES["fr"])
+
+    # La durée l'emporte sur le silence, qui l'emporte sur BRAIN.
+    # La durée est un FAIT connu indépendamment de la transcription,
+    # alors qu'un transcript vide est AMBIGU — il peut venir d'un micro
+    # muet comme d'une transcription qu'on a volontairement sautée.
+    # On annonce la cause qu'on connaît avec certitude.
+    if duree_audio_s > LIMITE_ENONCE_S:
+        return voix["trop_long"]
+    if not transcript.strip():
+        return voix["silence"]
+    if brain_injoignable:
+        return voix["injoignable"]
+    if not reply.strip():
+        return voix["muet"]
+    return None
+
+# Seuil d'energie en dessous duquel on considere qu'il n'y a pas eu de parole.
+# -50 dBFS en valeur efficace : un micro ouvert dans une piece calme reste
+# nettement en dessous, une voix meme lointaine passe nettement au dessus.
+SEUIL_SILENCE_RMS = 10 ** (-50.0 / 20.0)
+
+
+def est_silence(audio, seuil: float = SEUIL_SILENCE_RMS) -> bool:
+    """Vrai si le signal ne porte pas de parole, mesure sur son energie.
+
+    On ne deduit pas le silence du transcript. Mesure faite sur ce serveur :
+    2 secondes de silence numerique ont donne « Sous-titrage ST' 501 » --
+    Whisper recrache des credits de sous-titrage vus a l'entrainement quand on
+    lui donne du vide. Le transcript n'etant pas vide, la phrase de secours ne
+    partait pas et BRAIN repetait l'hallucination a voix haute.
+
+    L'energie, elle, est un fait : elle ne depend d'aucun modele.
+    """
+    import numpy as np
+
+    tableau = np.asarray(audio, dtype=np.float32).ravel()
+    if tableau.size == 0:
+        return True
+    return bool(float(np.sqrt(np.mean(np.square(tableau)))) < seuil)
