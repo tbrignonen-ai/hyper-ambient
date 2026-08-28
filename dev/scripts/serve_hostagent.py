@@ -217,6 +217,22 @@ class HostPipeline:
             }
         )
 
+    async def _dire_maintenant(self, websocket, phrase: str, leftover: list) -> None:
+        """Synthetise et envoie une phrase sans passer par le flux de tokens.
+
+        Sert aux phrases d'attente du routeur : leur seule raison d'etre est
+        d'occuper le silence pendant que le modele distant reflechit, donc
+        elles ne doivent subir aucun tampon.
+        """
+        out = await self.tts.synthesize(phrase)
+        pcm = _rechantillonner(
+            _vers_float32(out.get("audio", [])),
+            int(out.get("sample_rate") or self.tts.sample_rate),
+        )
+        trames = _trames_depuis_pcm(pcm, leftover) + _vider_reliquat(leftover)
+        if trames:
+            await self._envoyer(websocket, trames)
+
     async def _dire_secours(
         self,
         websocket,
@@ -386,9 +402,30 @@ class HostPipeline:
                         ttft_ms = chunk["ttft_ms"]
                     if chunk["stop_reason"] == "error":
                         brain_error = chunk.get("error", "unknown")
-                    if chunk["delta"]:
-                        full_text.append(chunk["delta"])
-                        yield chunk["delta"]
+                    if not chunk["delta"]:
+                        continue
+                    # Le routeur marque « flush » les phrases d'attente
+                    # (« Un instant. ») qu'il emet AVANT d'interroger le
+                    # modele distant. Les faire passer par le flux normal les
+                    # ferait attendre 24 caracteres et une ponctuation : la
+                    # phrase qui existe pour couvrir l'attente arriverait
+                    # apres l'attente. On les prononce donc tout de suite,
+                    # hors du flux.
+                    if chunk.get("flush"):
+                        # Espace explicite : ces segments sont prononces a part,
+                        # rien ne les separe dans le texte recolle du rapport.
+                        full_text.append(chunk["delta"] + " ")
+                        print(
+                            f"BRAIN : {chunk.get('channel', 'flush')} — "
+                            f"\"{chunk['delta']}\"",
+                            flush=True,
+                        )
+                        await self._dire_maintenant(
+                            websocket, chunk["delta"], leftover
+                        )
+                        continue
+                    full_text.append(chunk["delta"])
+                    yield chunk["delta"]
                 brain_ms = (time.monotonic() - t_brain_mouth) * 1000.0
 
             t_gen = time.perf_counter()

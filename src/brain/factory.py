@@ -176,6 +176,12 @@ async def build_brain_with_fallback():
 
     Returns an initialized brain-like object. Caller owns close().
     """
+    # Le routeur est un montage, pas un fournisseur : il compose le local et le
+    # distant. Il ne passe donc pas par build_brain(), qui ne connait que des
+    # fournisseurs uniques.
+    if (os.getenv("BRAIN_SERVICE", "stepfun").lower()) == "router":
+        return await build_router()
+
     primary = build_brain()
     if isinstance(primary, LlamaCppBrain):
         await primary.initialize()
