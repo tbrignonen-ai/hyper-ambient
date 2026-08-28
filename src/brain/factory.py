@@ -42,7 +42,7 @@ def build_brain(service: Optional[str] = None) -> OpenAICompatBrain:
 
 async def build_router():
     """
-    Two-channel MOTHER: local reflexes + remote deliberation.
+    Two-channel hyper-ambient: local reflexes + remote deliberation.
 
     This is the deployment shape the spec calls for. `build_brain_with_fallback`
     is the opposite arrangement (remote primary, local rescue) and is kept only

@@ -37,7 +37,7 @@ services:
       - ./logs:/workspace/logs
       - ./.env.local:/workspace/.env.local:ro
     ports:
-      - "8000:8000"  # MOTHER core API
+      - "8000:8000"  # hyper-ambient core API
       - "8001:8001"  # WebSocket (host-agent transport)
       - "8090:8080"  # llama-server (BRAIN local / OpenAI-compatible) — 8080 taken by SearXNG
       - "8091:8081"  # whisper-server (EARS local)

@@ -72,13 +72,157 @@ def _importer_websockets():
     return connect
 
 
+def lister_peripheriques(sd) -> str:
+    """Inventaire des micros et des haut-parleurs, sans ouvrir de flux.
+
+    Un périphérique duplex apparaît dans les deux sections : c'est le
+    casque USB de la démo, et le cacher du côté sortie reproduirait
+    le bug d'aujourd'hui (haut-parleur mort indistinguable d'un micro
+    mort).
+    """
+    peripheriques = sd.query_devices()
+    entrees: list[str] = []
+    sorties: list[str] = []
+    for indice, peripherique in enumerate(peripheriques):
+        nom = peripherique["name"]
+        taux = int(peripherique["default_samplerate"])
+        n_in = int(peripherique["max_input_channels"])
+        n_out = int(peripherique["max_output_channels"])
+        if n_in > 0:
+            mot = "canal" if n_in == 1 else "canaux"
+            entrees.append(f"  [{indice}] {nom} — {n_in} {mot}, {taux} Hz")
+        if n_out > 0:
+            mot = "canal" if n_out == 1 else "canaux"
+            sorties.append(f"  [{indice}] {nom} — {n_out} {mot}, {taux} Hz")
+    lignes = ["Entrées :"]
+    lignes.extend(entrees or ["  (aucune)"])
+    lignes.append("Sorties :")
+    lignes.extend(sorties or ["  (aucune)"])
+    return "\n".join(lignes)
+
+
+def decrire_erreur_peripherique(exc: BaseException) -> str:
+    """Traduit une exception audio en une phrase : le problème, et quoi taper ensuite."""
+    texte = str(exc).lower()
+    if "busy" in texte or "in use" in texte:
+        return (
+            "Le périphérique audio est occupé par une autre application. "
+            "Fermez-la, puis lancez --lister pour voir les périphériques disponibles."
+        )
+    if "invalid sample rate" in texte or "invalid number of channels" in texte:
+        return (
+            "Le format audio est refusé (taux d'échantillonnage ou nombre de canaux). "
+            "Lancez --test-sortie pour vérifier le haut-parleur."
+        )
+    if "invalid device" in texte or "device unavailable" in texte:
+        return (
+            "Le périphérique audio est absent, invalide ou introuvable. "
+            "Lancez --lister pour voir les périphériques disponibles."
+        )
+    return (
+        "Le périphérique audio a refusé l'ouverture. "
+        "Lancez --lister pour voir les périphériques disponibles, "
+        "ou --test-sortie pour vérifier le haut-parleur."
+    )
+
+
+def tester_sortie(sd, *, indice=None, secondes=0.4, frequence=440.0) -> int:
+    """Joue un bip au taux de la démo et rend le nombre d'échantillons écrits.
+
+    16 kHz, pas le défaut du périphérique : on vérifie que la restitution
+    du tour vocal passera, pas seulement qu'on entend quelque chose.
+    """
+    import numpy as np
+
+    n = int(secondes * SAMPLE_RATE)
+    t = np.arange(n, dtype=np.float32) / np.float32(SAMPLE_RATE)
+    signal = (
+        np.float32(0.2) * np.sin(np.float32(2.0 * np.pi) * np.float32(frequence) * t)
+    ).astype(np.float32)
+    kwargs = {
+        "samplerate": SAMPLE_RATE,
+        "channels": 1,
+        "dtype": "float32",
+    }
+    if indice is not None:
+        kwargs["device"] = indice
+    flux = sd.OutputStream(**kwargs)
+    try:
+        flux.start()
+        flux.write(signal.reshape(-1, 1))
+    finally:
+        try:
+            flux.stop()
+        except Exception:
+            pass
+        flux.close()
+    return n
+
+
+def _echouer_peripherique(exc: BaseException) -> None:
+    """Imprime la phrase utile et sort. Jamais de trace, jamais l'anglais brut."""
+    print(decrire_erreur_peripherique(exc))
+    raise SystemExit(1)
+
+
+def _est_erreur_audio(exc: BaseException) -> bool:
+    """True si le texte ressemble à PortAudio, pas à un refus de connexion."""
+    texte = str(exc).lower()
+    return any(
+        marqueur in texte
+        for marqueur in (
+            "invalid device",
+            "device unavailable",
+            "device or resource busy",
+            "in use",
+            "invalid sample rate",
+            "invalid number of channels",
+            "error opening inputstream",
+            "error opening outputstream",
+            "paerrorcode",
+        )
+    )
+
+
+def _resoudre_indice(demande: str, peripheriques, *, canaux: str, role: str) -> int:
+    """Indice numérique, ou premier nom qui contient le fragment."""
+    try:
+        return int(demande)
+    except ValueError:
+        fragment = demande.lower()
+        for indice, peripherique in enumerate(peripheriques):
+            if (
+                peripherique[canaux] > 0
+                and fragment in peripherique["name"].lower()
+            ):
+                return indice
+        print(f"Aucun périphérique {role} ne correspond à {demande!r}.")
+        print("Lancez --lister pour voir les périphériques disponibles.")
+        raise SystemExit(1)
+
+
+def choisir_sortie(demande: str | None, sd) -> int | None:
+    """Résout ``--sortie`` (indice ou fragment de nom). None = défaut système."""
+    if demande is None:
+        return None
+    try:
+        peripheriques = sd.query_devices()
+    except Exception as exc:
+        _echouer_peripherique(exc)
+    indice = _resoudre_indice(
+        demande, peripheriques, canaux="max_output_channels", role="de sortie"
+    )
+    nom = sd.query_devices(indice)["name"]
+    print(f"Périphérique de sortie : {nom}")
+    return indice
+
+
 def choisir_peripherique(demande: str | None, sd) -> int:
     """Liste les micros et choisit --device, le USB Desk Microphone, ou le défaut."""
     try:
         peripheriques = sd.query_devices()
     except Exception as exc:
-        print(f"Impossible d'interroger les périphériques audio : {exc}")
-        raise SystemExit(1)
+        _echouer_peripherique(exc)
 
     print("Périphériques d'entrée disponibles :")
     for indice, peripherique in enumerate(peripheriques):
@@ -116,8 +260,7 @@ def choisir_peripherique(demande: str | None, sd) -> int:
     try:
         choisi = sd.query_devices(kind="input")
     except Exception as exc:
-        print(f"Impossible d'interroger les périphériques audio : {exc}")
-        raise SystemExit(1)
+        _echouer_peripherique(exc)
     print(f"Périphérique d'entrée : {choisi['name']} (défaut système)")
     for indice, peripherique in enumerate(peripheriques):
         if (
@@ -132,26 +275,38 @@ def _fabrique_entree(indice: int, sd):
     """Fabrique de flux injectée dans PushToTalkCapture, micro choisi inclus."""
 
     def factory(callback):
-        return sd.InputStream(
-            device=indice,
-            samplerate=SAMPLE_RATE,
-            channels=1,
-            dtype="int16",
-            callback=callback,
-        )
+        try:
+            return sd.InputStream(
+                device=indice,
+                samplerate=SAMPLE_RATE,
+                channels=1,
+                dtype="int16",
+                callback=callback,
+            )
+        except Exception as exc:
+            _echouer_peripherique(exc)
 
     return factory
 
 
-def _ouvrir_sortie(sd):
-    """Sortie par défaut, ouverte une fois : son ouverture ne compte pas dans NFR-01."""
-    flux = sd.OutputStream(
-        samplerate=SAMPLE_RATE,
-        channels=1,
-        dtype="float32",
-    )
-    flux.start()
-    return flux
+def _ouvrir_sortie(sd, indice: int | None = None):
+    """Sortie ouverte une fois : son ouverture ne compte pas dans NFR-01.
+
+    ``indice`` vient de ``--sortie``. None laisse le défaut système.
+    """
+    kwargs = {
+        "samplerate": SAMPLE_RATE,
+        "channels": 1,
+        "dtype": "float32",
+    }
+    if indice is not None:
+        kwargs["device"] = indice
+    try:
+        flux = sd.OutputStream(**kwargs)
+        flux.start()
+        return flux
+    except Exception as exc:
+        _echouer_peripherique(exc)
 
 
 def _jouer(sortie, echantillons) -> None:
@@ -239,16 +394,50 @@ def main() -> None:
         default=None,
         help="indice PortAudio, ou fragment du nom du micro",
     )
+    parser.add_argument(
+        "--sortie",
+        default=None,
+        help="indice PortAudio, ou fragment du nom du haut-parleur",
+    )
+    parser.add_argument(
+        "--lister",
+        action="store_true",
+        help="lister les périphériques d'entrée et de sortie, puis sortir",
+    )
+    parser.add_argument(
+        "--test-sortie",
+        dest="test_sortie",
+        action="store_true",
+        help="jouer un bip sur le haut-parleur, puis sortir",
+    )
     parser.add_argument("--url", default=URL_DEFAUT, help="URL WebSocket du transport")
     args = parser.parse_args()
 
     sd = _importer_sounddevice()
+
+    if args.lister:
+        try:
+            print(lister_peripheriques(sd))
+        except Exception as exc:
+            _echouer_peripherique(exc)
+        return
+
+    if args.test_sortie:
+        try:
+            indice_sortie = choisir_sortie(args.sortie, sd)
+            tester_sortie(sd, indice=indice_sortie)
+        except SystemExit:
+            raise
+        except Exception as exc:
+            _echouer_peripherique(exc)
+        return
+
     connect = _importer_websockets()
     secret = lire_secret()
     indice = choisir_peripherique(args.device, sd)
     capture = PushToTalkCapture(stream_factory=_fabrique_entree(indice, sd))
-
-    sortie = _ouvrir_sortie(sd)
+    indice_sortie = choisir_sortie(args.sortie, sd)
+    sortie = _ouvrir_sortie(sd, indice=indice_sortie)
     try:
         with connect(args.url, max_size=16 * 1024 * 1024) as ws:
             _poignee_de_main(ws, secret)
@@ -261,8 +450,11 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\nArrêt.")
     except Exception as exc:
-        print(f"Impossible de joindre {args.url} : {exc}")
-        print("Le conteneur écoute-t-il ?  python3 dev/scripts/serve_hostagent.py")
+        if _est_erreur_audio(exc):
+            print(decrire_erreur_peripherique(exc))
+        else:
+            print(f"Impossible de joindre {args.url} : {exc}")
+            print("Le conteneur écoute-t-il ?  python3 dev/scripts/serve_hostagent.py")
         raise SystemExit(1)
     finally:
         sortie.stop()

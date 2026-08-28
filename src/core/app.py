@@ -1,5 +1,5 @@
 """
-MOTHER Core application — main entry point.
+hyper-ambient core application — main entry point.
 
 Usage:
     python -m src.core.app
@@ -20,17 +20,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class MotherCore:
-    """Core orchestration engine for MOTHER."""
+class HyperAmbientCore:
+    """Core orchestration engine for hyper-ambient."""
 
     def __init__(self):
         self.running = False
-        logger.info("MOTHER Core initialized")
+        logger.info("hyper-ambient core initialized")
 
     async def start(self):
         """Start the core event loop."""
         self.running = True
-        logger.info("MOTHER Core starting...")
+        logger.info("hyper-ambient core starting...")
         try:
             await self._main_loop()
         except KeyboardInterrupt:
@@ -51,12 +51,12 @@ class MotherCore:
     async def stop(self):
         """Gracefully stop the core."""
         self.running = False
-        logger.info("MOTHER Core stopped")
+        logger.info("hyper-ambient core stopped")
 
 
 async def main():
     """Entry point."""
-    core = MotherCore()
+    core = HyperAmbientCore()
     await core.start()
 
 

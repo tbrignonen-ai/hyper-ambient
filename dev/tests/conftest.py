@@ -1,5 +1,5 @@
 """
-Test configuration and fixtures for MOTHER.
+Test configuration and fixtures for hyper-ambient.
 """
 import pytest
 import sys

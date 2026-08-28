@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Render A/B samples so the MOTHER voice can be chosen by ear, not by argument.
+Render A/B samples so the hyper-ambient voice can be chosen by ear, not by argument.
 
     python3 dev/scripts/voice_lab.py                # all voices x all profiles
     python3 dev/scripts/voice_lab.py --voice siwis  # one voice, all profiles

@@ -1,8 +1,8 @@
-# MOTHER Architecture
+# hyper-ambient Architecture
 
 ## Overview
 
-MOTHER is a real-time voice AI harness with six capabilities integrated through a single permission control point (GATE).
+hyper-ambient is a local ambient voice — French, English, and Spanish — that answers out loud. The core is a real-time voice AI harness with six capabilities integrated through a single permission control point (GATE).
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -13,7 +13,7 @@ MOTHER is a real-time voice AI harness with six capabilities integrated through 
                │ 20ms audio frames + events
                ▼
 ┌─────────────────────────────────────────────────────────┐
-│ MOTHER Core (Containerized, GPU-accelerated)            │
+│ hyper-ambient Core (Containerized, GPU-accelerated)     │
 │                                                         │
 │  ┌─────────────────────────────────────────────────┐   │
 │  │ EARS (Speech Recognition)                       │   │

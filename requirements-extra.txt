@@ -1,4 +1,4 @@
-# MOTHER — extras installed AFTER the base layer.
+# hyper-ambient — extras installed AFTER the base layer.
 # Kept in a separate file so requirements.txt / torch layers stay cache-hits.
 
 # --- Framework bump (base pins were too old for anyio>=4 / starlette>=1) ---

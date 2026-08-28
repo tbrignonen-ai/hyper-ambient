@@ -1,5 +1,5 @@
 """
-MOTHER Core — Real-time voice AI harness.
+hyper-ambient — Local ambient voice (French, English, Spanish).
 
 Six capabilities:
   EARS     — Speech recognition in stream

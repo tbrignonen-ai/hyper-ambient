@@ -1,4 +1,4 @@
-# MOTHER Development Setup
+# hyper-ambient Development Setup
 
 ## Prerequisites
 
@@ -50,7 +50,7 @@ make up
 Runs `docker-compose up -d`:
 - Mounts `./src/`, `./dev/`, `./models/`, `./data/`, `./logs/` inside container as `/workspace/{src,dev,models,data,logs}`
 - Mounts `.env.local` (secrets, read-only)
-- Maps ports: 8000, 8001 (MOTHER), 8090→8080, 8091→8081 (local services)
+- Maps ports: 8000, 8001 (hyper-ambient), 8090→8080, 8091→8081 (local services)
 - Allocates 2 GB shared memory (`shm_size`)
 - Keeps container running in background
 

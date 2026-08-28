@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fetch MOTHER model weights into /workspace/models (host-mounted, survives rebuilds).
+# Fetch hyper-ambient model weights into /workspace/models (host-mounted, survives rebuilds).
 #
 # Tiers:
 #   ./fetch_models.sh core   -> VAD + Piper FR voice + whisper turbo  (~1.2 GB)

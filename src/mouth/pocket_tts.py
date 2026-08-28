@@ -1,7 +1,7 @@
 """
 MOUTH: Kyutai Pocket TTS — the streaming French voice.
 
-This is the backend the original MOTHER spec asked for, and it differs from
+This is the backend the original spec asked for, and it differs from
 Piper in the way that matters: Piper is non-autoregressive and emits one chunk
 per sentence, so time-to-first-audio grows with sentence length and has to be
 bounded by cutting the text early (see `piper_tts._word_cut`, and the seam it

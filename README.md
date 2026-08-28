@@ -1,6 +1,6 @@
-# MOTHER Core — Development Environment
+# hyper-ambient — Development Environment
 
-Real-time voice AI harness. GPU-accelerated, containerized. First-to-end pipeline: **500 ms round-trip**, 96 % endpoint accuracy, local BRAIN with remote escalade.
+hyper-ambient (HA) is a local ambient voice: it listens and answers out loud in French, English, and Spanish. GPU-accelerated, containerized. First-to-end pipeline: **500 ms round-trip**, 96 % endpoint accuracy, local BRAIN with remote escalade.
 
 ## Quick Start
 
@@ -75,7 +75,7 @@ dev/
 
 | Service | Host Port | Container | Purpose |
 |---------|-----------|-----------|---------|
-| MOTHER Core API | 8000 | 8000 | FastAPI / REST |
+| hyper-ambient Core API | 8000 | 8000 | FastAPI / REST |
 | WebSocket (host-agent) | 8001 | 8001 | Bidirectional event stream |
 | llama-server (BRAIN local) | 8090 | 8080 | OpenAI-compatible completions |
 | whisper-server (EARS local) | 8091 | 8081 | Whisper transcription |

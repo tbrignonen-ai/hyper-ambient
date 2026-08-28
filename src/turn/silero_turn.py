@@ -7,7 +7,7 @@ when the speaker finished a thought. It cannot tell "j'ai pris... euh..."
 (TURN-L2, Pipecat Smart Turn, see src/turn/pipecat_adapter.py).
 
 It exists because OQ-15 says TURN must not have a single-component dependency:
-if the learned model is unavailable, MOTHER degrades to L1 rather than to
+if the learned model is unavailable, hyper-ambient degrades to L1 rather than to
 nothing. false_endpoint_rate on corpus A01-A04 is what separates the two.
 
 Silero requires exactly 512-sample frames at 16 kHz (32 ms).

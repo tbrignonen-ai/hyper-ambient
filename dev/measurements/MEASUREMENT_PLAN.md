@@ -1,4 +1,4 @@
-# Critical Measurements for MOTHER
+# Critical Measurements for hyper-ambient
 
 These measurements **must** be completed on the dev machine before finalizing architecture.
 
@@ -55,7 +55,7 @@ These measurements **must** be completed on the dev machine before finalizing ar
 
 **Procedure**:
 - Load Pocket TTS with French model
-- Provide short text prompt ("Bonjour", "Je suis MOTHER")
+- Provide short text prompt ("Bonjour", "Je suis hyper-ambient")
 - Measure from input trigger to **first audible sound** in actual audio buffer (not wall-clock inference)
 - Repeat 10 times, report min/median/max
 - Hardware: Use real loopback cable (USB audio interface or internal loopback)

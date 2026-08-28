@@ -44,7 +44,7 @@ async def measure_ttfa(num_samples: int = 10, device: str = "cuda"):
 
     prompts = [
         "Bonjour",
-        "Je suis MOTHER",
+        "Je suis hyper-ambient",
         "Comment allez-vous ?",
         "Enchanté de faire votre connaissance",
         "Quelle est votre question ?"

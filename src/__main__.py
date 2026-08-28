@@ -1,5 +1,5 @@
 """
-MOTHER — Main entry point.
+hyper-ambient — Main entry point.
 
 Usage:
     python -m src
@@ -8,8 +8,8 @@ Usage:
 """
 import sys
 import asyncio
-from .core.app import MotherCore
+from .core.app import HyperAmbientCore
 
 if __name__ == "__main__":
-    core = MotherCore()
+    core = HyperAmbientCore()
     asyncio.run(core.start())

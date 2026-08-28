@@ -1,4 +1,4 @@
-# MOTHER — runtime stack
+# hyper-ambient — runtime stack
 
 Decisions, and the reason each one is the way it is. Numbers in this file come
 from measurements on the target machine (RTX 4070 12 GB, 20 vCPU, WSL2), not
@@ -202,7 +202,7 @@ WebSocket on `:8001`. The container never touches hardware audio.
 
 | Host | Container | Service |
 |---|---|---|
-| 8000 | 8000 | MOTHER core API |
+| 8000 | 8000 | hyper-ambient core API |
 | 8001 | 8001 | WebSocket — host-agent transport |
 | 8090 | 8080 | `llama-server` (8080 on the host is SearXNG) |
 | 8091 | 8081 | `whisper-server` |

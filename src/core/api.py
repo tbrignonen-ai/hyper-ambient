@@ -1,5 +1,5 @@
 """
-MOTHER API — FastAPI server for HTTP and WebSocket.
+hyper-ambient API — FastAPI server for HTTP and WebSocket.
 
 Endpoints:
     POST /capabilities       — Negotiate which capabilities are available
@@ -16,8 +16,8 @@ from fastapi.responses import JSONResponse
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="MOTHER Core",
-    description="Real-time voice AI harness",
+    title="hyper-ambient",
+    description="Local ambient voice — French, English, Spanish — answers out loud",
     version="0.1.0"
 )
 

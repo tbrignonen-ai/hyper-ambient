@@ -1,8 +1,8 @@
 """
 BRAIN: the two-channel router.
 
-MOTHER is the ship's authority, not its quickest voice. She is allowed to take
-her time — what she is not allowed to do is leave silence. So the realtime
+hyper-ambient is the room's authority, not its quickest voice. It is allowed to take
+its time — what it is not allowed to do is leave silence. So the realtime
 budget applies to the **acknowledgment**, not to the answer:
 
     user stops speaking
@@ -24,7 +24,7 @@ cannot grade a difficulty it cannot itself handle.
 So the only judgement asked of it is one it can actually make: "is this
 small talk?" Everything else escalates. Ambiguity escalates. The cost of a
 wrong escalation is a few hundred milliseconds; the cost of a wrong local
-answer is MOTHER being confidently wrong, which is the one thing she must
+answer is hyper-ambient being confidently wrong, which is the one thing it must
 never be.
 """
 import asyncio
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 # Grammar-constrained: the model cannot emit anything but these two tokens.
 CLASSIFY_GRAMMAR = 'root ::= "REFLEXE" | "ESCALADE"'
 
-CLASSIFY_PREFIX = """Tu tries des demandes adressées à MOTHER, l'ordinateur de bord.
+CLASSIFY_PREFIX = """Tu tries des demandes adressées à hyper-ambient, une voix ambiante locale.
 
 REFLEXE = salutation, politesse, remerciement, acquiescement, ou ordre direct
           sans aucun raisonnement (répète, plus fort, arrête, annule).
@@ -49,7 +49,7 @@ ESCALADE = tout le reste. Toute question de connaissance, de calcul, de
 
 Dans le doute, réponds ESCALADE.
 
-Demande: Bonjour MOTHER.
+Demande: Bonjour hyper-ambient.
 Classe: REFLEXE
 Demande: Merci, c'est noté.
 Classe: REFLEXE
@@ -67,7 +67,7 @@ CLASSIFY_SUFFIX = "\nClasse:"
 
 # Canned, not generated. Generating a filler would cost a round-trip of the
 # very latency the filler exists to hide, and would risk a filler that does not
-# fit. These are short, level, and in MOTHER's register: never apologetic,
+# fit. These are short, level, and in hyper-ambient's register: never apologetic,
 # never chatty.
 FILLERS = [
     "Un instant.",
@@ -109,7 +109,7 @@ class RouterBrain:
         self.classify_host = (classify_host or os.getenv(
             "LLAMA_SERVER_HOST", "http://localhost:8080")).rstrip("/")
         self.enable_filler = enable_filler
-        # Generous on purpose: MOTHER may deliberate. This is the point at
+        # Generous on purpose: hyper-ambient may deliberate. This is the point at
         # which we give up on the remote entirely, not a latency target.
         self.deep_timeout_ms = deep_timeout_ms or int(
             os.getenv("BRAIN_DEEP_TIMEOUT_MS", "20000"))
@@ -143,7 +143,7 @@ class RouterBrain:
         r = await self.reflex.health()
         d = await self.deep.health()
         return {
-            "ok": r["ok"],  # the reflex channel is the one MOTHER cannot lose
+            "ok": r["ok"],  # the reflex channel is the one hyper-ambient cannot lose
             "detail": f"reflex {r['detail']}, deep {d['detail']}",
             "latency_ms": r["latency_ms"],
         }

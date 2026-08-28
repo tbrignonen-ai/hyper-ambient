@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Exercise the two-channel router end to end, with the timeline that matters:
-when does MOTHER first make a sound, and which channel eventually answers.
+when does hyper-ambient first make a sound, and which channel eventually answers.
 
     python3 dev/scripts/router_demo.py
     python3 dev/scripts/router_demo.py --no-filler   # show the naked escalation cost
@@ -17,7 +17,7 @@ sys.path.insert(0, "/workspace")
 import numpy as np  # noqa: E402
 
 PROMPTS = [
-    "Bonjour MOTHER.",
+    "Bonjour hyper-ambient.",
     "Merci, c'est noté.",
     "Il est 14 h 40, ma réunion dure quarante minutes et commence dans vingt minutes, à quelle heure je finis ?",
     "Quel est le rôle du facteur temps réel dans un système de dialogue ?",

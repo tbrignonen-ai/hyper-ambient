@@ -1,7 +1,7 @@
 """
 GATE: Permission and execution mode control.
 
-Seven modes control how MOTHER behaves:
+Seven modes control how hyper-ambient behaves:
   plan         — Dry-run, show what would happen
   ask          — Prompt before each action
   manual       — User-triggered batch

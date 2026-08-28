@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MOTHER end-to-end pipeline: EARS -> TURN -> BRAIN -> MOUTH.
+hyper-ambient end-to-end pipeline: EARS -> TURN -> BRAIN -> MOUTH.
 
 Measures the NFR-01 round-trip budget with real numbers, broken down per
 capability, so it is obvious which one is over budget.

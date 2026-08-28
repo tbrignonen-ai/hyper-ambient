@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class AuditLog:
-    """Hash-chained audit log for MOTHER operations."""
+    """Hash-chained audit log for hyper-ambient operations."""
 
     def __init__(self, log_path: str = "logs/audit.jsonl"):
         """

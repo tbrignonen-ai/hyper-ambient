@@ -1,4 +1,4 @@
-# MOTHER — État du projet (2026-08-21)
+# hyper-ambient — État du projet (2026-08-21)
 
 Première implémentation exécutable, bout-en-bout, mesurée. Machine : RTX 4070 12 Go.
 

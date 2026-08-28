@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MOTHER container smoke test — verifies every capability actually runs.
+hyper-ambient container smoke test — verifies every capability actually runs.
 
 Run inside the container:
     python3 dev/scripts/smoke_test.py
@@ -138,7 +138,7 @@ async def check_mouth():
     if not await tts.load_model():
         return report("MOUTH piper", KO, "voice load failed")
 
-    out = await tts.synthesize("Bonjour, je suis MOTHER. Comment puis-je vous aider ?")
+    out = await tts.synthesize("Bonjour, je suis hyper-ambient. Comment puis-je vous aider ?")
     wav = tts.to_wav_bytes(out["audio"], out["sample_rate"])
     os.makedirs("/workspace/data/out", exist_ok=True)
     with open("/workspace/data/out/smoke_tts.wav", "wb") as f:
@@ -174,7 +174,7 @@ async def check_brain():
 
 async def main():
     print("=" * 78)
-    print("MOTHER smoke test")
+    print("hyper-ambient smoke test")
     print("=" * 78)
     check_gpu()
     check_binaries()

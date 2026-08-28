@@ -7,7 +7,7 @@ A neutral TTS voice does not read as a ship's computer. Two levers:
      regularised phoneme durations make the reading unhurried and impersonal.
      These are Piper `SynthesisConfig` fields, not DSP.
 
-  2. Space and grain, after synthesis. MOTHER speaks through a hull: band
+  2. Space and grain, after synthesis. hyper-ambient speaks through a hull: band
      limiting, a short metallic room, a faint doubling.
 
 Everything here is **stateful and streaming-safe**. Filters keep their `zi`
