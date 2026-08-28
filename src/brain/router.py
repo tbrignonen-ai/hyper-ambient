@@ -150,7 +150,9 @@ class RouterBrain:
 
     # -- classification ----------------------------------------------------
 
-    async def classify(self, prompt: str) -> Dict[str, Any]:
+    async def classify(
+        self, prompt: str, contexte: Optional[List[Dict[str, str]]] = None
+    ) -> Dict[str, Any]:
         """
         Decide REFLEXE vs ESCALADE on the local model.
 
@@ -161,8 +163,20 @@ class RouterBrain:
         if self._client is None:
             return {"route": "escalate", "latency_ms": 0.0, "reason": "no client"}
 
+        # « Oui, vas-y » n'est un reflexe que si rien ne precede. Apres une
+        # question de connaissance, c'est la SUITE de cette question, et la
+        # router en local fait repondre une politesse creuse a la place du
+        # sujet. Le dernier tour suffit a lever l'ambiguite ; le prefixe reste
+        # stable, donc le cache de prompt de llama-server tient toujours.
+        entete = ""
+        if contexte:
+            dernier = contexte[-1]
+            if dernier.get("content"):
+                entete = "Tour precedent : " + dernier["content"].strip()[:160] + chr(10)
+                # chr(10) plutot qu'une sequence d'echappement : ce fichier a deja
+                # ete casse deux fois par un antislash mal transmis.
         body = {
-            "prompt": CLASSIFY_PREFIX + prompt.strip() + CLASSIFY_SUFFIX,
+            "prompt": CLASSIFY_PREFIX + entete + prompt.strip() + CLASSIFY_SUFFIX,
             "grammar": CLASSIFY_GRAMMAR,
             "n_predict": 4,
             "temperature": 0,
@@ -198,7 +212,7 @@ class RouterBrain:
         Yield deltas. Chunks carry `channel` ("reflex" | "filler" | "deep") so
         callers can log or style them; MOUTH just speaks the text.
         """
-        decision = await self.classify(prompt)
+        decision = await self.classify(prompt, kw.get("history"))
         route = decision["route"]
         logger.info(f"router: {route} ({decision['latency_ms']:.0f} ms)")
 

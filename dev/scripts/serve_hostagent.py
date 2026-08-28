@@ -26,6 +26,11 @@ from src.hostagent.transport import create_transport_app
 from src.hostagent.warmup import prechauffer
 from src.mouth.secours import LIMITE_ENONCE_S, est_silence, phrase_de_secours
 
+# Six messages, soit trois echanges. Assez pour qu'un « oui, vas-y » ait un
+# antecedent ; assez court pour que le contexte du modele local ne gonfle pas
+# la latence a chaque tour.
+MEMOIRE_MESSAGES = 6
+
 HOST = "0.0.0.0"
 PORT = 8001
 SECRET_DEVELOPPEMENT = "partage-installation"
@@ -105,6 +110,12 @@ class HostPipeline:
 
     def __init__(self) -> None:
         self.asr = None
+        # Memoire de conversation. Sans elle, « oui, vas-y » ne veut rien
+        # dire : chaque tour partait seul, et hyper-ambient a repondu qu'elle
+        # n'avait pas le resultat d'une question a laquelle elle venait de
+        # repondre. On garde les derniers echanges, pas toute la session :
+        # le contexte du modele local est petit et la latence croit avec.
+        self._historique: list[dict] = []
         self.brain = None
         self.tts = None
         self._websocket = None
@@ -387,6 +398,7 @@ class HostPipeline:
 
             ttft_ms = None
             full_text = []
+            reponse_utile = []
             brain_error = None
             brain_ms = 0.0
             mouth_ms = 0.0
@@ -397,7 +409,9 @@ class HostPipeline:
 
             async def deltas():
                 nonlocal ttft_ms, brain_error, brain_ms
-                async for chunk in self.brain.query_streaming(prompt):
+                async for chunk in self.brain.query_streaming(
+                    prompt, history=list(self._historique)
+                ):
                     if chunk.get("ttft_ms") is not None:
                         ttft_ms = chunk["ttft_ms"]
                     if chunk["stop_reason"] == "error":
@@ -414,6 +428,9 @@ class HostPipeline:
                     if chunk.get("flush"):
                         # Espace explicite : ces segments sont prononces a part,
                         # rien ne les separe dans le texte recolle du rapport.
+                        # Ils ne vont PAS en memoire : « Un instant. » n'est pas
+                        # une reponse, et le relire au tour suivant apprendrait
+                        # au modele a temporiser au lieu de repondre.
                         full_text.append(chunk["delta"] + " ")
                         print(
                             f"BRAIN : {chunk.get('channel', 'flush')} — "
@@ -425,6 +442,7 @@ class HostPipeline:
                         )
                         continue
                     full_text.append(chunk["delta"])
+                    reponse_utile.append(chunk["delta"])
                     yield chunk["delta"]
                 brain_ms = (time.monotonic() - t_brain_mouth) * 1000.0
 
@@ -458,6 +476,15 @@ class HostPipeline:
                 t_derniere_trame = time.monotonic()
 
             text = "".join(full_text).strip()
+
+            # La memoire ne retient que la reponse utile : les phrases
+            # d'attente sont du remplissage de latence, pas du contenu.
+            utile = "".join(reponse_utile).strip()
+            if utile:
+                self._historique.append({"role": "user", "content": prompt})
+                self._historique.append({"role": "assistant", "content": utile})
+                del self._historique[:-MEMOIRE_MESSAGES]
+
             if not text:
                 print(f"BRAIN : rien produit — {brain_error}", flush=True)
                 phrase = phrase_de_secours(
