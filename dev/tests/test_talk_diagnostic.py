@@ -688,3 +688,103 @@ def test_lancement_normal_honore_option_sortie(monkeypatch):
 
     assert sd.appels_output, "le lancement normal n'a pas ouvert de flux de sortie"
     assert sd.appels_output[0].get("device") == 2
+
+
+# --- Le tour doit se vider entierement de la socket ------------------------
+#
+# Le serveur envoie, dans l'ordre : des paquets audio, un rapport, puis un
+# marqueur de fin vide. Le client sortait de sa boucle des qu'un message
+# n'avait pas de trames -- donc SUR LE RAPPORT -- en laissant le marqueur de
+# fin dans la socket. Le tour suivant lisait ce residu au lieu de sa propre
+# reponse et annoncait « aucune trame de reponse ». Observe en session reelle :
+# un tour sur deux muet, et un mic_to_audible de 13 ms, qui mesurait en fait
+# l'arrivee du residu du tour precedent.
+
+from src.hostagent.audio import FRAME_SAMPLES, AudioFrame  # noqa: E402
+
+
+class _SocketFactice:
+    """Rejoue une sequence de messages serveur, et compte ce qui reste."""
+
+    def __init__(self, messages):
+        self.restants = list(messages)
+        self.envoyes = []
+
+    def send(self, brut):
+        self.envoyes.append(brut)
+
+    def recv(self):
+        if not self.restants:
+            raise AssertionError("le client a lu au-dela du marqueur de fin")
+        return json.dumps(self.restants.pop(0))
+
+
+class _CaptureFactice:
+    """Rend toujours quelques trames, comme un micro qui a entendu quelque chose."""
+
+    def __init__(self, nb_trames=3):
+        self.nb_trames = nb_trames
+
+    def start(self):
+        pass
+
+    def stop(self):
+        return [
+            AudioFrame(samples=np.zeros(FRAME_SAMPLES, dtype=np.float32))
+            for _ in range(self.nb_trames)
+        ]
+
+
+class _SortieFactice:
+    """Haut-parleur factice : retient ce qui lui a ete ecrit."""
+
+    def __init__(self):
+        self.joues = []
+
+    def write(self, bloc):
+        self.joues.append(np.asarray(bloc).size)
+
+
+def _sequence_de_tour(n_paquets=2):
+    trame = [0.0] * FRAME_SAMPLES
+    messages = [{"frames": [trame]} for _ in range(n_paquets)]
+    messages.append(
+        {
+            "type": "report",
+            "transcript": "bonjour",
+            "reply": "bonjour, je t'ecoute",
+            "timings_ms": {"ears": 1.0, "brain": 2.0, "mouth": 3.0, "total": 6.0},
+        }
+    )
+    messages.append({"frames": []})
+    return messages
+
+
+@pytest.fixture
+def sans_entree(monkeypatch):
+    """`_tour` attend deux appuis sur Entree ; en test on les fournit."""
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "")
+
+
+def test_un_tour_consomme_le_rapport_et_le_marqueur_de_fin(sans_entree):
+    ws = _SocketFactice(_sequence_de_tour())
+
+    talk._tour(ws, _CaptureFactice(), _SortieFactice())
+
+    assert ws.restants == [], (
+        "le tour doit vider sa reponse entiere : un residu decale le tour suivant"
+    )
+
+
+def test_deux_tours_enchaines_ne_se_decalent_pas(sans_entree):
+    ws = _SocketFactice(_sequence_de_tour() + _sequence_de_tour())
+    sortie = _SortieFactice()
+
+    talk._tour(ws, _CaptureFactice(), sortie)
+    apres_premier = len(sortie.joues)
+    talk._tour(ws, _CaptureFactice(), sortie)
+
+    assert len(sortie.joues) > apres_premier, (
+        "le second tour doit restituer son propre audio, pas le residu du premier"
+    )
+    assert ws.restants == []

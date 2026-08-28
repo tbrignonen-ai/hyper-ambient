@@ -162,7 +162,7 @@ class HostPipeline:
             from src.mouth.pocket_tts import PocketTTS
 
             langue = os.getenv("MOUTH_LANGUAGE", "french_24l")
-            nom_voix = os.getenv("MOUTH_VOICE_NAME", "caro_davy")
+            nom_voix = os.getenv("MOUTH_VOICE_NAME", "eponine")
             print(f"MOUTH : chargement pocket-tts {langue} / {nom_voix}…", flush=True)
             self.tts = PocketTTS(
                 language=langue,

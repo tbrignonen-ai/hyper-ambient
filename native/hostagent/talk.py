@@ -364,7 +364,23 @@ def _tour(ws, capture, sortie) -> None:
         if message.get("type") == "error":
             print(f"Erreur du transport : {message}")
             return
-        recues = message.get("frames") or []
+        # Le serveur envoie, dans l'ordre : des paquets audio, puis un rapport,
+        # puis un marqueur de fin vide. Sortir dès qu'un message n'a pas de
+        # trames revenait à sortir SUR LE RAPPORT, en laissant le marqueur de
+        # fin dans la socket — le tour suivant le lisait à la place de sa
+        # propre réponse, et annonçait « aucune trame ». Un tour sur deux se
+        # décalait. Seul le marqueur vide termine le tour.
+        if message.get("type") == "report":
+            entendu = (message.get("transcript") or "").strip()
+            repondu = (message.get("reply") or "").strip()
+            if entendu:
+                print(f"  compris : {entendu}")
+            if repondu:
+                print(f"  réponse : {repondu}")
+            continue
+        recues = message.get("frames")
+        if recues is None:
+            continue
         if not recues:
             break
         a_jouer = []
