@@ -179,3 +179,42 @@ class VoiceTreatment:
 
         x = np.tanh(x * self.p.drive) / np.tanh(self.p.drive)
         return np.clip(x * 32767.0, -32768, 32767).astype(np.int16)
+
+
+# --- Transposition -----------------------------------------------------------
+#
+# Les seules voix Piper francaises exploitables sont claires : siwis et
+# upmc-jessica mesurent 235 Hz de fondamentale, la ou hyper-ambient demande une
+# voix grave et posee. Le corpus MLS proposait bien 56 locutrices dans la fenetre
+# grave, mais son synthetiseur multi-locuteur s'est revele inexploitable — de 50 a
+# 300 % d'erreur de transcription selon la locutrice. Descendre une voix native
+# reste donc la seule route qui conserve un francais natif.
+#
+# On descend par reechantillonnage, pas par vocodeur de phase. C'est le procede le
+# plus simple et il n'introduit aucun artefact : on relit l'onde plus lentement. Il
+# deplace aussi les formants vers le grave, ce qui donne le corps sombre recherche,
+# et il ralentit la diction — un defaut pour la plupart des usages, mais exactement
+# ce que ce cahier des charges demande. L'allongement se compense en amont, en
+# accelerant la synthese Piper d'autant.
+
+def facteur_transposition(demi_tons: float) -> float:
+    """Rapport de frequences correspondant a un intervalle en demi-tons."""
+    return float(2.0 ** (demi_tons / 12.0))
+
+
+def transposer(pcm16: np.ndarray, demi_tons: float) -> np.ndarray:
+    """Transpose un bloc PCM 16 bits, sans changer sa frequence d'echantillonnage.
+
+    Un intervalle negatif descend la voix et allonge le bloc dans le meme rapport.
+    """
+    if demi_tons == 0.0 or pcm16.size == 0:
+        return pcm16
+
+    facteur = facteur_transposition(demi_tons)
+    cible = max(1, int(round(pcm16.size / facteur)))
+    lu = np.interp(
+        np.linspace(0.0, pcm16.size - 1, cible),
+        np.arange(pcm16.size),
+        pcm16.astype(np.float32),
+    )
+    return np.clip(lu, -32768, 32767).astype(np.int16)

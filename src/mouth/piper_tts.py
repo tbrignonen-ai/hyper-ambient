@@ -20,7 +20,13 @@ from typing import Any, AsyncIterator, Dict, Iterable, List, Optional
 import numpy as np
 
 from src.mouth.normalize import strip_markup
-from src.mouth.voice_design import FLAT, PROFILES, VoiceTreatment
+from src.mouth.voice_design import (
+    FLAT,
+    PROFILES,
+    VoiceTreatment,
+    facteur_transposition,
+    transposer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +91,7 @@ class PiperTTS:
         length_scale: Optional[float] = None,
         profile: str = "mother",
         speaker_id: Optional[int] = None,
+        demi_tons: float = 0.0,
     ):
         """
         Args:
@@ -93,6 +100,11 @@ class PiperTTS:
                 delivery and treatment.
             length_scale: overrides the profile's rate if given.
             speaker_id: for multi-speaker voices (upmc, mls).
+            demi_tons: transposition de la voix, en demi-tons. Les voix
+                francaises natives de Piper sont claires (235 Hz mesures) et
+                hyper-ambient demande grave ; on les descend ici plutot que de
+                renoncer au francais natif. Le debit de synthese est accelere
+                d'autant, car descendre par reechantillonnage allonge le bloc.
         """
         self.model_path = model_path
         self.config_path = config_path
@@ -102,11 +114,17 @@ class PiperTTS:
             length_scale if length_scale is not None else self.profile.length_scale
         )
         self.speaker_id = speaker_id
+        self.demi_tons = demi_tons
+        if demi_tons:
+            self.length_scale *= facteur_transposition(demi_tons)
         self.voice = None
         self.sample_rate = 22050
         self._treatment: Optional[VoiceTreatment] = None
         self.ttfa_history: List[float] = []
-        logger.info(f"PiperTTS: {model_path} profile={profile} cuda={use_cuda}")
+        logger.info(
+            f"PiperTTS: {model_path} profile={profile} cuda={use_cuda} "
+            f"demi_tons={demi_tons}"
+        )
 
     async def load_model(self) -> bool:
         def _load():
@@ -161,6 +179,8 @@ class PiperTTS:
             parts.append(chunk.audio_int16_array)
 
         pcm = np.concatenate(parts) if parts else np.zeros(0, dtype=np.int16)
+        if self.demi_tons:
+            pcm = transposer(pcm, self.demi_tons)
         if self._treatment is not None:
             pcm = self._treatment.process(pcm)
         return pcm, (first_chunk_s or 0.0), time.perf_counter() - t0
