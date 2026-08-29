@@ -200,6 +200,11 @@ def analyser_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"port UDP local (défaut {PORT_DEFAUT})",
     )
     parseur.add_argument(
+        "--stop",
+        action="store_true",
+        help="fermer la presence deja lancee, puis quitter",
+    )
+    parseur.add_argument(
         "--demo",
         action="store_true",
         help="défiler les cinq états en boucle, sans serveur",
@@ -333,6 +338,16 @@ class Presence:
                 continue
             if not isinstance(message, dict):
                 continue
+            # La sortie de secours, et la seule fiable. Echap ne peut pas
+            # marcher : une fenetre overrideredirect ne prend pas le focus
+            # clavier. Le clic droit non plus : transparentcolor rend les pixels
+            # transparents traversants, le clic file a la fenetre du dessous des
+            # qu'il rate l'anneau. La transparence, qui est tout l'interet de
+            # cette presence, neutralise ses deux fermetures prevues. La socket,
+            # elle, est lue a chaque image quoi qu'il arrive.
+            if message.get("type") == "quit":
+                self.fermer()
+                return
             if message.get("type") not in (None, "state"):
                 continue
             etat = message.get("etat")
@@ -536,10 +551,22 @@ class Presence:
             self.fermer()
 
 
+def arreter(port: int) -> None:
+    """Ferme une presence deja lancee, en lui envoyant son ordre d'arret."""
+    douille = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    douille.sendto(json.dumps({"type": "quit"}).encode("utf-8"), (HOTE_UDP, port))
+    douille.close()
+    print("ordre d'arrêt envoyé", flush=True)
+
+
 def main(argv: list[str] | None = None) -> None:
     args = analyser_arguments(argv)
+    if args.stop:
+        arreter(args.port)
+        return
     print(
-        "présence d'hyper-ambient — Échap ou clic droit pour fermer",
+        "présence d'hyper-ambient — pour la fermer : "
+        "python native/presence/overlay.py --stop",
         flush=True,
     )
     print(
