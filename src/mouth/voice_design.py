@@ -38,6 +38,10 @@ class VoiceProfile:
     double_ms: float = 0.0         # faint delayed copy, 0 disables
     double_mix: float = 0.0
     drive: float = 1.0             # pre-limiter gain
+    presence_hz: float = 0.0       # peaking EQ, 0 disables
+    presence_db: float = 0.0
+    deess_hz: float = 0.0          # dipping EQ around sibilance, 0 disables
+    deess_db: float = 0.0
 
 
 # Neutral: whatever the voice does natively.
@@ -74,7 +78,39 @@ MOTHER_ALERT = VoiceProfile(
     drive=1.3,
 )
 
-PROFILES = {"flat": FLAT, "mother": MOTHER, "alert": MOTHER_ALERT}
+# Aurora Ray — close-mic, soft, present. The opposite of the hull:
+# no doubling, almost no reverb, keep air above 8 kHz, a little presence
+# so a dark neural voice doesn't sit behind the listener.
+AURORA = VoiceProfile(
+    highpass_hz=70.0,
+    lowpass_hz=12000.0,
+    reverb_mix=0.05,
+    reverb_decay=0.28,
+    double_ms=0.0,
+    double_mix=0.0,
+    drive=1.0,
+    presence_hz=3400.0,
+    presence_db=2.5,
+    deess_hz=7500.0,
+    deess_db=-3.0,
+)
+
+PROFILES = {"flat": FLAT, "mother": MOTHER, "alert": MOTHER_ALERT, "aurora": AURORA}
+
+
+def _peaking_sos(freq: float, q: float, gain_db: float, sample_rate: int) -> np.ndarray:
+    """One biquad peaking section, SOS layout for sosfilt."""
+    a_gain = 10.0 ** (gain_db / 40.0)
+    w0 = 2.0 * np.pi * freq / sample_rate
+    alpha = np.sin(w0) / (2.0 * q)
+    cosw = np.cos(w0)
+    b0 = 1.0 + alpha * a_gain
+    b1 = -2.0 * cosw
+    b2 = 1.0 - alpha * a_gain
+    a0 = 1.0 + alpha / a_gain
+    a1 = -2.0 * cosw
+    a2 = 1.0 - alpha / a_gain
+    return np.array([[b0 / a0, b1 / a0, b2 / a0, 1.0, a1 / a0, a2 / a0]], dtype=np.float64)
 
 
 class _Schroeder:
@@ -150,6 +186,10 @@ class VoiceTreatment:
             self._sos.append(signal.butter(2, profile.highpass_hz / nyq, "highpass", output="sos"))
         if 0 < profile.lowpass_hz < nyq:
             self._sos.append(signal.butter(4, profile.lowpass_hz / nyq, "lowpass", output="sos"))
+        if 0 < profile.presence_hz < nyq and profile.presence_db != 0.0:
+            self._sos.append(_peaking_sos(profile.presence_hz, 1.4, profile.presence_db, sample_rate))
+        if 0 < profile.deess_hz < nyq and profile.deess_db != 0.0:
+            self._sos.append(_peaking_sos(profile.deess_hz, 2.2, profile.deess_db, sample_rate))
         self._zi = [signal.sosfilt_zi(s) * 0.0 for s in self._sos]
 
         self._reverb = (

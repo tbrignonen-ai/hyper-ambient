@@ -175,11 +175,16 @@ class HostPipeline:
 
             langue = os.getenv("MOUTH_LANGUAGE", "french_24l")
             nom_voix = os.getenv("MOUTH_VOICE_NAME", "eponine")
-            print(f"MOUTH : chargement pocket-tts {langue} / {nom_voix}…", flush=True)
+            profil = os.getenv("MOUTH_PROFILE", "mother")
+            print(
+                f"MOUTH : chargement pocket-tts {langue} / {nom_voix} profil={profil}…",
+                flush=True,
+            )
             self.tts = PocketTTS(
                 language=langue,
                 voice=nom_voix,
                 device=os.getenv("MOUTH_DEVICE", "cuda"),
+                profile=profil,
             )
         else:
             from src.mouth.piper_tts import PiperTTS

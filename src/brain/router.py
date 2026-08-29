@@ -86,6 +86,24 @@ HOLDING = [
 ]
 
 
+
+# Un enonce plus court que ceci est probablement anaphorique : « vas-y », « oui »,
+# « et alors ? » ne veulent rien dire seuls. Au-dela, l'enonce porte sa propre
+# difficulte et le tour precedent n'est plus qu'un parasite.
+LONGUEUR_ANAPHORIQUE = 25
+
+
+def doit_joindre_contexte(prompt: str) -> bool:
+    """Le tour precedent doit-il peser sur la classification de celui-ci ?
+
+    Le contexte etait joint systematiquement, et cela deregle le jugement de
+    difficulte : mesure en conditions reelles, la question horaire escalade
+    correctement apres un tour vide, mais se fait classer REFLEXE des qu'une
+    politesse la precede — et recoit alors une reponse locale fausse. Un enonce
+    qui se suffit a lui-meme doit donc se juger seul.
+    """
+    return 0 < len(prompt.strip()) < LONGUEUR_ANAPHORIQUE
+
 class RouterBrain:
     """
     Local reflex channel + remote deliberation channel.
@@ -169,7 +187,7 @@ class RouterBrain:
         # sujet. Le dernier tour suffit a lever l'ambiguite ; le prefixe reste
         # stable, donc le cache de prompt de llama-server tient toujours.
         entete = ""
-        if contexte:
+        if contexte and doit_joindre_contexte(prompt):
             dernier = contexte[-1]
             if dernier.get("content"):
                 entete = "Tour precedent : " + dernier["content"].strip()[:160] + chr(10)
