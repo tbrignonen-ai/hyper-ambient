@@ -183,8 +183,20 @@ class HostPipeline:
         else:
             from src.mouth.piper_tts import PiperTTS
 
-            print(f"MOUTH : chargement piper {voix}…", flush=True)
-            self.tts = PiperTTS(model_path=voix)
+            # Les voix francaises de Piper sont natives — elles n'ont jamais
+            # entendu d'anglais — mais claires : 235 Hz mesures sur siwis, quand
+            # hyper-ambient demande grave. MOUTH_DEMI_TONS les descend ; -6
+            # ramene siwis a 155 Hz, la hauteur de la voix Pocket qu'il aimait.
+            demi_tons = float(os.getenv("MOUTH_DEMI_TONS", "0"))
+            profil = os.getenv("MOUTH_PROFILE", "mother")
+            print(
+                f"MOUTH : chargement piper {voix} profil={profil} "
+                f"demi_tons={demi_tons:+g}…",
+                flush=True,
+            )
+            self.tts = PiperTTS(
+                model_path=voix, profile=profil, demi_tons=demi_tons
+            )
 
         if not await self.tts.load_model():
             print(
