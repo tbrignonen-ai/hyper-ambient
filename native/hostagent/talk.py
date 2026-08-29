@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import sys
 import time
 from pathlib import Path
@@ -370,6 +371,9 @@ def _tour(ws, capture, sortie) -> None:
         # fin dans la socket — le tour suivant le lisait à la place de sa
         # propre réponse, et annonçait « aucune trame ». Un tour sur deux se
         # décalait. Seul le marqueur vide termine le tour.
+        if message.get("type") == "state":
+            relayer_etat(message)
+            continue
         if message.get("type") == "report":
             entendu = (message.get("transcript") or "").strip()
             repondu = (message.get("reply") or "").strip()
@@ -399,6 +403,40 @@ def _tour(ws, capture, sortie) -> None:
         print("Aucune trame de réponse — rien à restituer.")
     else:
         time.sleep(0.25)
+
+
+
+# --- Relais vers la presence visuelle ----------------------------------------
+#
+# La surcouche graphique est un processus separe : on veut pouvoir la fermer, la
+# relancer ou ne jamais la lancer sans que la conversation s'en apercoive. Le
+# relais se fait donc en datagramme UDP local, et non par une connexion.
+#
+# Ce choix n'est pas un raccourci, c'est la garantie recherchee : un datagramme
+# part sans poignee de main, sans accuse de reception et sans destinataire vivant.
+# Il ne peut structurellement pas faire attendre le chemin de parole, ce qui est
+# la regle qui commande toute la presence — l'etat ne doit jamais retarder le son.
+
+PORT_PRESENCE = int(os.getenv("PRESENCE_PORT", "8123"))
+_douille_presence: socket.socket | None = None
+
+
+def relayer_etat(message: dict) -> None:
+    """Transmet un etat a la presence visuelle, si elle ecoute. Sans jamais bloquer."""
+    global _douille_presence
+    if os.getenv("PRESENCE", "1") == "0":
+        return
+    try:
+        if _douille_presence is None:
+            _douille_presence = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            _douille_presence.setblocking(False)
+        _douille_presence.sendto(
+            json.dumps(message).encode("utf-8"), ("127.0.0.1", PORT_PRESENCE)
+        )
+    except OSError:
+        # Personne n'ecoute, ou la pile reseau refuse : ce n'est pas une erreur.
+        # La voix continue, c'est tout ce qui compte.
+        pass
 
 
 def main() -> None:

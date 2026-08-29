@@ -24,6 +24,7 @@ if str(_ROOT) not in sys.path:
 from src.hostagent.audio import FRAME_SAMPLES, SAMPLE_RATE, AudioFrame
 from src.hostagent.transport import create_transport_app
 from src.hostagent.warmup import prechauffer
+from src.presence.etat import Presence
 from src.mouth.secours import LIMITE_ENONCE_S, est_silence, phrase_de_secours
 
 # Six messages, soit trois echanges. Assez pour qu'un « oui, vas-y » ait un
@@ -313,6 +314,10 @@ class HostPipeline:
         # parce qu'il englobe l'envoi, pas parce que les étages
         # s'enchaînent sans recouvrement.
         t_tour = time.monotonic()
+        # La presence visuelle suit le tour de l'exterieur : elle ne participe a
+        # aucune decision, elle raconte. Son emission ne peut pas retarder l'audio,
+        # `emettre` rendant la main sans attendre le client (voir src/presence).
+        presence = Presence(websocket)
         try:
             if not frames:
                 await self._envoyer(websocket, [])
@@ -378,6 +383,12 @@ class HostPipeline:
                     await self._envoyer(websocket, [])
                 return
 
+            presence.emettre("ecoute")
+            await presence.vider()
+            # Un seul « reflexion » par tour : la boucle voit passer des centaines
+            # de tokens, et la deduplication de Presence ne suffirait pas puisque
+            # « escalade » peut s'intercaler entre deux.
+            presence_reflexion = [True]
             t_ears = time.monotonic()
             result = await self.asr.transcribe(audio)
             ears_ms = (time.monotonic() - t_ears) * 1000.0
@@ -424,6 +435,9 @@ class HostPipeline:
                 async for chunk in self.brain.query_streaming(
                     prompt, history=list(self._historique)
                 ):
+                    if presence_reflexion[0]:
+                        presence_reflexion[0] = False
+                        presence.emettre("reflexion")
                     if chunk.get("ttft_ms") is not None:
                         ttft_ms = chunk["ttft_ms"]
                     if chunk["stop_reason"] == "error":
@@ -452,6 +466,11 @@ class HostPipeline:
                         await self._dire_maintenant(
                             websocket, chunk["delta"], leftover
                         )
+                        # La phrase d'attente n'existe que sur escalade : c'est le
+                        # seul signal fiable qu'on a que la question est partie au
+                        # loin, et il arrive avant la reponse distante.
+                        presence.emettre("escalade")
+                        await presence.vider()
                         continue
                     full_text.append(chunk["delta"])
                     reponse_utile.append(chunk["delta"])
@@ -479,6 +498,9 @@ class HostPipeline:
                     )
                 await self._envoyer(websocket, trames)
                 t_derniere_trame = time.monotonic()
+                # Apres l'envoi, jamais avant : la voix passe d'abord.
+                presence.emettre("parole")
+                await presence.vider()
 
             queue = _vider_reliquat(leftover)
             if queue:
@@ -539,6 +561,8 @@ class HostPipeline:
                     },
                 )
 
+            presence.emettre("repos")
+            await presence.vider()
             await self._envoyer(websocket, [])
         except Exception as exc:
             print(f"tour interrompu : {exc}", flush=True)
