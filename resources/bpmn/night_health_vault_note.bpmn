@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  xmlns:modeler="http://camunda.org/schema/modeler/1.0"
+                  id="Definitions_night_health_vault_note"
+                  targetNamespace="http://bpmn.io/schema/bpmn"
+                  exporter="MOTHER nuit 2026-08-31"
+                  exporterVersion="1.0"
+                  modeler:executionPlatform="Camunda Cloud"
+                  modeler:executionPlatformVersion="8.8.0">
+  <bpmn:process id="night_health_vault_note" name="Night health vault note" isExecutable="true">
+    <bpmn:documentation>Nuit MOTHER 2026-08-31 : verifie la topologie Camunda puis ecrit la note de sante dans le coffre Obsidian. Aucun secret dans ce modele.</bpmn:documentation>
+
+    <bpmn:startEvent id="start_night" name="Nuit declenchee">
+      <bpmn:outgoing>flow_start_to_health</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:sequenceFlow id="flow_start_to_health" sourceRef="start_night" targetRef="health_check" />
+
+    <bpmn:serviceTask id="health_check" name="Health check topologie">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="health-check" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow_start_to_health</bpmn:incoming>
+      <bpmn:outgoing>flow_health_to_note</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:sequenceFlow id="flow_health_to_note" sourceRef="health_check" targetRef="write_vault_note" />
+
+    <bpmn:serviceTask id="write_vault_note" name="Ecrire la note dans le coffre">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="vault-note" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow_health_to_note</bpmn:incoming>
+      <bpmn:outgoing>flow_note_to_end</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:sequenceFlow id="flow_note_to_end" sourceRef="write_vault_note" targetRef="end_night" />
+
+    <bpmn:endEvent id="end_night" name="Note ecrite">
+      <bpmn:incoming>flow_note_to_end</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_night_health_vault_note">
+    <bpmndi:BPMNPlane id="BPMNPlane_night_health_vault_note" bpmnElement="night_health_vault_note">
+      <bpmndi:BPMNShape id="Shape_start_night" bpmnElement="start_night">
+        <dc:Bounds x="172" y="102" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="152" y="145" width="78" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_health_check" bpmnElement="health_check">
+        <dc:Bounds x="260" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_write_vault_note" bpmnElement="write_vault_note">
+        <dc:Bounds x="420" y="80" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_end_night" bpmnElement="end_night">
+        <dc:Bounds x="582" y="102" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="574" y="145" width="54" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Edge_flow_start_to_health" bpmnElement="flow_start_to_health">
+        <di:waypoint x="208" y="120" />
+        <di:waypoint x="260" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_flow_health_to_note" bpmnElement="flow_health_to_note">
+        <di:waypoint x="360" y="120" />
+        <di:waypoint x="420" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_flow_note_to_end" bpmnElement="flow_note_to_end">
+        <di:waypoint x="520" y="120" />
+        <di:waypoint x="582" y="120" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
