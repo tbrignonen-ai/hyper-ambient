@@ -21,7 +21,12 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from src.hostagent.audio import FRAME_SAMPLES, SAMPLE_RATE, AudioFrame
+from src.hostagent.audio import (
+    FRAME_SAMPLES,
+    SAMPLE_RATE,
+    AudioFrame,
+    RechantillonneurContinu,
+)
 from src.hostagent.transport import create_transport_app
 from src.hostagent.warmup import prechauffer
 from src.presence.etat import Presence
@@ -62,7 +67,13 @@ def _vers_float32(echantillons) -> np.ndarray:
 
 
 def _rechantillonner(pcm: np.ndarray, orig_sr: int) -> np.ndarray:
-    """Ramène le PCM MOUTH à 16 kHz, le taux du canal host-agent."""
+    """Ramène à 16 kHz un énoncé **complet** : phrase d'attente, phrase de secours.
+
+    Réservé aux appels qui tiennent tout l'audio en main. Le flux de MOUTH, lui,
+    arrive par blocs de 80 ms et doit passer par `RechantillonneurContinu` :
+    convertir chaque bloc isolément pose un transitoire à chaque couture — voir
+    `dev/tests/test_resample_continu.py`.
+    """
     if orig_sr == SAMPLE_RATE or pcm.size == 0:
         return pcm
     import librosa
@@ -104,6 +115,16 @@ def _json_trames(trames: list[AudioFrame]) -> dict:
         "primitive": "audio.render",
         "frames": [trame.samples.tolist() for trame in trames],
     }
+
+
+def composer_rapport(amorces: list[str], reponse: list[str]) -> tuple[str, str]:
+    """Sépare ce qui a couvert l'attente de ce qui a répondu.
+
+    L'amorce (« Un instant. ») est prononcée hors flux et n'est pas une réponse :
+    la recoller au texte du modèle faisait lire « Un instant. Je suis juste là »
+    comme une seule phrase, dans le rapport comme dans le log.
+    """
+    return "".join(reponse).strip(), " ".join(a.strip() for a in amorces if a.strip())
 
 
 class HostPipeline:
@@ -176,8 +197,14 @@ class HostPipeline:
             langue = os.getenv("MOUTH_LANGUAGE", "french_24l")
             nom_voix = os.getenv("MOUTH_VOICE_NAME", "eponine")
             profil = os.getenv("MOUTH_PROFILE", "mother")
+            # pocket-tts n'a ni reglage de vitesse ni reglage de hauteur.
+            # MOUTH_DEMI_TONS descend la voix par reechantillonnage, ce qui
+            # ralentit la diction dans le meme rapport : -3 donne une tierce
+            # mineure plus bas et 19 % plus lent.
+            demi_tons = float(os.getenv("MOUTH_DEMI_TONS", "0"))
             print(
-                f"MOUTH : chargement pocket-tts {langue} / {nom_voix} profil={profil}…",
+                f"MOUTH : chargement pocket-tts {langue} / {nom_voix} "
+                f"profil={profil} demi_tons={demi_tons:+g}…",
                 flush=True,
             )
             self.tts = PocketTTS(
@@ -185,6 +212,7 @@ class HostPipeline:
                 voice=nom_voix,
                 device=os.getenv("MOUTH_DEVICE", "cuda"),
                 profile=profil,
+                demi_tons=demi_tons,
             )
         else:
             from src.mouth.piper_tts import PiperTTS
@@ -233,8 +261,13 @@ class HostPipeline:
         transcript: str,
         reply: str,
         timings_ms: dict,
+        amorces: str = "",
     ) -> None:
-        """Émet le rapport après l'audio : transcript, réponse, durées d'étages."""
+        """Émet le rapport après l'audio : transcript, réponse, durées d'étages.
+
+        `amorces` est additif : les clients existants lisent `transcript` et
+        `reply` et ignorent le reste. Toujours une chaîne, jamais `None`.
+        """
         if websocket is None:
             return
         await websocket.send_json(
@@ -242,6 +275,7 @@ class HostPipeline:
                 "type": "report",
                 "transcript": transcript,
                 "reply": reply,
+                "amorces": amorces,
                 "timings_ms": timings_ms,
             }
         )
@@ -425,8 +459,8 @@ class HostPipeline:
                 return
 
             ttft_ms = None
-            full_text = []
-            reponse_utile = []
+            amorces: list[str] = []
+            reponse: list[str] = []
             brain_error = None
             brain_ms = 0.0
             mouth_ms = 0.0
@@ -457,12 +491,13 @@ class HostPipeline:
                     # apres l'attente. On les prononce donc tout de suite,
                     # hors du flux.
                     if chunk.get("flush"):
-                        # Espace explicite : ces segments sont prononces a part,
-                        # rien ne les separe dans le texte recolle du rapport.
-                        # Ils ne vont PAS en memoire : « Un instant. » n'est pas
-                        # une reponse, et le relire au tour suivant apprendrait
-                        # au modele a temporiser au lieu de repondre.
-                        full_text.append(chunk["delta"] + " ")
+                        # Comptees a part, jamais avec la reponse : recollees,
+                        # elles faisaient lire « Un instant. Je suis juste la »
+                        # comme une seule phrase dans le rapport. Elles ne vont
+                        # PAS non plus en memoire : « Un instant. » n'est pas une
+                        # reponse, et la relire au tour suivant apprendrait au
+                        # modele a temporiser au lieu de repondre.
+                        amorces.append(chunk["delta"])
                         print(
                             f"BRAIN : {chunk.get('channel', 'flush')} — "
                             f"\"{chunk['delta']}\"",
@@ -477,18 +512,21 @@ class HostPipeline:
                         presence.emettre("escalade")
                         await presence.vider()
                         continue
-                    full_text.append(chunk["delta"])
-                    reponse_utile.append(chunk["delta"])
+                    reponse.append(chunk["delta"])
                     yield chunk["delta"]
                 brain_ms = (time.monotonic() - t_brain_mouth) * 1000.0
 
             t_gen = time.perf_counter()
             n_chunks = 0
+            # Un rechantillonneur pour tout le flux de ce tour. MOUTH sort par
+            # blocs de 80 ms ; les convertir un par un remettait les bords du
+            # filtre a zero douze fois par seconde, ce qui s'entendait comme un
+            # hachurage. Celui-ci porte la queue du filtre d'un bloc au suivant.
+            flux_16k = RechantillonneurContinu(
+                int(getattr(self.tts, "sample_rate", SAMPLE_RATE)), SAMPLE_RATE
+            )
             async for out in self.tts.synthesize_stream(deltas()):
-                pcm = _rechantillonner(
-                    _vers_float32(out.get("audio", [])),
-                    int(out.get("sample_rate") or self.tts.sample_rate),
-                )
+                pcm = flux_16k.pousser(_vers_float32(out.get("audio", [])))
                 trames = _trames_depuis_pcm(pcm, leftover)
                 if not trames:
                     continue
@@ -507,21 +545,28 @@ class HostPipeline:
                 presence.emettre("parole")
                 await presence.vider()
 
-            queue = _vider_reliquat(leftover)
+            # La queue retenue dans le filtre appartient a la phrase : sans ce
+            # vidage, les dernieres millisecondes du dernier mot restent dedans.
+            reste_16k = flux_16k.vider()
+            if reste_16k.size:
+                queue = _trames_depuis_pcm(reste_16k, leftover) + _vider_reliquat(leftover)
+            else:
+                queue = _vider_reliquat(leftover)
             if queue:
                 if n_chunks == 0:
                     mouth_ms = (time.monotonic() - t_brain_mouth) * 1000.0
                 await self._envoyer(websocket, queue)
                 t_derniere_trame = time.monotonic()
 
-            text = "".join(full_text).strip()
+            # `text` ne porte plus que la reponse : les amorces partent a part,
+            # dans un champ dedie du rapport.
+            text, texte_amorces = composer_rapport(amorces, reponse)
 
             # La memoire ne retient que la reponse utile : les phrases
             # d'attente sont du remplissage de latence, pas du contenu.
-            utile = "".join(reponse_utile).strip()
-            if utile:
+            if text:
                 self._historique.append({"role": "user", "content": prompt})
-                self._historique.append({"role": "assistant", "content": utile})
+                self._historique.append({"role": "assistant", "content": text})
                 del self._historique[:-MEMOIRE_MESSAGES]
 
             if not text:
@@ -558,6 +603,7 @@ class HostPipeline:
                     websocket,
                     transcript=prompt,
                     reply=text,
+                    amorces=texte_amorces,
                     timings_ms={
                         "ears": ears_ms,
                         "brain": brain_ms,

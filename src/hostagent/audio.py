@@ -88,3 +88,68 @@ class FrameRing:
         frames = list(self._buffer)
         self._buffer.clear()
         return frames
+
+
+class RechantillonneurContinu:
+    """Convertit un flux d'un taux à l'autre en portant son état d'un bloc au suivant.
+
+    MOUTH sort à 24 kHz par blocs de 80 ms ; le canal host-agent transporte du
+    16 kHz. La conversion se faisait bloc par bloc avec ``librosa.resample``,
+    qui est écrit pour un signal **complet** : il suppose du silence avant le
+    premier échantillon et après le dernier, donc il remet ses bords à zéro à
+    chaque appel. Appliqué à un flux découpé, il pose un transitoire à chaque
+    couture. Mesuré le 6 septembre 2026 sur des chunks de 1920 échantillons :
+    l'écart au signal de référence vaut 0,016 au bord d'un bloc contre 0,000 au
+    milieu — un rapport de 237 000 — et culmine à 13 % du pic sur une phrase
+    d'estelle. Douze coutures et demie par seconde, ce qui s'entend comme un
+    hachurage : « des fois comme de la jitter, entrecoupé ».
+
+    ``soxr.ResampleStream`` est fait pour ça : il garde la queue du filtre
+    polyphase entre deux appels, si bien que la sortie concaténée est
+    indiscernable du rechantillonnage du signal entier. C'est le contrat que
+    fixe ``dev/tests/test_resample_continu.py``.
+
+    Un rechantillonneur par flux, jamais partagé : l'état est la mémoire du
+    filtre, et deux voix qui se le partageraient s'entendraient l'une l'autre.
+    """
+
+    def __init__(self, taux_entree: int, taux_sortie: int) -> None:
+        self.taux_entree = int(taux_entree)
+        self.taux_sortie = int(taux_sortie)
+        self._flux = None
+        if self.taux_entree != self.taux_sortie:
+            self._ouvrir()
+
+    def _ouvrir(self) -> None:
+        import soxr
+
+        # « HQ » est la qualité que librosa emploie par défaut ; on ne change
+        # pas la couleur du rendu en même temps qu'on répare les coutures.
+        self._flux = soxr.ResampleStream(
+            self.taux_entree, self.taux_sortie, 1, dtype="float32", quality="HQ"
+        )
+
+    def pousser(self, pcm: np.ndarray) -> np.ndarray:
+        """Convertit un bloc. La queue du filtre reste pour le bloc suivant."""
+        if self._flux is None:
+            return pcm
+        bloc = np.asarray(pcm, dtype=np.float32).reshape(-1)
+        if bloc.size == 0:
+            return np.zeros(0, dtype=np.float32)
+        return np.asarray(self._flux.resample_chunk(bloc), dtype=np.float32).reshape(-1)
+
+    def vider(self) -> np.ndarray:
+        """Sort la queue retenue dans le filtre. À appeler en fin de flux.
+
+        Sans ça, les derniers millisecondes d'une phrase restent dans le filtre
+        et la fin de mot est coupée — le défaut inverse de celui qu'on répare.
+        """
+        if self._flux is None:
+            return np.zeros(0, dtype=np.float32)
+        reste = self._flux.resample_chunk(np.zeros(0, dtype=np.float32), last=True)
+        return np.asarray(reste, dtype=np.float32).reshape(-1)
+
+    def reinitialiser(self) -> None:
+        """Repart d'un filtre vierge : un tour de parole ne colore pas le suivant."""
+        if self.taux_entree != self.taux_sortie:
+            self._ouvrir()
