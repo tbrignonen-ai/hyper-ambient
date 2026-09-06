@@ -52,7 +52,7 @@ src/
   ears/        ASR (faster-whisper CTranslate2, GPU)
   turn/        Turn detection (Silero VAD L1, Smart Turn v3 L2)
   mouth/       TTS (Pocket TTS primary, Piper fallback)
-  brain/       BRAIN local (llama.cpp + Luth-2-2B) + remote escalade (MiniMax-M3)
+  brain/       BRAIN local (llama.cpp + LFM2.5-2.6B-Q5_K_M `mother-local` :8090) + remote escalade (MiniMax-M3)
   acoustic/    Acoustic descriptors, event classification
   gate/        Permission control, audit log, execution modes
 
@@ -106,7 +106,7 @@ Located in `dev/scripts/`, run via `docker exec` or `make`:
 | **TURN-L1** | Silero VAD ONNX | Apache-2.0 | Latency | 20 ms | CPU | ✅ Active |
 | **TURN-L2** | Smart Turn v3 | BSD-2 | Accuracy (FR) | 96.01 % | 8 MB | ⏳ Ready, not installed |
 | **MOUTH** | Kyutai Pocket TTS `estelle` | CC-BY-4.0 | TTFA | 75 ms (63 ms warm) | 1.49 GB | ✅ Active |
-| **BRAIN-L1** | Luth-2-2B (llama.cpp CUDA) | ? | TTFT | 38 ms | 1.5 GB | ✅ Active |
+| **BRAIN-L1** | LFM2.5-2.6B-Q5_K_M (llama.cpp CUDA) | ? | TTFT | 27-38 ms | 1.9 GB | ✅ Active (`mother-local` :8090) |
 | **BRAIN-Escalade** | MiniMax-M3 (CommandCode API) | Proprietary | TTFC p50 | 612 ms | 0 (remote) | ✅ Active |
 | **Round-trip** | Composed | — | End-to-end | 500 ms | — | ✅ Executable |
 
@@ -135,7 +135,7 @@ curl http://localhost:8091/v1/models  # Should return list
 Downloaded to `./models/` (bind-mounted, persistent):
 
 ```
-models/gguf/       18 GB   Candidate LLMs (Luth active, Ministral/Luciole/LFM2.5/Qwen for evaluation)
+models/gguf/       20 GB   Candidate LLMs (LFM2.5-2.6B-Q5_K_M active; Luth = repli/historique 2026-08-21, Ministral/Luciole/Qwen for evaluation)
 models/pocket-tts/ 724 MB  Pocket TTS + 3 voices (estelle, eve, vera)
 models/hf-cache/   1.7 GB  faster-whisper turbo + base
 models/tts/        1.4 Go  Qwen3-TTS (offline only, not real-time)

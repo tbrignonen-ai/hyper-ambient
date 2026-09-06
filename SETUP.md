@@ -98,8 +98,9 @@ make models-brain
 ```
 
 Downloads (~2.5 GB):
-- `kurakurai/Luth-2-2B-GGUF` (Q5_K_M quantization, active BRAIN)
-- Ministral-3-8B, Luciole-8B, LFM2.5, Qwen candidates (for evaluation)
+- `LiquidAI/LFM2.5-2.6B-GGUF` (`LFM2.5-2.6B-Q5_K_M.gguf`, active default BRAIN via `mother-local` on :8090)
+- `kurakurai/Luth-2-2B-GGUF` (Q5_K_M quantization — **fallback / historique 2026-08-21**, plus le défaut)
+- Ministral-3-8B, Luciole-8B, LFM2.5-VL-3B, Qwen candidates (for evaluation)
 
 These scripts call `dev/scripts/fetch_models.sh {core|brain}` which uses huggingface-hub to download.
 
@@ -116,7 +117,7 @@ smoke_test.py — 9 capability checks
 
 [1/9] TURN-L1 (VAD)           OK  20 ms
 [2/9] EARS (faster-whisper)   OK  370 ms, WER 2.6%
-[3/9] BRAIN-L1 (Luth local)   OK  27 ms TTFT
+[3/9] BRAIN-L1 (LFM2.5 local)  OK  27 ms TTFT
 [4/9] BRAIN-remote check      OK  reachable
 [5/9] MOUTH (Pocket TTS)      OK  75 ms TTFA
 [6/9] Router (escalade logic) OK  classification 90 ms
@@ -170,15 +171,15 @@ BRAIN and EARS can run as standalone OpenAI-compatible servers, useful for debug
 ### Launch local BRAIN (llama-server)
 ```bash
 make llama
-# Starts: llama-server -m models/gguf/Luth-2-2B-Q5_K_M.gguf --port 8080
-# Listen on: http://localhost:8090 (mapped from container 8080)
+# Starts: llama-server -m models/gguf/LFM2.5-2.6B-Q5_K_M.gguf --port 8080 (via serve_llama.sh)
+# Listen on: http://localhost:8090 (mapped from container 8080, alias mother-local)
 ```
 
 Test it:
 ```bash
 curl -X POST http://localhost:8090/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"Luth-2-2B","messages":[{"role":"user","content":"Bonjour"}]}'
+  -d '{"model":"mother-local","messages":[{"role":"user","content":"Bonjour"}]}'
 ```
 
 ### Launch local EARS (whisper-server)
@@ -275,7 +276,7 @@ At runtime, `src/` reads `.env.local` via `python-dotenv` (if installed). See `s
 │   ├── scripts/      Runtime scripts (smoke_test.py, bench_*.py, etc.)
 │   └── sessions/     Session logs (2026-08-21-implementation.md, etc.)
 ├── models/           Downloaded weights (bind-mounted, persistent)
-│   ├── gguf/         GGUF LLMs (Luth, Ministral, etc.)
+│   ├── gguf/         GGUF LLMs (LFM2.5-2.6B actif ; Luth = repli/historique 2026-08-21, Ministral, etc.)
 │   ├── pocket-tts/   TTS weights + voices
 │   ├── hf-cache/     faster-whisper CTranslate2 + Hugging Face cache
 │   ├── whisper/      GGML Whisper (fallback)

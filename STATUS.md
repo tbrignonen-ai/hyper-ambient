@@ -1,4 +1,4 @@
-# hyper-ambient — État du projet (2026-08-21)
+# hyper-ambient — État du projet (2026-09-02)
 
 Première implémentation exécutable, bout-en-bout, mesurée. Machine : RTX 4070 12 Go.
 
@@ -12,7 +12,7 @@ Première implémentation exécutable, bout-en-bout, mesurée. Machine : RTX 407
 | **TURN-L1** | Silero VAD ONNX | 20 ms, RTF 0,004 | ✅ Actif | CPU | Endpoint à 4,30 s, trames 512 échantillons. |
 | **TURN-L2** | Smart Turn v3 | **96,01 % FR**, 12 ms | ⏳ Levé, non installé | 8 Mo | OQ-15 résolu mathématiquement. Gain de qualité disponible, à intégrer. |
 | **MOUTH** | Kyutai Pocket TTS `estelle` | 75 ms TTFA (63 ms à chaud), 104 chunks | ✅ Actif | 1,49 Go | 24 kHz, 26 voix FR. Repli : Piper (0 VRAM, 30× RTF). |
-| **BRAIN-L1** | Luth-2-2B Q5_K_M | 38 ms TTFT, 697 car/s | ✅ Actif | 1,5 Go | llama.cpp CUDA. Tutoiement cohérent, zéro hallucination markdown. |
+| **BRAIN-L1** | LFM2.5-2.6B Q5_K_M (`mother-local`) | ~26-38 ms TTFT, 660+ car/s | ✅ Actif | ~1,9 Go | llama.cpp CUDA (alias `mother-local` :8090). Défaut réflexe local (ex-Luth-2-2B). |
 | **BRAIN-Escalade** | MiniMax-M3 (CommandCode) | 612 ms p50 TTFC, zéro delta reasoning | ✅ Actif | 0 (distant) | Routeur binaire : RÉFLEXE local → ESCALADE distant + meublage. |
 | **Chaîne complète** | Composée | **500 ms round-trip perçu** | ✅ Exécutable | — | Budget NFR-01 1200 ms → marge ×2,4. Smoke test 9/9. |
 
@@ -48,13 +48,14 @@ Round-trip 500 ms  (marge ×2,4 sur 1200 ms)
 
 | Modèle | Params | TTFT | car/s | Registre FR | Retenus |
 |---|---|---|---|---|---|
-| LFM2.5-VL-3B | 3 B | 26 ms | 667 | Faux (Ton → Tonne) | ✗ |
-| **Luth-2-2B** | 1,9 B | **38 ms** | **697** | Cohérent | **✅** |
+| LFM2.5-VL-3B | 3 B | 26 ms | 667 | Faux (Ton → Tonne) | ✗ (banc 2026-08-21) |
+| Luth-2-2B | 1,9 B | **38 ms** | **697** | Cohérent | historique 2026-08-21 |
+| **LFM2.5-2.6B-Q5_K_M** | 2,6 B | ~26–38 ms | 660+ | — | **✅ défaut 2026-09-02** (`mother-local` :8090) |
 | Ministral-3-8B-Instruct | 8 B | 39 ms | 331 | Mélange tu/vous | ✓ Bascule profondeur |
 | Luciole-8B-Instruct | 8 B | 120 ms | 341 | Verbeux, fuyant | ✗ |
 | Qwen3-4B-Instruct | 4 B | 43 ms | 389 | Hallucine | ✗ |
 
-**Retenu** : Luth-2-2B. Double le débit d'un 8B, tiendrait seul sur 12 Go. Cohabitation EARS (1,6 Go) + MOUTH (1,49 Go) possible = solution MEDIUM.
+**Retenu** : LFM2.5-2.6B-Q5_K_M (remplace Luth-2-2B depuis le 2026-09-02, alias `mother-local` sur `:8090`). Double le débit d'un 8B, tiendrait seul sur 12 Go. Cohabitation EARS (1,6 Go) + MOUTH (1,49 Go) possible = solution MEDIUM. Luth-2-2B et Ministral restent en alternative.
 
 ### Arithmétique — zéro sur cinq
 
@@ -92,7 +93,7 @@ Testé : distant-primaire + repli local 600 ms → 1477 ms total contre 876 ms l
 ## Inventaire disque
 
 ```
-models/gguf/       18 Go  Luth (actif), Ministral, Luciole, LFM2.5, Qwen3-4B, Qwen3.5
+models/gguf/       20 Go  LFM2.5-2.6B (actif, mother-local), Luth, Ministral, Luciole, LFM2.5-VL, Qwen3-4B, Qwen3.5
 models/pocket-tts/ 724 Mo estelle, eve, vera
 models/hf-cache/   1,7 Go faster-whisper turbo + base
 models/tts/        1,4 Go Qwen3-TTS (hors temps réel, offline)
@@ -117,5 +118,5 @@ Voir `STACK.md` pour le raisonnement mesuré complet.
 
 ---
 
-**Mise à jour** : 2026-08-21  
+**Mise à jour** : 2026-09-02 — défaut BRAIN local LFM2.5-2.6B-Q5_K_M (`mother-local` :8090) ; Luth-2-2B en historique / repli.  
 **Horizon prochaine étape** : Smart Turn v3 (intégration 1-2 h)

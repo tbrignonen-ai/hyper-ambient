@@ -27,7 +27,11 @@ from src.hostagent.audio import SAMPLE_RATE
 # 127.0.0.1 repond, ::1 et localhost expirent tous les deux.
 URL_DEFAUT = "ws://127.0.0.1:8001/hostagent"
 SECRET_DEVELOPPEMENT = "partage-installation"
-NOM_MICRO_PREFERE = "USB Desk Microphone"
+NOMS_MICRO_PREFERES: tuple[str, ...] = (
+    "USB PnP",
+    "USB Desk Microphone",
+)
+NOM_MICRO_PREFERE: str | tuple[str, ...] = NOMS_MICRO_PREFERES
 
 
 def lire_secret() -> str:
@@ -82,6 +86,10 @@ def lister_peripheriques(sd) -> str:
     mort).
     """
     peripheriques = sd.query_devices()
+    try:
+        apis = sd.query_hostapis()
+    except Exception:
+        apis = []
     entrees: list[str] = []
     sorties: list[str] = []
     for indice, peripherique in enumerate(peripheriques):
@@ -89,12 +97,21 @@ def lister_peripheriques(sd) -> str:
         taux = int(peripherique["default_samplerate"])
         n_in = int(peripherique["max_input_channels"])
         n_out = int(peripherique["max_output_channels"])
+        hostapi_idx = peripherique.get("hostapi")
+        api_nom = ""
+        if (
+            apis
+            and hostapi_idx is not None
+            and isinstance(hostapi_idx, int)
+            and hostapi_idx < len(apis)
+        ):
+            api_nom = f"  [{apis[hostapi_idx]['name']}]"
         if n_in > 0:
             mot = "canal" if n_in == 1 else "canaux"
-            entrees.append(f"  [{indice}] {nom} — {n_in} {mot}, {taux} Hz")
+            entrees.append(f"  [{indice}] {nom}{api_nom} — {n_in} {mot}, {taux} Hz")
         if n_out > 0:
             mot = "canal" if n_out == 1 else "canaux"
-            sorties.append(f"  [{indice}] {nom} — {n_out} {mot}, {taux} Hz")
+            sorties.append(f"  [{indice}] {nom}{api_nom} — {n_out} {mot}, {taux} Hz")
     lignes = ["Entrées :"]
     lignes.extend(entrees or ["  (aucune)"])
     lignes.append("Sorties :")
@@ -127,6 +144,29 @@ def decrire_erreur_peripherique(exc: BaseException) -> str:
     )
 
 
+def canaux_de_sortie(max_output_channels: int | None) -> int:
+    """Détermine le nombre de canaux à ouvrir pour la restitution.
+
+    - 0 ou absent : échec bruyant en français.
+    - 1 : périphérique réellement mono.
+    - >= 2 : 2 (stéréo nominale, dupliquée).
+    """
+    if not max_output_channels or max_output_channels <= 0:
+        print("Aucun canal de sortie disponible sur ce périphérique.")
+        raise SystemExit(1)
+    if max_output_channels == 1:
+        return 1
+    return 2
+
+
+def etaler(pcm, canaux: int):
+    """Duplique le signal mono vers N canaux."""
+    import numpy as np
+
+    arr = np.asarray(pcm, dtype=np.float32)
+    return np.repeat(arr.reshape(-1, 1), canaux, axis=1)
+
+
 def tester_sortie(sd, *, indice=None, secondes=0.4, frequence=440.0) -> int:
     """Joue un bip au taux de la démo et rend le nombre d'échantillons écrits.
 
@@ -135,6 +175,27 @@ def tester_sortie(sd, *, indice=None, secondes=0.4, frequence=440.0) -> int:
     """
     import numpy as np
 
+    try:
+        if indice is not None:
+            info = sd.query_devices(indice)
+        else:
+            info = sd.query_devices(kind="output")
+    except Exception as exc:
+        _echouer_peripherique(exc)
+
+    canaux = canaux_de_sortie(info.get("max_output_channels"))
+    nom = info.get("name", "inconnu")
+    api_info = ""
+    try:
+        apis = sd.query_hostapis()
+        hostapi_idx = info.get("hostapi")
+        if hostapi_idx is not None and hostapi_idx < len(apis):
+            api_info = f" [{apis[hostapi_idx]['name']}]"
+    except Exception:
+        pass
+    mot_canaux = "canal" if canaux == 1 else "canaux"
+    print(f"sortie : {nom} — {canaux} {mot_canaux} à 16 kHz{api_info}")
+
     n = int(secondes * SAMPLE_RATE)
     t = np.arange(n, dtype=np.float32) / np.float32(SAMPLE_RATE)
     signal = (
@@ -142,7 +203,7 @@ def tester_sortie(sd, *, indice=None, secondes=0.4, frequence=440.0) -> int:
     ).astype(np.float32)
     kwargs = {
         "samplerate": SAMPLE_RATE,
-        "channels": 1,
+        "channels": canaux,
         "dtype": "float32",
     }
     if indice is not None:
@@ -150,7 +211,7 @@ def tester_sortie(sd, *, indice=None, secondes=0.4, frequence=440.0) -> int:
     flux = sd.OutputStream(**kwargs)
     try:
         flux.start()
-        flux.write(signal.reshape(-1, 1))
+        flux.write(etaler(signal, canaux))
     finally:
         try:
             flux.stop()
@@ -202,17 +263,47 @@ def _resoudre_indice(demande: str, peripheriques, *, canaux: str, role: str) -> 
         raise SystemExit(1)
 
 
-def choisir_sortie(demande: str | None, sd) -> int | None:
-    """Résout ``--sortie`` (indice ou fragment de nom). None = défaut système."""
-    if demande is None:
+def resoudre_peripherique_api(nom_api: str, peripheriques: list[dict], hostapis: list[dict], *, role: str = "max_output_channels") -> int:
+    """Trouve le premier périphérique du rôle demandé correspondant à l'API spécifiée."""
+    nom_api_normalise = nom_api.strip().lower()
+    indices_api = [
+        i for i, api in enumerate(hostapis)
+        if nom_api_normalise in api.get("name", "").lower()
+    ]
+    if not indices_api:
+        print(f"L'API hôte audio {nom_api!r} n'a pas été trouvée sur cette machine.")
+        print("Lancez --lister pour voir les APIs et périphériques disponibles.")
+        raise SystemExit(1)
+
+    for indice, periph in enumerate(peripheriques):
+        if periph.get(role, 0) > 0 and periph.get("hostapi") in indices_api:
+            return indice
+
+    role_texte = "de sortie" if role == "max_output_channels" else "d'entrée"
+    print(f"Aucun périphérique {role_texte} trouvé pour l'API {nom_api!r}.")
+    print("Lancez --lister pour voir les périphériques disponibles.")
+    raise SystemExit(1)
+
+
+def choisir_sortie(demande: str | None, sd, *, api: str | None = None) -> int | None:
+    """Résout ``--sortie`` (indice ou fragment de nom) ou ``--api``. None = défaut système."""
+    if demande is None and api is None:
         return None
     try:
         peripheriques = sd.query_devices()
+        hostapis = sd.query_hostapis()
     except Exception as exc:
         _echouer_peripherique(exc)
-    indice = _resoudre_indice(
-        demande, peripheriques, canaux="max_output_channels", role="de sortie"
-    )
+
+    if demande is not None:
+        indice = _resoudre_indice(
+            demande, peripheriques, canaux="max_output_channels", role="de sortie"
+        )
+    else:
+        indice = resoudre_peripherique_api(
+            api, peripheriques, hostapis, role="max_output_channels"
+        )
+
     nom = sd.query_devices(indice)["name"]
     print(f"Périphérique de sortie : {nom}")
     return indice
@@ -250,13 +341,22 @@ def choisir_peripherique(demande: str | None, sd) -> int:
         print(f"Périphérique d'entrée : {nom}")
         return indice
 
-    for indice, peripherique in enumerate(peripheriques):
-        if (
-            peripherique["max_input_channels"] > 0
-            and NOM_MICRO_PREFERE in peripherique["name"]
-        ):
-            print(f"Périphérique d'entrée : {peripherique['name']}")
-            return indice
+    candidats = (
+        NOM_MICRO_PREFERE
+        if isinstance(NOM_MICRO_PREFERE, (list, tuple))
+        else (NOM_MICRO_PREFERE,)
+    )
+    for pref in candidats:
+        pref_norm = str(pref).strip().lower()
+        if not pref_norm:
+            continue
+        for indice, peripherique in enumerate(peripheriques):
+            if (
+                peripherique["max_input_channels"] > 0
+                and pref_norm in peripherique["name"].lower()
+            ):
+                print(f"Périphérique d'entrée : {peripherique['name']}")
+                return indice
 
     try:
         choisi = sd.query_devices(kind="input")
@@ -295,9 +395,30 @@ def _ouvrir_sortie(sd, indice: int | None = None):
 
     ``indice`` vient de ``--sortie``. None laisse le défaut système.
     """
+    try:
+        if indice is not None:
+            info = sd.query_devices(indice)
+        else:
+            info = sd.query_devices(kind="output")
+    except Exception as exc:
+        _echouer_peripherique(exc)
+
+    canaux = canaux_de_sortie(info.get("max_output_channels"))
+    nom = info.get("name", "inconnu")
+    api_info = ""
+    try:
+        apis = sd.query_hostapis()
+        hostapi_idx = info.get("hostapi")
+        if hostapi_idx is not None and hostapi_idx < len(apis):
+            api_info = f" [{apis[hostapi_idx]['name']}]"
+    except Exception:
+        pass
+    mot_canaux = "canal" if canaux == 1 else "canaux"
+    print(f"sortie : {nom} — {canaux} {mot_canaux} à 16 kHz{api_info}")
+
     kwargs = {
         "samplerate": SAMPLE_RATE,
-        "channels": 1,
+        "channels": canaux,
         "dtype": "float32",
     }
     if indice is not None:
@@ -305,15 +426,26 @@ def _ouvrir_sortie(sd, indice: int | None = None):
     try:
         flux = sd.OutputStream(**kwargs)
         flux.start()
-        return flux
     except Exception as exc:
         _echouer_peripherique(exc)
+    # `channels` n'est pas reecrit ici. sounddevice 0.5.6 l'expose comme une
+    # propriete sans setter, et le flux le porte deja : c'est `kwargs` qui l'a
+    # pose a l'ouverture. L'assignation, redondante, levait une AttributeError
+    # apres un `start()` reussi ; elle tombait dans le meme `except` que les
+    # vrais refus materiels et se disait « le peripherique a refuse
+    # l'ouverture », puis « verifiez le micro » cote GUI. Le flux restait
+    # ouvert et le canal de parole ne s'ouvrait jamais.
+    if getattr(flux, "channels", None) != canaux:
+        try:
+            flux.channels = canaux
+        except AttributeError:
+            pass
+    return flux
 
 
 def _jouer(sortie, echantillons) -> None:
-    import numpy as np
-
-    pcm = np.asarray(echantillons, dtype=np.float32).reshape(-1, 1)
+    canaux = getattr(sortie, "channels", 1)
+    pcm = etaler(echantillons, canaux)
     if pcm.size:
         sortie.write(pcm)
 
@@ -464,6 +596,12 @@ def main() -> None:
         action="store_true",
         help="jouer un bip sur le haut-parleur, puis sortir",
     )
+    parser.add_argument(
+        "--api",
+        default=None,
+        choices=["wasapi", "mme", "directsound", "wdm-ks"],
+        help="API audio hôte opt-in (ex: wasapi, mme)",
+    )
     parser.add_argument("--url", default=URL_DEFAUT, help="URL WebSocket du transport")
     args = parser.parse_args()
 
@@ -478,7 +616,7 @@ def main() -> None:
 
     if args.test_sortie:
         try:
-            indice_sortie = choisir_sortie(args.sortie, sd)
+            indice_sortie = choisir_sortie(args.sortie, sd, api=args.api)
             tester_sortie(sd, indice=indice_sortie)
         except SystemExit:
             raise
@@ -490,7 +628,7 @@ def main() -> None:
     secret = lire_secret()
     indice = choisir_peripherique(args.device, sd)
     capture = PushToTalkCapture(stream_factory=_fabrique_entree(indice, sd))
-    indice_sortie = choisir_sortie(args.sortie, sd)
+    indice_sortie = choisir_sortie(args.sortie, sd, api=args.api)
     sortie = _ouvrir_sortie(sd, indice=indice_sortie)
     try:
         with connect(args.url, max_size=16 * 1024 * 1024) as ws:

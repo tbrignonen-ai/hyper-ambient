@@ -145,12 +145,14 @@ class _SoundDevice:
         self,
         peripheriques: list[dict],
         *,
+        hostapis: list[dict] | None = None,
         lever_a_lecriture: bool = False,
         lever_a_l_ouverture: Exception | None = None,
         lever_a_la_requete: Exception | None = None,
         lever_a_l_entree: Exception | None = None,
     ) -> None:
         self._peripheriques = list(peripheriques)
+        self._hostapis = list(hostapis) if hostapis is not None else [{"name": "MME"}, {"name": "Windows WASAPI"}]
         self.journal: list[str] = []
         self.appels_output: list[dict] = []
         self.appels_input: list[dict] = []
@@ -159,6 +161,9 @@ class _SoundDevice:
         self.lever_a_l_entree = lever_a_l_entree
         self.flux = _FluxSortie(self.journal, lever_a_lecriture=lever_a_lecriture)
         self.default = type("default", (), {"samplerate": SAMPLE_RATE, "device": (None, None)})()
+
+    def query_hostapis(self):
+        return list(self._hostapis)
 
     def query_devices(self, *args, **kwargs):
         if self.lever_a_la_requete is not None:
@@ -268,7 +273,41 @@ class _WsPret:
         return json.dumps({"type": "ready"})
 
 
-# --- lister_peripheriques ---------------------------------------------------
+# --- resoudre_peripherique_api & option --api -----------------------------
+
+
+def test_resoudre_peripherique_api_trouve_le_bon_indice():
+    hostapis = [{"name": "MME"}, {"name": "Windows WASAPI"}]
+    peripheriques = [
+        {"name": "HP MME", "max_output_channels": 2, "hostapi": 0},
+        {"name": "HP WASAPI", "max_output_channels": 2, "hostapi": 1},
+    ]
+    idx_wasapi = talk.resoudre_peripherique_api("wasapi", peripheriques, hostapis, role="max_output_channels")
+    assert idx_wasapi == 1
+
+    idx_mme = talk.resoudre_peripherique_api("mme", peripheriques, hostapis, role="max_output_channels")
+    assert idx_mme == 0
+
+
+def test_resoudre_peripherique_api_echec_bruyant_si_api_absente():
+    hostapis = [{"name": "MME"}]
+    peripheriques = [{"name": "HP MME", "max_output_channels": 2, "hostapi": 0}]
+    with pytest.raises(SystemExit) as exc:
+        talk.resoudre_peripherique_api("wasapi", peripheriques, hostapis, role="max_output_channels")
+    assert exc.value.code == 1
+
+
+def test_option_api_transmise_a_la_sortie(monkeypatch):
+    hostapis = [{"name": "MME"}, {"name": "Windows WASAPI"}]
+    peripheriques = [
+        {"name": "HP MME", "max_output_channels": 2, "hostapi": 0},
+        {"name": "HP WASAPI", "max_output_channels": 2, "hostapi": 1},
+    ]
+    sd = _SoundDevice(peripheriques, hostapis=hostapis)
+    _lancer_main(monkeypatch, sd, "--test-sortie", "--api", "wasapi")
+    assert sd.appels_output, "--test-sortie n'a pas ouvert de flux"
+    assert sd.appels_output[0].get("device") == 1
+
 
 
 def test_lister_peripheriques_separe_entrees_et_sorties():
@@ -416,6 +455,37 @@ def test_decrire_erreur_inconnue_reste_utile():
 # --- tester_sortie ----------------------------------------------------------
 
 
+def test_canaux_de_sortie_nominal_stereo_et_mono():
+    assert talk.canaux_de_sortie(1) == 1
+    assert talk.canaux_de_sortie(2) == 2
+    assert talk.canaux_de_sortie(6) == 2
+    assert talk.canaux_de_sortie(8) == 2
+
+
+def test_canaux_de_sortie_echec_bruyant_si_zero_ou_absent():
+    with pytest.raises(SystemExit) as exc1:
+        talk.canaux_de_sortie(0)
+    assert exc1.value.code == 1
+
+    with pytest.raises(SystemExit) as exc2:
+        talk.canaux_de_sortie(None)
+    assert exc2.value.code == 1
+
+
+def test_etaler_forme_et_colonnes():
+    pcm = np.array([0.1, -0.2, 0.5], dtype=np.float32)
+    mono = talk.etaler(pcm, 1)
+    assert mono.shape == (3, 1)
+    assert mono.dtype == np.float32
+    np.testing.assert_array_equal(mono[:, 0], pcm)
+
+    stereo = talk.etaler(pcm, 2)
+    assert stereo.shape == (3, 2)
+    assert stereo.dtype == np.float32
+    np.testing.assert_array_equal(stereo[:, 0], pcm)
+    np.testing.assert_array_equal(stereo[:, 1], pcm)
+
+
 def test_tester_sortie_joue_un_signal_non_silencieux_de_la_bonne_duree():
     """Le bip dure secondes × SAMPLE_RATE, et ce n'est pas du silence.
 
@@ -438,9 +508,11 @@ def test_tester_sortie_joue_un_signal_non_silencieux_de_la_bonne_duree():
     attendu = int(secondes * SAMPLE_RATE)
     assert n == attendu
     assert n == 3200
+    assert kwargs.get("channels") == 2
 
     blocs = [np.asarray(b) for b in sd.flux.ecrits]
     assert blocs, "rien n'a été écrit sur la sortie"
+    assert blocs[0].shape == (attendu, 2)
     frames = sum(b.shape[0] for b in blocs)
     assert frames == attendu
 
@@ -688,6 +760,7 @@ def test_lancement_normal_honore_option_sortie(monkeypatch):
 
     assert sd.appels_output, "le lancement normal n'a pas ouvert de flux de sortie"
     assert sd.appels_output[0].get("device") == 2
+    assert sd.appels_output[0].get("channels") == 2
 
 
 # --- Le tour doit se vider entierement de la socket ------------------------
@@ -742,7 +815,9 @@ class _SortieFactice:
         self.joues = []
 
     def write(self, bloc):
-        self.joues.append(np.asarray(bloc).size)
+        arr = np.asarray(bloc)
+        self.joues.append(arr.size)
+        self.derniere_forme = arr.shape
 
 
 def _sequence_de_tour(n_paquets=2):
@@ -768,12 +843,15 @@ def sans_entree(monkeypatch):
 
 def test_un_tour_consomme_le_rapport_et_le_marqueur_de_fin(sans_entree):
     ws = _SocketFactice(_sequence_de_tour())
+    sortie = _SortieFactice()
+    sortie.channels = 2
 
-    talk._tour(ws, _CaptureFactice(), _SortieFactice())
+    talk._tour(ws, _CaptureFactice(), sortie)
 
     assert ws.restants == [], (
         "le tour doit vider sa reponse entiere : un residu decale le tour suivant"
     )
+    assert getattr(sortie, "derniere_forme", None) == (FRAME_SAMPLES, 2)
 
 
 def test_deux_tours_enchaines_ne_se_decalent_pas(sans_entree):

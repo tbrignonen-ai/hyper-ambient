@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 # Single source of truth: MOUTH owns what "speakable" means, BRAIN just asks
 # for it. Stripping markup downstream is the safety net, not the plan.
 from src.mouth.normalize import VOICE_SYSTEM_PROMPT as DEFAULT_SYSTEM  # noqa: E402
+from src.brain.tools import ToolCall  # noqa: E402
 
 
 class OpenAICompatBrain:
@@ -101,18 +102,77 @@ class OpenAICompatBrain:
         temperature: float,
         stream: bool,
         history: Optional[List[Dict[str, str]]],
+        *,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Any] = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        messages = [{"role": "system", "content": system or DEFAULT_SYSTEM}]
-        if history:
-            messages.extend(history)
-        messages.append({"role": "user", "content": prompt})
-        return {
+        # `messages` remplace entierement system + history + prompt : c'est ce
+        # qui permet a la boucle d'outils de renvoyer l'assistant porteur des
+        # tool_calls suivi des messages tool.
+        if messages is None:
+            messages = [{"role": "system", "content": system or DEFAULT_SYSTEM}]
+            if history:
+                messages.extend(history)
+            messages.append({"role": "user", "content": prompt})
+        payload = {
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": self.max_tokens,
             "stream": stream,
         }
+        # Insertion seulement si non vide : le chemin sans outil doit rester bit
+        # pour bit celui d'avant, et "tools": [] est un risque inutile cote
+        # llama-server.
+        if tools:
+            payload["tools"] = tools
+            if tool_choice:
+                payload["tool_choice"] = tool_choice
+        return payload
+
+    @staticmethod
+    def _accumulate_tool_calls(buffer: Dict[int, Dict[str, str]], fragments: List[Dict[str, Any]]):
+        """Recolle les fragments `delta.tool_calls` par index.
+
+        Les arguments arrivent en JSON morcele ; un seul fragment emis en delta
+        et MOUTH epelle du JSON a voix haute. Rien ne sort d'ici.
+        """
+        for fragment in fragments or []:
+            index = fragment.get("index", 0)
+            slot = buffer.setdefault(index, {"id": "", "name": "", "arguments": ""})
+            if fragment.get("id"):
+                slot["id"] = fragment["id"]
+            function = fragment.get("function") or {}
+            if function.get("name"):
+                slot["name"] = function["name"]
+            if function.get("arguments"):
+                slot["arguments"] += function["arguments"]
+
+    @staticmethod
+    def _finalize_tool_calls(buffer: Dict[int, Dict[str, str]]) -> List[ToolCall]:
+        calls = []
+        for index in sorted(buffer):
+            slot = buffer[index]
+            raw = slot["arguments"]
+            try:
+                arguments = json.loads(raw) if raw.strip() else {}
+                if not isinstance(arguments, dict):
+                    arguments = {}
+            except json.JSONDecodeError:
+                # Le brut est conserve : un modele local rend regulierement du
+                # JSON invalide, et la boucle doit pouvoir le refuser proprement.
+                logger.warning(f"tool_call {slot['name']}: arguments illisibles ({raw[:80]!r})")
+                arguments = {}
+            calls.append(
+                ToolCall(
+                    id=slot["id"] or f"call_{index}",
+                    name=slot["name"],
+                    arguments=arguments,
+                    raw_arguments=raw,
+                )
+            )
+        return calls
 
     # -- inference ---------------------------------------------------------
 
@@ -122,6 +182,9 @@ class OpenAICompatBrain:
         system: Optional[str] = None,
         temperature: float = 0.7,
         history: Optional[List[Dict[str, str]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Any] = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Non-streaming completion. Use only for tests and batch work."""
         if self.client is None:
@@ -136,7 +199,10 @@ class OpenAICompatBrain:
         try:
             response = await self.client.post(
                 self.api_endpoint,
-                json=self._payload(prompt, system, temperature, False, history),
+                json=self._payload(
+                    prompt, system, temperature, False, history,
+                    tools=tools, tool_choice=tool_choice, messages=messages,
+                ),
                 headers=self._headers(),
             )
             latency_ms = (time.perf_counter() - start) * 1000
@@ -153,12 +219,25 @@ class OpenAICompatBrain:
                 }
 
             choice = result.get("choices", [{}])[0]
-            return {
-                "response": choice.get("message", {}).get("content", ""),
+            message = choice.get("message", {}) or {}
+            out = {
+                "response": message.get("content", "") or "",
                 "stop_reason": choice.get("finish_reason", "unknown"),
                 "tokens_used": result.get("usage", {}).get("completion_tokens", 0),
                 "latency_ms": latency_ms,
             }
+            if message.get("tool_calls"):
+                buffer: Dict[int, Dict[str, str]] = {}
+                self._accumulate_tool_calls(
+                    buffer,
+                    [
+                        {**call, "index": i}
+                        for i, call in enumerate(message["tool_calls"])
+                    ],
+                )
+                out["tool_calls"] = self._finalize_tool_calls(buffer)
+                out["stop_reason"] = "tool_calls"
+            return out
 
         except Exception as e:
             logger.error(f"{self.name} query error: {e}")
@@ -176,6 +255,9 @@ class OpenAICompatBrain:
         system: Optional[str] = None,
         temperature: float = 0.7,
         history: Optional[List[Dict[str, str]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Any] = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         Stream deltas as they arrive.
@@ -183,6 +265,10 @@ class OpenAICompatBrain:
         Yields {"delta": str, "stop_reason": None|str, "ttft_ms": float|None}.
         ttft_ms is set on the first delta only — that is the value MOUTH needs
         to start synthesising before BRAIN has finished thinking.
+
+        Avec `tools`, les fragments `delta.tool_calls` sont accumules par index
+        et rendus en un unique chunk {"delta": "", "stop_reason": "tool_calls",
+        "tool_calls": [ToolCall, ...]} — jamais en delta parle.
         """
         if self.client is None:
             yield {"delta": "[stub]", "stop_reason": "stub", "ttft_ms": 0}
@@ -191,12 +277,16 @@ class OpenAICompatBrain:
         start = time.perf_counter()
         ttft_ms: Optional[float] = None
         reasoning_deltas = 0
+        tool_buffer: Dict[int, Dict[str, str]] = {}
 
         try:
             async with self.client.stream(
                 "POST",
                 self.api_endpoint,
-                json=self._payload(prompt, system, temperature, True, history),
+                json=self._payload(
+                    prompt, system, temperature, True, history,
+                    tools=tools, tool_choice=tool_choice, messages=messages,
+                ),
                 headers=self._headers(),
             ) as response:
                 if response.status_code != 200:
@@ -228,6 +318,12 @@ class OpenAICompatBrain:
                     delta = delta_obj.get("content") or ""
                     finish = choice.get("finish_reason")
 
+                    # Les fragments d'appel d'outil ne sont jamais des deltas :
+                    # ils sont recolles ici et rendus en une fois a la fin.
+                    if delta_obj.get("tool_calls"):
+                        self._accumulate_tool_calls(tool_buffer, delta_obj["tool_calls"])
+                        delta = ""
+
                     # Reasoning models stream chain-of-thought in a separate
                     # field. It must never reach MOUTH — the user would hear
                     # the model thinking out loud — but it must be counted, or
@@ -243,6 +339,14 @@ class OpenAICompatBrain:
                         else:
                             yield {"delta": delta, "stop_reason": None, "ttft_ms": None}
                     if finish:
+                        if tool_buffer or finish == "tool_calls":
+                            yield {
+                                "delta": "",
+                                "stop_reason": "tool_calls",
+                                "ttft_ms": None,
+                                "tool_calls": self._finalize_tool_calls(tool_buffer),
+                            }
+                            return
                         if ttft_ms is None and reasoning_deltas:
                             # Thinking consumed the whole budget: no answer.
                             yield {

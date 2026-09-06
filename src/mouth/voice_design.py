@@ -30,6 +30,13 @@ class VoiceProfile:
     noise_scale: float = 0.667     # pitch/timbre variability; lower = flatter
     noise_w_scale: float = 0.8     # duration variability; lower = metronomic
 
+    # --- delivery, backend-agnostic ---
+    # `length_scale` ci-dessus n'existe que dans Piper. pocket-tts n'expose
+    # aucun reglage de vitesse : `generate_audio_stream` ne prend que
+    # `max_tokens` et `frames_after_eos`. Ralentir la voix sur ce backend passe
+    # donc par un etirement temporel apres synthese, a hauteur conservee.
+    time_stretch: float = 1.0      # >1 ralentit sans deplacer la hauteur
+
     # --- treatment ---
     highpass_hz: float = 0.0       # 0 disables
     lowpass_hz: float = 0.0
@@ -53,6 +60,10 @@ FLAT = VoiceProfile()
 # that makes it feel like it comes from the walls.
 MOTHER = VoiceProfile(
     length_scale=1.16,
+    # Pas d'etirement : essaye a 1.10 sur pocket-tts, la retouche s'entend
+    # (vocodeur de phase applique par chunk). Le mecanisme reste disponible
+    # dans VoiceTreatment, mais le profil ne s'en sert pas.
+    time_stretch=1.0,
     noise_scale=0.45,
     noise_w_scale=0.55,
     highpass_hz=90.0,
@@ -199,11 +210,45 @@ class VoiceTreatment:
         n_dbl = int(sample_rate * profile.double_ms / 1000) if profile.double_ms > 0 else 0
         self._dbl_tail = np.zeros(n_dbl, dtype=np.float32) if n_dbl else None
 
+    def _etirer(self, x: np.ndarray) -> np.ndarray:
+        """Allonge le signal sans deplacer la hauteur (vocodeur de phase).
+
+        Contrairement a `transposer` plus bas, qui relit l'onde plus lentement
+        et descend donc la hauteur avec la duree, on veut ici ralentir la
+        diction *seule*. C'est exactement ce que fait un vocodeur de phase.
+
+        Seul maillon non strictement continu de cette chaine : l'analyse
+        travaille par fenetre, donc les bornes de chunk ne sont pas reconstruites
+        a l'identique. Aux facteurs modestes vises (~1.1) le raccord reste sous
+        le seuil audible ; a fort etirement il faudrait un recouvrement porte
+        d'un chunk a l'autre.
+        """
+        import librosa
+
+        # Une fenetre plus large que le chunk ne porte aucune information ;
+        # librosa la comblerait de zeros et le raccord s'entendrait.
+        n_fft = 1 << max(6, min(11, int(np.log2(x.size)) - 1))
+        etire = librosa.effects.time_stretch(
+            x.astype(np.float32), rate=1.0 / self.p.time_stretch, n_fft=n_fft
+        )
+        return etire.astype(np.float32)
+
     def process(self, pcm16: np.ndarray) -> np.ndarray:
-        """Take int16 PCM, return int16 PCM of the same length."""
+        """Take int16 PCM, return int16 PCM.
+
+        La longueur est conservee, sauf si le profil demande un `time_stretch`
+        different de 1.0 — auquel cas la sortie est allongee d'autant.
+        """
         if pcm16.size == 0:
             return pcm16
         x = pcm16.astype(np.float32) / 32768.0
+
+        # Avant les filtres et la reverberation : l'etirement appartient a la
+        # diction, la reverberation a la piece. Etirer apres reverberation
+        # allongerait la queue du reflet, ce qui agrandit la salle au lieu de
+        # ralentir la voix.
+        if self.p.time_stretch != 1.0 and x.size >= 64:
+            x = self._etirer(x)
 
         for i, sos in enumerate(self._sos):
             x, self._zi[i] = signal.sosfilt(sos, x, zi=self._zi[i])

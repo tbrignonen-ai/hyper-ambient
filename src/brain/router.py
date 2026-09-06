@@ -133,7 +133,13 @@ class RouterBrain:
             os.getenv("BRAIN_DEEP_TIMEOUT_MS", "20000"))
         # Silence tolerated after the last spoken word before another holding
         # line goes out. ~1 s of filler audio plus this is the perceived gap.
-        self.holding_after_ms = int(os.getenv("BRAIN_HOLDING_AFTER_MS", "2500"))
+        # 6000, pas 2500 : le commentaire de HOLDING ci-dessus dimensionne la
+        # relance sur le tour dur mesure a 13,8 s, pas sur les tours a 4-5 s. A
+        # 2500, un tour de 5,4 s recevait mecaniquement une seconde ligne alors
+        # que l'amorce couvrait deja ~1 s — entendu comme du remplissage, pas
+        # comme de la presence. A 6000, un tour de 5,4 s ne declenche plus rien,
+        # un tour de 13,8 s recoit toujours ses deux lignes (6 s, 12 s).
+        self.holding_after_ms = int(os.getenv("BRAIN_HOLDING_AFTER_MS", "6000"))
         self._filler_i = 0
         self._client = None
         self.stats = {"reflex": 0, "escalate": 0, "deep_failed": 0}
@@ -356,4 +362,15 @@ async def _with_holding(
     finally:
         if pending is not None and not pending.done():
             pending.cancel()
-        await agen.aclose()
+            try:
+                await pending
+            except (asyncio.CancelledError, StopAsyncIteration):
+                pass
+            except Exception:
+                pass
+        try:
+            await agen.aclose()
+        except RuntimeError:
+            # aclose() refuse un generateur encore dans __anext__ ; la tache
+            # ci-dessus a deja ete annulee, le flux HTTP ne doit plus rester ouvert.
+            pass

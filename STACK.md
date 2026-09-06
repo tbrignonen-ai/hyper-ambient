@@ -89,12 +89,7 @@ voice system prompt, `temperature=0.2`, same server flags, GGUF Q4_K_M
 | Luciole-8B-Instruct-1.1 | 8 B | 120 ms | 341 | **2/4** | 0/5 | 5.1 GB | verbose, hedging |
 | Qwen3-4B-Instruct-2507 | 4 B | 43 ms | 389 | — | 0/5 | 2.8 GB | invents |
 
-**Selected: Luth-2-2B.** It holds an 8 B's TTFT, doubles its throughput (which
-is what keeps MOUTH's audio queue from starving), is the only one of the five
-that never slips register — the single defect a listener actually hears — and
-costs 1.5 GB instead of 5.4. That headroom is what makes Qwen3-TTS and TURN-L2
-co-tenancy possible on a 12 GB card. Ministral-3-8B stays as the documented
-depth swap.
+**Selected: LFM2.5-2.6B-Q5_K_M (alias `mother-local` on :8090).** Updated 2026-09-02 (replacing Luth-2-2B). Holds high throughput, low TTFT (~26-38 ms), compact VRAM footprint (~1.9 GB), leaving full headroom for EARS and Pocket TTS. Luth-2-2B kept as documented fallback, Ministral-3-8B stays as the depth swap.
 
 **French-native pretraining did not win.** Luciole-8B (OpenLLM-France, ~30 %
 French corpus) is the worst of the five here: 3× the TTFT, the only one still
@@ -134,7 +129,7 @@ Built here with `-DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=89` (Ada Lovelace).
 
 | Component | Measured / estimate |
 |---|---|
-| BRAIN — Luth-2-2B `Q5_K_M` + 8k ctx (KV q8_0) | **1.5 GB** (measured) |
+| BRAIN — LFM2.5-2.6B `Q5_K_M` + 8k ctx (KV q8_0) | **~1.9 GB** (measured) |
 | EARS — `large-v3-turbo` int8_float16 | ~1.6 GB |
 | MOUTH — Piper | 0 (CPU) |
 | TURN-L1 — Silero | 0 (CPU) |
@@ -142,7 +137,9 @@ Built here with `-DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=89` (Ada Lovelace).
 | planned: TURN-L2 | ~0.5 GB |
 | headroom | ~4.5 GB |
 
-Measured free VRAM with Luth loaded and the Windows desktop up: **7996 MiB**.
+Measured free VRAM with Luth loaded and the Windows desktop up: **7996 MiB**
+(measurement dated 2026-08-21, when Luth-2-2B was still the default BRAIN —
+it is *not* a reading of the current stack, which serves LFM2.5-2.6B).
 Everything planned above fits inside that with room to spare.
 
 Choosing an 8 B instead (Ministral, 5.4 GB) leaves ~2.6 GB — enough for EARS
@@ -160,7 +157,7 @@ Measured on this machine, full chain, French, 4.26 s spoken question
 |---|---|---|
 | TURN endpoint decision | **20 ms** compute, RTF 0.004 | CPU, Silero, endpoint at 4.30 s |
 | EARS transcription | **370 ms**, RTF 0.087 | GPU, `large-v3-turbo` int8_float16 |
-| BRAIN time-to-first-token | **27 ms** | local, Luth-2-2B Q5_K_M, CUDA |
+| BRAIN time-to-first-token | **27 ms** | local, LFM2.5-2.6B Q5_K_M (`mother-local` :8090), CUDA |
 | MOUTH time-to-first-audio | **102 ms** | CPU, Piper, word-bounded opening |
 | **perceived round-trip** | **500 ms** | budget 1200 ms — **within, 2.4x margin** |
 | full generation | 16.5 s | 8.8 s of speech, 2 chunks |

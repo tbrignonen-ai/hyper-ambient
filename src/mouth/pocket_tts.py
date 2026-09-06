@@ -29,7 +29,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 import numpy as np
 
 from src.mouth.normalize import strip_markup
-from src.mouth.voice_design import FLAT, PROFILES, VoiceTreatment
+from src.mouth.voice_design import FLAT, PROFILES, VoiceTreatment, transposer
 
 logger = logging.getLogger(__name__)
 
@@ -49,19 +49,36 @@ class PocketTTS:
         profile: str = "mother",
         temperature: float = 0.7,
         max_tokens: int = 50,
+        demi_tons: float = 0.0,
     ):
+        """
+        Args:
+            demi_tons: transposition de la voix, en demi-tons. pocket-tts
+                n'expose ni vitesse ni hauteur — `generate_audio_stream` ne
+                prend que `max_tokens` et `frames_after_eos`. Descendre par
+                reechantillonnage regle les deux d'un geste : la fondamentale
+                baisse et le bloc s'allonge dans le meme rapport, donc la
+                diction ralentit. Contrairement au `time_stretch` du profil,
+                qui passe par un vocodeur de phase applique chunk par chunk et
+                s'entend des 1.10, ce procede ne fait que relire l'onde plus
+                lentement et n'introduit aucun artefact de fenetre.
+        """
         self.language = language
         self.voice = voice
         self.device = device
         self.profile = PROFILES.get(profile, FLAT)
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.demi_tons = demi_tons
         self.model = None
         self._state = None
         self.sample_rate = 24000
         self._treatment: Optional[VoiceTreatment] = None
         self.ttfa_history: List[float] = []
-        logger.info(f"PocketTTS: {language}/{voice} on {device} profile={profile}")
+        logger.info(
+            f"PocketTTS: {language}/{voice} on {device} profile={profile} "
+            f"demi_tons={demi_tons:+g}"
+        )
 
     @property
     def voice_path(self) -> str:
@@ -98,6 +115,18 @@ class PocketTTS:
             logger.error(f"pocket-tts load failed: {e}")
             self.model = None
             return False
+
+    def _transposer(self, pcm16: np.ndarray) -> np.ndarray:
+        """Descend le bloc, avant le traitement.
+
+        L'ordre compte : la transposition appartient a la voix, la
+        reverberation a la piece. Transposer apres reverberation etirerait
+        aussi la queue du reflet, ce qui agrandit la salle au lieu de descendre
+        la voix.
+        """
+        if not self.demi_tons or pcm16.size == 0:
+            return pcm16
+        return transposer(pcm16, self.demi_tons)
 
     # -- synthesis ---------------------------------------------------------
 
@@ -150,6 +179,7 @@ class PocketTTS:
                     logger.error(f"pocket-tts stream error: {item}")
                     break
                 pcm = np.clip(item * 32767.0, -32768, 32767).astype(np.int16)
+                pcm = self._transposer(pcm)
                 if self._treatment is not None:
                     pcm = self._treatment.process(pcm)
                 yield {
@@ -180,6 +210,7 @@ class PocketTTS:
         first_s = parts[0][1]
         pcm_f = np.concatenate([p for p, _ in parts])
         pcm = np.clip(pcm_f * 32767.0, -32768, 32767).astype(np.int16)
+        pcm = self._transposer(pcm)
         if self._treatment is not None:
             pcm = self._treatment.process(pcm)
 
