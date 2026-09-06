@@ -21,11 +21,18 @@ export BRAIN_API_ENDPOINT=https://api.commandcode.ai/provider/v1/chat/completion
 export BRAIN_MODEL=MiniMaxAI/MiniMax-M3
 export BRAIN_MODEL_LOCAL=mother-local
 
-# alba est la voix du catalogue francais dont l enveloppe spectrale est la plus
-# proche de l enregistrement de reference fourni par l utilisateur : 2,27 de
-# distance, contre 3,48 pour eponine et 3,34 pour la suivante. C est ce qu on
-# peut approcher sans les poids de clonage, qui sont sous conditions d acces.
-export MOUTH_VOICE_NAME=${MOUTH_VOICE_NAME:-eponine}
+# estelle est la seule locutrice francaise native du catalogue Pocket
+# (unmute-prod-website/developpeuse-3.wav). Toutes les autres voix dites
+# francaises viennent de VCTK ou d Expresso, des corpus anglais : eponine, qui
+# tenait ce poste, est VCTK p262, et son accent etait la locutrice, pas le
+# modele. Retenue a l oreille par Thomas le 6 septembre 2026, avec le profil
+# aurora — presque sec, presence a 3,4 kHz — la ou le profil mother pose une
+# coque d ordinateur de bord qui assombrit et masculinise.
+#
+# La forme :- laisse la ligne de commande gagner : passer une autre voix ou un
+# autre profil devant l appel suffit a l essayer.
+export MOUTH_VOICE_NAME=${MOUTH_VOICE_NAME:-estelle}
+export MOUTH_PROFILE=${MOUTH_PROFILE:-aurora}
 
 echo "cle de ${#BRAIN_API_KEY} caracteres, routeur arme"
 nohup python dev/scripts/serve_hostagent.py > /tmp/hostagent.log 2>&1 &
