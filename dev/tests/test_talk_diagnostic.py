@@ -809,10 +809,25 @@ class _CaptureFactice:
 
 
 class _SortieFactice:
-    """Haut-parleur factice : retient ce qui lui a ete ecrit."""
+    """Haut-parleur factice : retient ce qui lui a ete ecrit.
+
+    Porte `active` / `start` / `stop` comme un vrai `sounddevice.OutputStream`.
+    Sans eux, la doublure n'etait plus fidele depuis que `_jouer` demarre le
+    flux paresseusement — le correctif du 8 septembre contre le souffle au
+    demarrage — et tout tour de parole mourait ici sur AttributeError.
+    """
 
     def __init__(self):
         self.joues = []
+        self.active = False
+        self.demarrages = 0
+
+    def start(self):
+        self.active = True
+        self.demarrages += 1
+
+    def stop(self):
+        self.active = False
 
     def write(self, bloc):
         arr = np.asarray(bloc)

@@ -425,9 +425,14 @@ def _ouvrir_sortie(sd, indice: int | None = None):
         kwargs["device"] = indice
     try:
         flux = sd.OutputStream(**kwargs)
-        flux.start()
     except Exception as exc:
         _echouer_peripherique(exc)
+    # Volontairement PAS de `start()` ici. Le flux restait demarre depuis
+    # l'ouverture jusqu'au premier mot de MOUTH, soit plusieurs secondes sans
+    # une seule ecriture : en mode bloquant, MME et DirectSound font entendre
+    # cet underflow comme un souffle continu. On demarre a la premiere trame
+    # (voir `_jouer`), ou le buffer est immediatement alimente. Le cout est
+    # celui d'un `start()` PortAudio, hors NFR-01 puisqu'il precede l'audible.
     # `channels` n'est pas reecrit ici. sounddevice 0.5.6 l'expose comme une
     # propriete sans setter, et le flux le porte deja : c'est `kwargs` qui l'a
     # pose a l'ouverture. L'assignation, redondante, levait une AttributeError
@@ -446,8 +451,28 @@ def _ouvrir_sortie(sd, indice: int | None = None):
 def _jouer(sortie, echantillons) -> None:
     canaux = getattr(sortie, "channels", 1)
     pcm = etaler(echantillons, canaux)
-    if pcm.size:
-        sortie.write(pcm)
+    if not pcm.size:
+        return
+    # Demarrage paresseux : le flux ne tourne que quand il a de quoi jouer.
+    if not getattr(sortie, "active", False):
+        sortie.start()
+    sortie.write(pcm)
+
+
+def _reposer(sortie) -> None:
+    """Arrete le flux entre deux tours, une fois le tampon joue.
+
+    Pendant du demarrage paresseux de `_jouer` : un flux laisse actif dans le
+    silence qui suit un enonce recommence a souffler en underflow. `stop()`
+    attend que le tampon se vide, donc la fin du dernier mot est preservee.
+    """
+    try:
+        if getattr(sortie, "active", False):
+            sortie.stop()
+    except Exception as exc:
+        # Ne jamais faire tomber le tour pour un flux qu'on voulait juste
+        # mettre au repos : le prochain `_jouer` le redemarrera.
+        print(f"repos audio : {exc}", flush=True)
 
 
 def _poignee_de_main(ws, secret: str) -> None:

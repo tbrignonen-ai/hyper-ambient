@@ -235,3 +235,74 @@ def test_le_transport_journalise_chaque_invocation():
 
     assert journal == ["audio.capture", "audio.render"]
     assert "shell" not in journal
+
+
+def test_un_on_frames_asynchrone_est_attendu_par_le_transport():
+    """Le tour de parole doit s'executer DANS la tache du point d'entree ASGI.
+
+    Panne mesuree le 13 septembre, sur la version commitee comme sur celle du
+    jour : zero trame recue, de bout en bout. `HostPipeline.on_frames` detachait
+    le tour par `create_task`, donc l'audio partait d'une tache exterieure au
+    point d'entree. Depuis la montee de version du socle web (starlette 1.6,
+    uvicorn 0.52, websockets 17), uvicorn **ferme le transport des que
+    l'application ASGI rend la main** : le premier `send_json` du tour detache
+    levait `ClientDisconnected`, le garde-fou du tour l'avalait, et l'appelant
+    n'entendait jamais rien.
+
+    La regle qui en decoule, et que ce test fige : le transport sait attendre un
+    `on_frames` asynchrone, pour que tout ce qui part sur le socket parte de la
+    tache qui le detient.
+    """
+    from fastapi.testclient import TestClient
+
+    vu: dict = {}
+
+    async def on_frames(frames):
+        vu["attendu"] = True
+        return None
+
+    app = _create_app(on_frames=on_frames)
+    with TestClient(app) as client:
+        with client.websocket_connect(VOIE) as ws:
+            ws.send_json({"type": "hello", "secret": SECRET})
+            assert ws.receive_json() == {"type": "ready"}
+            ws.send_json(
+                {
+                    "type": "invoke",
+                    "primitive": "audio.capture",
+                    "frames": [_trame()],
+                }
+            )
+
+    assert vu.get("attendu") is True, "on_frames asynchrone jamais attendu"
+
+
+def test_un_on_frames_asynchrone_peut_rendre_des_trames():
+    """Attendre ne suffit pas : ce que rend la coroutine doit encore sortir.
+
+    Sans ce second test, une implementation qui attend la coroutine puis jette
+    son resultat passerait pour correcte — et le chemin synchrone existant, lui,
+    emet bien ses trames.
+    """
+    from fastapi.testclient import TestClient
+
+    async def on_frames(frames):
+        return list(frames)
+
+    app = _create_app(on_frames=on_frames)
+    with TestClient(app) as client:
+        with client.websocket_connect(VOIE) as ws:
+            ws.send_json({"type": "hello", "secret": SECRET})
+            assert ws.receive_json() == {"type": "ready"}
+            ws.send_json(
+                {
+                    "type": "invoke",
+                    "primitive": "audio.capture",
+                    "frames": [_trame(0.25)],
+                }
+            )
+            rendu = ws.receive_json()
+
+    assert rendu["type"] == "invoke"
+    assert rendu["primitive"] == "audio.render"
+    assert len(rendu["frames"]) == 1

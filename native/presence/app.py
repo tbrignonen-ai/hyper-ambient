@@ -29,8 +29,23 @@ for _chemin in (str(_ROOT), str(_ICI)):
     if _chemin not in sys.path:
         sys.path.insert(0, _chemin)
 
-from native.hostagent import talk as moteur
 import overlay as visuel
+from onboarding import (
+    ETAPES_WIZARD,
+    RACCOURCIS,
+    RAPPEL_A11Y,
+    TEXTE_BIENVENUE,
+    TEXTE_MASQUAGE,
+    TEXTE_PTT,
+    ConfigurationPresence,
+    charger_configuration,
+    eclair_allume,
+    enregistrer_configuration,
+    libelle_eclair,
+    sequences_tk,
+    statut_pour_etat,
+    terminer_onboarding,
+)
 
 # Fond opaque : contrairement à l'overlay, cette fenêtre n'est pas percée
 # par transparentcolor. Un fond proche du repos, pas du noir pur, pour que
@@ -39,6 +54,8 @@ FOND = "#0c141c"
 ENCRE = "#d8e4ec"
 ENCRE_SOURDE = "#8aa0b0"
 TAILLE_BULLE = 200
+URL_DEFAUT = "ws://127.0.0.1:8001/hostagent"
+moteur: Any | None = None
 
 
 def consommer_reponse(
@@ -47,8 +64,15 @@ def consommer_reponse(
     t_fin_parole: float,
     deposer: Callable[[dict[str, Any]], None],
     arreter: threading.Event,
-) -> None:
+    interrompre: threading.Event | None = None,
+    sur_interruption: Callable[[], None] | None = None,
+) -> bool:
     """Lit la socket jusqu'au marqueur vide, restitue, et relaye l'état.
+
+    ``interrompre`` est le bouton Parler : s'il est enfoncé pendant la
+    réponse, la voix se tait tout de suite (tampon de la carte jeté), la
+    capture démarre par ``sur_interruption``, et la socket est vidée sans
+    rien jouer jusqu'au marqueur. Renvoie True si la réponse a été coupée.
 
     Le serveur envoie, dans l'ordre : des paquets audio, puis un rapport,
     puis un marqueur de fin vide. Sortir dès qu'un message n'a pas de
@@ -57,6 +81,7 @@ def consommer_reponse(
     et restait muet. Seul ``frames == []`` termine le tour.
     """
     premier_son = None
+    interrompu = False
     while not arreter.is_set():
         # Recv bloquant, comme talk.py : un timeout ici n'aide pas, et close()
         # depuis l'arrêt de la fenêtre débloque avec ConnectionClosed.
@@ -97,6 +122,17 @@ def consommer_reponse(
             continue
         if not recues:
             break
+        if interrompre is not None and interrompre.is_set() and not interrompu:
+            interrompu = True
+            try:
+                sortie.abort()
+            except Exception as exc:
+                print(f"interruption : {exc}", flush=True)
+            if sur_interruption is not None:
+                sur_interruption()
+            deposer({"type": "statut", "texte": "Interrompue — je t'écoute."})
+        if interrompu:
+            continue
         a_jouer: list[float] = []
         for brute in recues:
             a_jouer.extend(brute)
@@ -119,7 +155,9 @@ def consommer_reponse(
         deposer({"type": "statut", "texte": "Aucune trame de réponse — rien à restituer."})
     elif premier_son is not None:
         time.sleep(0.25)
+        moteur._reposer(sortie)
         deposer({"type": "etat", "etat": "repos", "niveau": None})
+    return interrompu
 
 
 class Bulle:
@@ -266,6 +304,31 @@ class Bulle:
                 )
 
 
+class BadgeEclair:
+    """Icône éclair dédiée : éteinte en local, allumée dès l'appel distant."""
+
+    def __init__(self, toile: tk.Canvas, taille: int) -> None:
+        self.toile = toile
+        self.taille = taille
+        self.etat = "repos"
+        self.naissance = time.perf_counter()
+
+    def appliquer_etat(self, etat: str) -> None:
+        self.etat = etat
+
+    def dessiner(self) -> None:
+        maintenant = time.perf_counter() - self.naissance
+        self.toile.delete("all")
+        visuel.dessiner_eclair(
+            self.toile,
+            cx=self.taille / 2,
+            cy=self.taille / 2,
+            taille=self.taille * 0.78,
+            allume=eclair_allume(self.etat),
+            maintenant=maintenant,
+        )
+
+
 class SessionVocale(threading.Thread):
     """Réseau + micro + haut-parleur, hors du fil tkinter.
 
@@ -280,12 +343,14 @@ class SessionVocale(threading.Thread):
         url: str,
         device: str | None,
         sortie: str | None,
+        raccourci_label: str,
     ) -> None:
         super().__init__(name="session-vocale", daemon=True)
         self.file_ui = file_ui
         self.url = url
         self.device = device
         self.nom_sortie = sortie
+        self.raccourci_label = raccourci_label
         self.arreter = threading.Event()
         self.tenu = threading.Event()
         self.ws = None
@@ -314,6 +379,18 @@ class SessionVocale(threading.Thread):
             self.deposer({"type": "erreur", "texte": f"{exc}"})
 
     def _servir(self) -> None:
+        global moteur
+        try:
+            from native.hostagent import talk as moteur_charge
+        except ImportError as exc:
+            self.deposer(
+                {
+                    "type": "erreur",
+                    "texte": f"Dépendance audio absente : {exc}",
+                }
+            )
+            return
+        moteur = moteur_charge
         try:
             sd = moteur._importer_sounddevice()
             connect = moteur._importer_websockets()
@@ -364,7 +441,10 @@ class SessionVocale(threading.Thread):
                         self.deposer(
                             {
                                 "type": "statut",
-                                "texte": "Canal prêt. Maintenez Parler ou Espace.",
+                                "texte": (
+                                    "Canal prêt. Maintenez Parler ou "
+                                    f"{self.raccourci_label}."
+                                ),
                             }
                         )
                         print("CANAL_PRET", flush=True)
@@ -392,12 +472,17 @@ class SessionVocale(threading.Thread):
                 pass
 
     def _boucle_tours(self, ws, capture, sortie) -> None:
+        # True quand la réponse précédente a été coupée : la capture tourne
+        # déjà depuis l'appui, il ne faut ni l'attendre ni la relancer.
+        deja_en_ecoute = False
         while not self.arreter.is_set():
-            while not self.arreter.is_set() and not self.tenu.is_set():
-                self.tenu.wait(0.2)
-            if self.arreter.is_set():
-                return
-            capture.start()
+            if not deja_en_ecoute:
+                while not self.arreter.is_set() and not self.tenu.is_set():
+                    self.tenu.wait(0.2)
+                if self.arreter.is_set():
+                    return
+                capture.start()
+            deja_en_ecoute = False
             self.deposer({"type": "statut", "texte": "Écoute… relâchez pour envoyer."})
             while not self.arreter.is_set() and self.tenu.is_set():
                 time.sleep(0.03)
@@ -430,7 +515,10 @@ class SessionVocale(threading.Thread):
                     }
                 )
             )
-            consommer_reponse(ws, sortie, t_fin_parole, self.deposer, self.arreter)
+            deja_en_ecoute = consommer_reponse(
+                ws, sortie, t_fin_parole, self.deposer, self.arreter,
+                interrompre=self.tenu, sur_interruption=capture.start,
+            ) is True
             print("tour : terminé", flush=True)
 
 
@@ -439,40 +527,357 @@ class Application:
 
     def __init__(self, args: argparse.Namespace) -> None:
         self.file_ui: queue.Queue = queue.Queue()
+        self.configuration = charger_configuration(args.config)
+        if args.onboarding:
+            self.configuration = ConfigurationPresence(
+                onboarding_termine=False,
+                raccourci_ptt=self.configuration.raccourci_ptt,
+            )
+        self.chemin_configuration = args.config
         self.session = SessionVocale(
             self.file_ui,
             url=args.url,
             device=args.device,
             sortie=args.sortie,
+            raccourci_label=RACCOURCIS[self.configuration.raccourci_ptt],
         )
         self.enfonce = False
         self.dernier_delai_ms: float | None = None
         self.texte_statut = "Connexion…"
+        self.session_lancee = False
+        self.raccourci_en_cours = self.configuration.raccourci_ptt
+        self.badge: BadgeEclair | None = None
+        self.ligne_eclair: tk.Label | None = None
 
         self.racine = tk.Tk()
         self.racine.title("hyper-ambient")
         self.racine.configure(bg=FOND)
-        self.racine.geometry("460x720")
-        self.racine.minsize(400, 640)
+        self.racine.geometry("480x760")
+        self.racine.minsize(420, 680)
         # Fenêtre normale : pas d'overrideredirect, la croix doit fermer.
         self.racine.protocol("WM_DELETE_WINDOW", self.fermer)
 
-        cadre = tk.Frame(self.racine, bg=FOND)
+        self.conteneur = tk.Frame(self.racine, bg=FOND)
+        self.conteneur.pack(fill=tk.BOTH, expand=True)
+
+        if self.configuration.onboarding_termine:
+            self._afficher_application()
+        else:
+            self._afficher_bienvenue()
+
+    def _vider(self) -> None:
+        for enfant in self.conteneur.winfo_children():
+            enfant.destroy()
+
+    def _cadre_onboarding(self, indice: int, titre: str, description: str) -> tk.Frame:
+        self._vider()
+        cadre = tk.Frame(self.conteneur, bg=FOND)
+        cadre.pack(fill=tk.BOTH, expand=True, padx=32, pady=28)
+        tk.Label(
+            cadre,
+            text=f"Étape {indice} sur {len(ETAPES_WIZARD)}",
+            bg=FOND,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 10),
+            anchor="w",
+        ).pack(fill=tk.X, pady=(0, 28))
+        tk.Label(
+            cadre,
+            text=titre,
+            bg=FOND,
+            fg=ENCRE,
+            font=("Segoe UI", 24, "bold"),
+            anchor="w",
+            justify="left",
+        ).pack(fill=tk.X)
+        tk.Label(
+            cadre,
+            text=description,
+            bg=FOND,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 12),
+            anchor="w",
+            justify="left",
+            wraplength=400,
+        ).pack(fill=tk.X, pady=(12, 28))
+        return cadre
+
+    def _rendre_focus_visible(self, widget: tk.Misc) -> None:
+        lueur = visuel.PALETTES["ecoute"]["lueur"]
+        widget.configure(
+            highlightthickness=3,
+            highlightcolor=lueur,
+            highlightbackground=FOND,
+        )
+
+        def entrer(_event: object) -> None:
+            widget.configure(highlightbackground=lueur)
+
+        def sortir(_event: object) -> None:
+            widget.configure(highlightbackground=FOND)
+
+        widget.bind("<FocusIn>", entrer, add="+")
+        widget.bind("<FocusOut>", sortir, add="+")
+
+    def _bouton_principal(
+        self, parent: tk.Misc, texte: str, commande: Callable[[], None]
+    ) -> tk.Button:
+        bouton = tk.Button(
+            parent,
+            text=texte,
+            command=commande,
+            font=("Segoe UI", 12, "bold"),
+            bg=visuel.PALETTES["ecoute"]["coeur"],
+            fg=FOND,
+            activebackground=visuel.PALETTES["ecoute"]["lueur"],
+            activeforeground=FOND,
+            padx=18,
+            pady=12,
+            takefocus=1,
+        )
+        bouton.pack(fill=tk.X, side=tk.BOTTOM)
+        self._rendre_focus_visible(bouton)
+        bouton.focus_set()
+        return bouton
+
+    def _bouton_secondaire(
+        self, parent: tk.Misc, texte: str, commande: Callable[[], None]
+    ) -> tk.Button:
+        bouton = tk.Button(
+            parent,
+            text=texte,
+            command=commande,
+            font=("Segoe UI", 10),
+            bg=FOND,
+            fg=ENCRE_SOURDE,
+            activebackground="#142028",
+            activeforeground=ENCRE,
+            relief=tk.FLAT,
+            takefocus=1,
+        )
+        bouton.pack(fill=tk.X, side=tk.BOTTOM, pady=(0, 8))
+        self._rendre_focus_visible(bouton)
+        return bouton
+
+    def _achever_onboarding(self, raccourci_ptt: str | None = None) -> None:
+        self.configuration = terminer_onboarding(
+            self.configuration, raccourci_ptt=raccourci_ptt
+        )
+        self.raccourci_en_cours = self.configuration.raccourci_ptt
+        self.session.raccourci_label = RACCOURCIS[self.configuration.raccourci_ptt]
+        try:
+            enregistrer_configuration(self.configuration, self.chemin_configuration)
+        except OSError as exc:
+            print(f"configuration non enregistrée : {exc}", flush=True)
+        self._afficher_application()
+
+    def _afficher_bienvenue(self) -> None:
+        cadre = self._cadre_onboarding(1, "Bienvenue", TEXTE_BIENVENUE)
+        tk.Label(
+            cadre,
+            text="Aucun son n'est enregistré pendant cette configuration.",
+            bg=FOND,
+            fg=ENCRE,
+            font=("Segoe UI", 10),
+            anchor="w",
+            justify="left",
+            wraplength=400,
+        ).pack(fill=tk.X)
+        tk.Label(
+            cadre,
+            text=RAPPEL_A11Y,
+            bg=FOND,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 10),
+            anchor="w",
+            justify="left",
+            wraplength=400,
+        ).pack(fill=tk.X, pady=(16, 0))
+        self._bouton_principal(cadre, "Continuer", self._afficher_reglage_ptt)
+        self._bouton_secondaire(cadre, "Passer", self._achever_onboarding)
+
+    def _afficher_reglage_ptt(self) -> None:
+        cadre = self._cadre_onboarding(2, "Appuyez pour parler", TEXTE_PTT)
+        tk.Label(
+            cadre,
+            text="Raccourci clavier dans l'application",
+            bg=FOND,
+            fg=ENCRE,
+            font=("Segoe UI", 11, "bold"),
+            anchor="w",
+        ).pack(fill=tk.X, pady=(0, 8))
+        choix = tk.StringVar(value=self.raccourci_en_cours)
+
+        def retenir(*_args: object) -> None:
+            self.raccourci_en_cours = choix.get()
+
+        choix.trace_add("write", retenir)
+        for valeur, libelle in RACCOURCIS.items():
+            radio = tk.Radiobutton(
+                cadre,
+                text=libelle,
+                variable=choix,
+                value=valeur,
+                bg=FOND,
+                fg=ENCRE,
+                activebackground=FOND,
+                activeforeground=ENCRE,
+                selectcolor="#142028",
+                font=("Segoe UI", 11),
+                anchor="w",
+                takefocus=1,
+            )
+            radio.pack(fill=tk.X, pady=4)
+            self._rendre_focus_visible(radio)
+        self._monter_essai_ptt(cadre)
+        tk.Label(
+            cadre,
+            text=RAPPEL_A11Y,
+            bg=FOND,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 10),
+            anchor="w",
+            justify="left",
+            wraplength=400,
+        ).pack(fill=tk.X, pady=(18, 0))
+        self._bouton_principal(cadre, "Continuer", self._afficher_masquage)
+        self._bouton_secondaire(
+            cadre,
+            "Passer",
+            lambda: self._achever_onboarding(self.raccourci_en_cours),
+        )
+
+    def _monter_essai_ptt(self, parent: tk.Misc) -> None:
+        tenu = {"on": False}
+        bouton = tk.Button(
+            parent,
+            text="Essayer : maintenez ici (souris ou Entrée)",
+            font=("Segoe UI", 11, "bold"),
+            bg=visuel.PALETTES["repos"]["anneau"],
+            fg=ENCRE,
+            activebackground=visuel.PALETTES["ecoute"]["coeur"],
+            activeforeground=FOND,
+            relief=tk.RAISED,
+            bd=3,
+            padx=12,
+            pady=10,
+            takefocus=1,
+        )
+        bouton.pack(fill=tk.X, pady=(18, 0))
+        self._rendre_focus_visible(bouton)
+
+        def presser(_event: object | None = None) -> str:
+            tenu["on"] = True
+            bouton.configure(
+                relief=tk.SUNKEN,
+                text="Je vous entends — relâchez pour envoyer",
+                bg=visuel.PALETTES["ecoute"]["coeur"],
+                fg=FOND,
+            )
+            return "break"
+
+        def relacher(_event: object | None = None) -> str:
+            if not tenu["on"]:
+                return "break"
+            tenu["on"] = False
+            bouton.configure(
+                relief=tk.RAISED,
+                text="Essayer : maintenez ici (souris ou Entrée)",
+                bg=visuel.PALETTES["repos"]["anneau"],
+                fg=ENCRE,
+            )
+            return "break"
+
+        bouton.bind("<ButtonPress-1>", presser)
+        bouton.bind("<ButtonRelease-1>", relacher)
+        bouton.bind("<KeyPress-Return>", presser)
+        bouton.bind("<KeyRelease-Return>", relacher)
+        bouton.bind("<KeyPress-space>", presser)
+        bouton.bind("<KeyRelease-space>", relacher)
+
+    def _afficher_masquage(self) -> None:
+        cadre = self._cadre_onboarding(3, "Masquer la configuration", TEXTE_MASQUAGE)
+        tk.Label(
+            cadre,
+            text=(
+                f"Raccourci retenu : {RACCOURCIS[self.raccourci_en_cours]}. "
+                "Pendant un appel distant, l'éclair s'allume et le statut le dit en texte."
+            ),
+            bg=FOND,
+            fg=ENCRE,
+            font=("Segoe UI", 11),
+            anchor="w",
+            justify="left",
+            wraplength=400,
+        ).pack(fill=tk.X)
+        tk.Label(
+            cadre,
+            text=RAPPEL_A11Y,
+            bg=FOND,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 10),
+            anchor="w",
+            justify="left",
+            wraplength=400,
+        ).pack(fill=tk.X, pady=(16, 0))
+
+        def commencer_et_masquer() -> None:
+            self._achever_onboarding(self.raccourci_en_cours)
+            self.masquer_configuration()
+
+        self._bouton_principal(
+            cadre,
+            "Commencer",
+            lambda: self._achever_onboarding(self.raccourci_en_cours),
+        )
+        self._bouton_secondaire(cadre, "Commencer et masquer", commencer_et_masquer)
+
+    def _afficher_application(self) -> None:
+        self._vider()
+        cadre = tk.Frame(self.conteneur, bg=FOND)
         cadre.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
 
+        bandeau = tk.Frame(cadre, bg=FOND)
+        bandeau.pack(fill=tk.X, pady=(4, 0))
+
         self.toile = tk.Canvas(
-            cadre,
+            bandeau,
             width=TAILLE_BULLE,
             height=TAILLE_BULLE,
             bg=FOND,
             highlightthickness=0,
             bd=0,
         )
-        self.toile.pack(pady=(8, 4))
+        self.toile.pack(side=tk.LEFT, expand=True)
         self.bulle = Bulle(self.toile, TAILLE_BULLE)
 
-        # takefocus=0 : un Button tkinter avale Espace pour s'activer.
-        # On veut Press/Release, pas un clic simulé qui raterait le maintien.
+        cote_eclair = tk.Frame(bandeau, bg=FOND)
+        cote_eclair.pack(side=tk.RIGHT, padx=(8, 4))
+        taille_eclair = 72
+        self.toile_eclair = tk.Canvas(
+            cote_eclair,
+            width=taille_eclair,
+            height=taille_eclair,
+            bg=FOND,
+            highlightthickness=0,
+            bd=0,
+        )
+        self.toile_eclair.pack()
+        self.badge = BadgeEclair(self.toile_eclair, taille_eclair)
+        self.ligne_eclair = tk.Label(
+            cote_eclair,
+            text=libelle_eclair("repos"),
+            bg=FOND,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 10),
+            wraplength=120,
+            justify="center",
+        )
+        self.ligne_eclair.pack(pady=(4, 0))
+
+        raccourci = RACCOURCIS[self.configuration.raccourci_ptt]
+        # Les événements explicites conservent la sémantique maintenir/relâcher,
+        # y compris lorsque le bouton est atteint avec Tab.
         self.bouton = tk.Button(
             cadre,
             text="Parler",
@@ -485,11 +890,41 @@ class Application:
             bd=3,
             padx=28,
             pady=16,
-            takefocus=0,
+            takefocus=1,
+            highlightthickness=2,
+            highlightcolor=visuel.PALETTES["ecoute"]["lueur"],
         )
         self.bouton.pack(pady=12, fill=tk.X)
         self.bouton.bind("<ButtonPress-1>", self.enfoncer)
         self.bouton.bind("<ButtonRelease-1>", self.relacher)
+        self.bouton.bind("<KeyPress-Return>", self.enfoncer)
+        self.bouton.bind("<KeyRelease-Return>", self.relacher)
+        self._rendre_focus_visible(self.bouton)
+
+        self.bouton_masquer = tk.Button(
+            cadre,
+            text="Masquer la configuration",
+            command=self.masquer_configuration,
+            bg=FOND,
+            fg=ENCRE_SOURDE,
+            activebackground="#142028",
+            activeforeground=ENCRE,
+            relief=tk.FLAT,
+            takefocus=1,
+        )
+        self.bouton_masquer.pack(fill=tk.X, pady=(0, 4))
+        self._rendre_focus_visible(self.bouton_masquer)
+
+        tk.Label(
+            cadre,
+            text=f"Raccourci : {raccourci}  ·  {TEXTE_MASQUAGE}",
+            bg=FOND,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 9),
+            anchor="w",
+            justify="left",
+            wraplength=440,
+        ).pack(fill=tk.X, pady=(0, 4))
 
         tk.Label(
             cadre,
@@ -519,17 +954,25 @@ class Application:
             font=("Segoe UI", 9),
             anchor="w",
             justify="left",
-            wraplength=420,
+            wraplength=440,
         )
         self.ligne_etat.pack(fill=tk.X, pady=(12, 0), side=tk.BOTTOM)
 
-        self.racine.bind_all("<KeyPress-space>", self._espace_enfonce)
-        self.racine.bind_all("<KeyRelease-space>", self._espace_relache)
+        appui, relache = sequences_tk(self.configuration.raccourci_ptt)
+        self.racine.bind_all(appui, self._espace_enfonce)
+        self.racine.bind_all(relache, self._espace_relache)
         self.racine.bind_all("<Escape>", lambda _e: self.fermer())
 
         print("UI_PRETE", flush=True)
-        self.session.start()
+        if not self.session_lancee:
+            self.session_lancee = True
+            self.session.start()
         self.racine.after(visuel.INTERVALLE_MS, self.tic)
+
+    def masquer_configuration(self) -> None:
+        """Masque dans la barre des tâches, qui reste le geste de rappel fiable."""
+        self.relacher()
+        self.racine.iconify()
 
     def _zone_texte(self, parent: tk.Misc) -> tk.Text:
         zone = tk.Text(
@@ -566,12 +1009,25 @@ class Application:
             self.texte_statut = texte
         self.ligne_etat.configure(text=self._composer_statut())
 
+    def _appliquer_eclair(self, etat: str) -> None:
+        if self.badge is not None:
+            self.badge.appliquer_etat(etat)
+        if self.ligne_eclair is None:
+            return
+        allume = eclair_allume(etat)
+        self.ligne_eclair.configure(
+            text=libelle_eclair(etat),
+            fg=visuel.PALETTES["escalade"]["lueur"] if allume else ENCRE_SOURDE,
+            font=("Segoe UI", 10, "bold") if allume else ("Segoe UI", 10),
+        )
+
     def enfoncer(self, _event: object | None = None) -> None:
         if self.enfonce:
             return
         self.enfonce = True
         self.session.tenu.set()
         self.bulle.appliquer_etat("ecoute", niveau=None)
+        self._appliquer_eclair("ecoute")
         self.bouton.configure(
             relief=tk.SUNKEN,
             text="Parler…",
@@ -618,6 +1074,10 @@ class Application:
                 valeur = None
             if isinstance(etat, str):
                 self.bulle.appliquer_etat(etat, niveau=valeur)
+                self._appliquer_eclair(etat)
+                distant = statut_pour_etat(etat)
+                if distant:
+                    self._afficher_statut(distant)
         elif kind == "rapport":
             self._ecrire_zone(self.zone_compris, str(message.get("transcript") or "").strip())
             self._ecrire_zone(self.zone_reponse, str(message.get("reply") or "").strip())
@@ -641,7 +1101,10 @@ class Application:
                     self._traiter(self.file_ui.get_nowait())
             except queue.Empty:
                 pass
-            self.bulle.dessiner()
+            if getattr(self, "bulle", None) is not None:
+                self.bulle.dessiner()
+            if self.badge is not None:
+                self.badge.dessiner()
         except tk.TclError:
             return
         except Exception as exc:
@@ -671,7 +1134,7 @@ def analyser_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parseur.add_argument(
         "--url",
-        default=moteur.URL_DEFAUT,
+        default=URL_DEFAUT,
         help="URL WebSocket du transport (IPv4 explicite, pas localhost)",
     )
     parseur.add_argument(
@@ -683,6 +1146,17 @@ def analyser_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         "--sortie",
         default=None,
         help="indice PortAudio, ou fragment du nom du haut-parleur",
+    )
+    parseur.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="chemin de configuration (utile aux tests et installations portables)",
+    )
+    parseur.add_argument(
+        "--onboarding",
+        action="store_true",
+        help="réafficher l'onboarding sans effacer le choix enregistré",
     )
     return parseur.parse_args(argv)
 

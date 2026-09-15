@@ -130,7 +130,7 @@ def check_turn():
 async def check_mouth():
     from src.mouth.piper_tts import PiperTTS
 
-    voice = "/workspace/models/piper/fr_FR-siwis-medium.onnx"
+    voice = "/workspace/models/piper/fr_FR-tom-medium.onnx"
     if not os.path.exists(voice):
         return report("MOUTH piper", SKIP, "voice missing — run fetch_models.sh core")
 

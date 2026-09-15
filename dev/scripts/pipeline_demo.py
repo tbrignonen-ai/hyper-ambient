@@ -192,7 +192,7 @@ def main():
     p.add_argument("--asr-model", default=os.getenv("EARS_MODEL", "large-v3-turbo"))
     p.add_argument("--device", default="cuda")
     p.add_argument("--silence-ms", type=int, default=700)
-    p.add_argument("--voice", default="/workspace/models/piper/fr_FR-siwis-medium.onnx")
+    p.add_argument("--voice", default="/workspace/models/piper/fr_FR-tom-medium.onnx")
     p.add_argument("--out", default="/workspace/data/out/reply.wav")
     p.add_argument("--no-fallback", action="store_true",
                    help="use the configured backend only, never demote to llama.cpp")

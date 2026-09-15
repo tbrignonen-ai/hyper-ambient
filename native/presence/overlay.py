@@ -19,6 +19,11 @@ import tkinter as tk
 from ctypes import Structure, byref, c_long, windll
 from typing import Any
 
+try:
+    from onboarding import couleurs_eclair, eclair_allume, sommets_eclair
+except ImportError:
+    from native.presence.onboarding import couleurs_eclair, eclair_allume, sommets_eclair
+
 # Jamais du noir pur ni une teinte du dessin : Windows perce cette couleur
 # de part en part, y compris aux clics, et un overlap trouerait la bulle.
 COULEUR_TRANSPARENTE = "#010203"
@@ -170,6 +175,40 @@ def melanger_palettes(actuelle: dict[str, Any], cible: dict[str, Any], t: float)
         mixee[cle] = interpoler_canal(float(actuelle[cle]), float(cible[cle]), t)
     mixee["suit_niveau"] = cible["suit_niveau"] if t > 0.5 else actuelle["suit_niveau"]
     return mixee
+
+
+def dessiner_eclair(
+    toile: tk.Canvas,
+    *,
+    cx: float,
+    cy: float,
+    taille: float,
+    allume: bool,
+    maintenant: float,
+) -> None:
+    """Icône éclair : braise vive pendant l'escalade, silhouette éteinte sinon."""
+    pulsation = 0.5 + 0.5 * math.sin(maintenant * 9.0) if allume else 0.0
+    fill, contour = couleurs_eclair(allume, pulsation=pulsation)
+    if allume:
+        halo = taille * 0.58
+        toile.create_oval(
+            cx - halo,
+            cy - halo,
+            cx + halo,
+            cy + halo,
+            fill="",
+            outline=contour,
+            width=2,
+            tags="eclair",
+        )
+    toile.create_polygon(
+        *sommets_eclair(cx, cy, taille),
+        fill=fill,
+        outline=contour,
+        width=2 if allume else 1,
+        joinstyle=tk.MITER,
+        tags="eclair",
+    )
 
 
 def analyser_arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -501,6 +540,16 @@ class Presence:
                 self.toile.create_oval(
                     x - p, y - p, x + p, y + p, fill=lueur, outline=""
                 )
+
+        if eclair_allume(self.etat):
+            dessiner_eclair(
+                self.toile,
+                cx=cx + rayon * 0.72,
+                cy=cy - rayon * 0.78,
+                taille=max(28.0, rayon * 0.7),
+                allume=True,
+                maintenant=maintenant,
+            )
 
     def _ovale(
         self,

@@ -345,6 +345,11 @@ def test_jouer_duplique_mono_vers_stereo():
         channels = 2
         def __init__(self):
             self.blocs = []
+            self.active = False
+        def start(self):
+            self.active = True
+        def stop(self):
+            self.active = False
         def write(self, bloc):
             self.blocs.append(np.asarray(bloc))
 
@@ -399,6 +404,11 @@ def test_tour_ignore_state_et_vide_jusqu_au_marqueur(monkeypatch):
         channels = 2
         def __init__(self):
             self.n = 0
+            self.active = False
+        def start(self):
+            self.active = True
+        def stop(self):
+            self.active = False
         def write(self, bloc):
             self.n += np.asarray(bloc).shape[0]
 

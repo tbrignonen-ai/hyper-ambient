@@ -308,6 +308,13 @@ def test_tour_state_appelle_relayer(monkeypatch):
 
     class Sortie:
         channels = 1
+        active = False
+
+        def start(self):
+            self.active = True
+
+        def stop(self):
+            self.active = False
 
         def write(self, bloc):
             pass
@@ -349,6 +356,13 @@ def test_tour_deux_paquets_audio_avant_marqueur(monkeypatch, capsys):
 
     class Sortie:
         channels = 1
+        active = False
+
+        def start(self):
+            self.active = True
+
+        def stop(self):
+            self.active = False
 
         def __init__(self):
             self.n = 0
@@ -408,6 +422,13 @@ def test_tour_state_puis_error_n_ecrit_pas(monkeypatch, capsys):
 
     class Sortie:
         channels = 1
+        active = False
+
+        def start(self):
+            self.active = True
+
+        def stop(self):
+            self.active = False
 
         def write(self, bloc):
             raise AssertionError("pas de restitution sur error")
@@ -544,6 +565,13 @@ def test_url_cli_par_defaut_est_ipv4():
 def test_jouer_stereo_deux_colonnes_identiques():
     class Sortie:
         channels = 2
+        active = False
+
+        def start(self):
+            self.active = True
+
+        def stop(self):
+            self.active = False
 
         def __init__(self):
             self.blocs = []
@@ -556,3 +584,69 @@ def test_jouer_stereo_deux_colonnes_identiques():
     talk._jouer(sortie, pcm)
     assert sortie.blocs[0].shape == (3, 2)
     np.testing.assert_array_equal(sortie.blocs[0][:, 0], sortie.blocs[0][:, 1])
+
+
+def test_le_flux_ne_demarre_qu_a_la_premiere_trame():
+    """Le souffle du debut venait d'un flux actif sans rien a jouer.
+
+    Ouvert puis demarre des la connexion, le flux restait en underflow
+    pendant tout le temps ou l'on parlait ; MME et DirectSound le rendaient
+    audible comme un bruit blanc. Il ne doit donc s'activer qu'au moment ou
+    une trame est ecrite.
+    """
+
+    class Sortie:
+        channels = 1
+        active = False
+
+        def __init__(self):
+            self.blocs = []
+            self.demarrages = 0
+
+        def start(self):
+            self.demarrages += 1
+            self.active = True
+
+        def stop(self):
+            self.active = False
+
+        def write(self, bloc):
+            assert self.active, "ecriture sur un flux arrete"
+            self.blocs.append(np.asarray(bloc))
+
+    sortie = Sortie()
+
+    # Rien a jouer : le flux reste au repos, pas de souffle.
+    talk._jouer(sortie, np.zeros(0, dtype=np.float32))
+    assert sortie.demarrages == 0
+    assert sortie.active is False
+
+    # Premiere trame : le flux demarre, une seule fois.
+    talk._jouer(sortie, np.array([0.2, -0.2], dtype=np.float32))
+    talk._jouer(sortie, np.array([0.1, -0.1], dtype=np.float32))
+    assert sortie.demarrages == 1
+    assert len(sortie.blocs) == 2
+
+
+def test_le_repos_arrete_le_flux_entre_deux_tours():
+    """Laisse actif dans le silence qui suit, le flux se remet a souffler."""
+
+    class Sortie:
+        channels = 1
+        active = True
+
+        def __init__(self):
+            self.arrets = 0
+
+        def stop(self):
+            self.arrets += 1
+            self.active = False
+
+    sortie = Sortie()
+    talk._reposer(sortie)
+    assert sortie.arrets == 1
+    assert sortie.active is False
+
+    # Idempotent : un flux deja au repos n'est pas arrete deux fois.
+    talk._reposer(sortie)
+    assert sortie.arrets == 1

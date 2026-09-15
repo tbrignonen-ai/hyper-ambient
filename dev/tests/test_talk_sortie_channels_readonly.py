@@ -71,8 +71,27 @@ def test_ouvrir_sortie_accepte_un_flux_dont_channels_est_en_lecture_seule():
     """Un `channels` non assignable ne doit pas etre pris pour un refus materiel."""
     sd = _SoundDeviceVerrouille(INFO_SURROUND)
     flux = talk._ouvrir_sortie(sd, indice=None)
-    assert flux.demarre is True
     assert flux.channels == 2
+
+
+def test_ouvrir_sortie_ne_demarre_plus_le_flux():
+    """L'ouverture n'allume plus le flux : c'est `_jouer` qui l'allume.
+
+    Ce test affirmait exactement l'inverse — `assert flux.demarre is True` —
+    et il datait de l'epoque ou `_ouvrir_sortie` appelait `start()` lui-meme.
+    Le 8 septembre, le demarrage est devenu **paresseux** pour supprimer le
+    souffle entendu avant le premier mot : un flux ouvert et actif dans le
+    silence part en underflow. L'ancienne assertion epinglait donc un contrat
+    abandonne, et elle echouait depuis.
+
+    L'assertion est retournee volontairement, et le geste complet est verifie
+    ici : ouvert et muet, puis actif des qu'il y a quelque chose a jouer.
+    """
+    sd = _SoundDeviceVerrouille(INFO_SURROUND)
+    flux = talk._ouvrir_sortie(sd, indice=None)
+    assert flux.demarre is False
+    talk._jouer(flux, np.array([0.5, -0.5], dtype=np.float32))
+    assert flux.demarre is True
 
 
 def test_jouer_etale_bien_sur_un_flux_channels_en_lecture_seule():

@@ -141,6 +141,34 @@ def _texte_optionnel(message: dict, cles: tuple[str, ...]) -> str | None:
     return None
 
 
+def est_fin_de_tour(message: object) -> bool:
+    """Vrai pour le seul marqueur de fin : un `invoke` audio a trames vides.
+
+    La recette sortait autrefois sur le premier message sans cle `frames`. Le
+    serveur en emet deux sortes qui n'en portent pas — la presence
+    (`{"type": "state", ...}`) et le rapport — et le PREMIER message d'un tour
+    est justement un `state`, a 0,01 s, avant tout audio. La recette concluait
+    donc « aucune trame de reponse » sur une chaine vocale parfaitement saine :
+    mesure du 13 septembre, 194 paquets audio recus au meme instant par une
+    sonde branchee sur le meme serveur. Un message de presence se traverse, il
+    ne conclut rien.
+    """
+    if not isinstance(message, dict):
+        return False
+    if message.get("type") != "invoke":
+        return False
+    frames = message.get("frames")
+    return isinstance(frames, list) and not frames
+
+
+def trames_audio(message: object) -> list:
+    """Les trames d'un message, et une liste vide pour tout ce qui n'est pas de l'audio."""
+    if not isinstance(message, dict) or message.get("type") != "invoke":
+        return []
+    frames = message.get("frames")
+    return frames if isinstance(frames, list) else []
+
+
 def _rapport(
     *,
     duree_envoyee_s: float | None,
@@ -318,9 +346,12 @@ def main() -> None:
                     if reponse_modele and transcript and reponse_modele == transcript:
                         reponse_modele = None
 
-                recues = message.get("frames") or []
-                if not recues:
+                if est_fin_de_tour(message):
                     break
+                recues = trames_audio(message)
+                if not recues:
+                    # Presence ou rapport : on traverse, on ne conclut pas.
+                    continue
                 if mic_to_audible_ms is None:
                     mic_to_audible_ms = (
                         time.perf_counter() - t_fin_envoi

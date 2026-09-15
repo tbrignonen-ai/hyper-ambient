@@ -21,6 +21,8 @@ distinction est le cœur du module.
 """
 from __future__ import annotations
 
+import inspect
+
 import numpy as np
 from fastapi import FastAPI, WebSocket
 from starlette.websockets import WebSocketDisconnect
@@ -122,6 +124,16 @@ def create_transport_app(
                     continue
                 canal.handle(message)
                 trames_sortantes = on_frames(decoded)
+                # `on_frames` peut rendre une coroutine. On l'attend ICI, dans
+                # la tâche du point d'entrée ASGI, au lieu de la laisser courir
+                # ailleurs : depuis starlette 1.6 / uvicorn 0.52, uvicorn ferme
+                # le transport dès que l'application ASGI rend la main. Un envoi
+                # depuis une tâche extérieure arrive alors sur un socket déjà
+                # fermé — `ClientDisconnected` — et la voix se perd en silence.
+                # Mesuré le 13 septembre : zéro trame reçue de bout en bout, sur
+                # la version commitée comme sur celle du jour.
+                if inspect.isawaitable(trames_sortantes):
+                    trames_sortantes = await trames_sortantes
                 audio_emis = False
                 if trames_sortantes:
                     await websocket.send_json(

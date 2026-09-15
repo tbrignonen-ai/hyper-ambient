@@ -409,12 +409,20 @@ def test_jouer_sans_attr_channels_reste_mono():
     class Sortie:
         def __init__(self):
             self.blocs = []
+            self.active = False
+        def start(self):
+            self.active = True
+        def stop(self):
+            self.active = False
         def write(self, bloc):
             self.blocs.append(np.asarray(bloc))
 
     sortie = Sortie()
     talk._jouer(sortie, np.array([0.5, -0.5], dtype=np.float32))
     assert sortie.blocs[0].shape == (2, 1)
+    # Le demarrage paresseux fait partie du contrat de `_jouer` depuis le
+    # 8 septembre : un flux laisse actif dans le silence souffle en underflow.
+    assert sortie.active is True
 
 
 def test_ouvrir_sortie_sans_indice_n_envoie_pas_device(capsys):
@@ -654,6 +662,11 @@ def test_tour_audio_appelle_sleep_et_mesure(monkeypatch, capsys):
         channels = 1
         def __init__(self):
             self.n = 0
+            self.active = False
+        def start(self):
+            self.active = True
+        def stop(self):
+            self.active = False
         def write(self, bloc):
             self.n += np.asarray(bloc).shape[0]
 

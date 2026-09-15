@@ -31,6 +31,14 @@ from src.hostagent.transport import create_transport_app
 from src.hostagent.warmup import prechauffer
 from src.presence.etat import Presence
 from src.mouth.secours import LIMITE_ENONCE_S, est_silence, phrase_de_secours
+from src.mouth.output_gain import appliquer_gain_doux
+from src.brain.tool_loop import run_tool_loop
+from src.brain.tools import ToolRegistry
+from src.brain.tools_codex import register_ask_codex
+from src.brain.tools_cli import register_ask_claude
+from src.brain.tools_muse import register_ask_muse
+from src.brain.tools_web import register_web_search
+from src.gate.permission import Gate
 
 # Six messages, soit trois echanges. Assez pour qu'un « oui, vas-y » ait un
 # antecedent ; assez court pour que le contexte du modele local ne gonfle pas
@@ -40,7 +48,171 @@ MEMOIRE_MESSAGES = 6
 HOST = "0.0.0.0"
 PORT = 8001
 SECRET_DEVELOPPEMENT = "partage-installation"
-VOIX_PIPER = "/workspace/models/piper/fr_FR-siwis-medium.onnx"
+VOIX_PIPER = "/workspace/models/piper/fr_FR-tom-medium.onnx"
+
+# Ce qu'on dit AVANT d'aller chercher dehors. Codex met 19 a 36 secondes a
+# repondre : sans annonce, c'est une demi-minute de silence, qui s'entend comme
+# une panne et non comme une deliberation. Ces phrases sont ecrites, pas
+# generees — les faire produire par le modele couterait exactement la latence
+# qu'elles existent pour couvrir. Meme raison que les amorces du routeur.
+#
+# Elles ne reprennent pas « un instant » : l'amorce du routeur vient de le dire
+# une seconde plus tot, et l'entendre deux fois de suite s'entend comme un
+# bégaiement. Celle de Codex annonce l'ordre de grandeur plutot que de le taire
+# — vingt secondes prevenues se vivent autrement que vingt secondes subies.
+ANNONCES_OUTILS = {
+    "ask_codex": "Je demande à Codex, ça prend une vingtaine de secondes.",
+    # Mesuré : 23,8 s pour le pont seul, 40,9 s dans un tour complet. Annoncer
+    # « une vingtaine » serait déjà un petit mensonge à la trente-huitième.
+    "ask_muse": "Je demande son avis à Muse, ça prend une trentaine de secondes.",
+    # Mesuré : ~10 s à chaud (9,9 s puis 9,5 s), mais plus de 40 s au tout
+    # premier appel — démarrage à froid de la CLI, le même phénomène que Codex
+    # relevé le 11 (35,8 s à froid contre 19 s à chaud). Le délai du pont, lui,
+    # couvre le cas froid ; l'annonce ne promet aucune durée, parce que la
+    # norme est courte et qu'annoncer « une minute » ferait paraître long ce
+    # qui ne l'est pas.
+    "ask_claude": "Je demande son analyse à Claude.",
+    "web_search": "Je cherche ça sur le web.",
+}
+ANNONCE_OUTIL_PAR_DEFAUT = "Je consulte un outil."
+
+# Le delai de l'outil depasse celui du pont (40 s) a dessein : c'est la phrase
+# prononcable du pont (« delai depasse ») qui doit sortir, pas une coupure cote
+# client qui, elle, n'a rien a dire.
+DELAI_OUTIL_S = 65.0
+
+# Claude raisonne a travers plusieurs fichiers : c'est sa raison d'etre ici, et
+# c'est ce qui le rend lent. Son pont attend 90 s ; le client doit attendre plus
+# LONGTEMPS que lui, sinon c'est le client qui coupe et la phrase prononcable du
+# pont (« delai depasse ») ne sort jamais. Mesure : 41,8 s de coupure seche sur
+# une question d'architecture, avec l'ancien couple 40/65.
+DELAI_OUTIL_CLAUDE_S = 110.0
+
+
+def annonce_outil(nom: str) -> str:
+    """La phrase prononcée avant l'appel de `nom`.
+
+    Un nom d'outil ne se prononce pas : « ask_codex » lu à voix haute est un
+    bruit, pas une information. La table rend une phrase pour les outils connus,
+    et une formule neutre pour les autres — jamais l'identifiant brut.
+    """
+    return ANNONCES_OUTILS.get(nom, ANNONCE_OUTIL_PAR_DEFAUT)
+
+
+def construire_registre(client=None) -> ToolRegistry:
+    """Les outils que hyper-ambient peut déclencher à la voix.
+
+    Vide sans jeton, et c'est voulu : un outil déclaré mais incapable de
+    répondre ferait payer une boucle d'outil complète pour finir sur « Je n'ai
+    pas encore d'accès à Codex ». Registre vide, le tour reste exactement celui
+    d'avant.
+    """
+    registre = ToolRegistry()
+    jeton = os.getenv("CODEX_BRIDGE_TOKEN", "")
+    if jeton and client is not None:
+        register_ask_codex(
+            registre, token=jeton, client=client, timeout_s=DELAI_OUTIL_S
+        )
+    # Muse : second avis, sur un pont deja debout dans WSL. L'URL est lue ici et
+    # non a l'import, pour qu'ajouter un agent ne demande ni reconstruction
+    # d'image ni recreation de conteneur — `docker start` reste la seule
+    # commande de reprise.
+    url_muse = os.getenv("MUSE_BRIDGE_URL", "")
+    if url_muse and client is not None:
+        register_ask_muse(registre, url=url_muse, client=client)
+    # Claude : analyse et revue, sur le pont CLI. `ask_hermes` existe dans le
+    # meme module et n'est **pas** enregistre : le chemin vers Hermes est ecrit,
+    # il n'est pas emprunte aujourd'hui. Un outil declare au modele finit
+    # toujours par etre appele.
+    jeton_cli = os.getenv("CLI_BRIDGE_TOKEN", "")
+    if jeton_cli and client is not None:
+        register_ask_claude(
+            registre, token=jeton_cli, client=client, timeout_s=DELAI_OUTIL_CLAUDE_S
+        )
+    # Web : l'instance SearXNG locale ne demande aucune cle. Si elle devient
+    # injoignable, le handler se replie sur Tavily uniquement lorsqu'une cle
+    # est configuree. Au moins un des deux backends doit exister pour declarer
+    # l'outil au modele.
+    url_searxng = os.getenv("SEARXNG_URL", "").strip()
+    cle_tavily = os.getenv("TAVILY_API_KEY", "").strip()
+    if client is not None and (url_searxng or cle_tavily):
+        register_web_search(
+            registre,
+            searxng_url=url_searxng or None,
+            api_key=cle_tavily,
+            client=client,
+        )
+    return registre
+
+
+def outils_attendus_depuis_env() -> set[str]:
+    """Noms qui doivent etre exposes pour la configuration courante."""
+    attendus: set[str] = set()
+    if os.getenv("CODEX_BRIDGE_TOKEN", "").strip():
+        attendus.add("ask_codex")
+    if os.getenv("CLI_BRIDGE_TOKEN", "").strip():
+        attendus.add("ask_claude")
+    if os.getenv("MUSE_BRIDGE_URL", "").strip():
+        attendus.add("ask_muse")
+    if os.getenv("SEARXNG_URL", "").strip() or os.getenv("TAVILY_API_KEY", "").strip():
+        attendus.add("web_search")
+    return attendus
+
+
+def verifier_registre(registre: ToolRegistry) -> set[str]:
+    """Echoue tot si config et schemas divergent, avant une demo vocale."""
+    actifs = {schema["function"]["name"] for schema in registre.schemas()}
+    attendus = outils_attendus_depuis_env()
+    if actifs != attendus:
+        raise RuntimeError(
+            "registre outils incoherent: "
+            f"attendus={sorted(attendus)} actifs={sorted(actifs)}"
+        )
+    if "ask_hermes" in actifs:
+        raise RuntimeError("ask_hermes ne doit pas etre expose")
+    return actifs
+
+
+def construire_porte() -> Gate:
+    """La porte qui autorise les outils. `ask_codex` est en lecture seule, donc
+    `auto` l'autorise sans rien demander ; `GATE_MODE=ask` resserre sans toucher
+    au code."""
+    return Gate(mode=os.getenv("GATE_MODE", "auto"))
+
+
+def construire_ears():
+    """Construit EARS depuis l'environnement, sans charger les poids.
+
+    ``faster-whisper`` reste un repli explicite. L'option 2 choisit Qwen3-ASR
+    via ``EARS_BACKEND=qwen3`` ; les imports restent paresseux afin qu'un
+    backend absent n'empêche pas l'autre de démarrer.
+    """
+    backend = os.getenv("EARS_BACKEND", "faster-whisper").strip().lower()
+    default_model = (
+        "0.6B" if backend in {"qwen3", "qwen3-asr"} else "large-v3-turbo"
+    )
+    model_size = os.getenv("EARS_MODEL", default_model)
+    language = os.getenv("EARS_LANGUAGE", "fr")
+    device = os.getenv("EARS_DEVICE", "cuda")
+    compute_type = os.getenv("EARS_COMPUTE_TYPE")
+
+    if backend in {"qwen3", "qwen3-asr"}:
+        from src.ears.qwen3_asr import Qwen3ASR
+
+        classe = Qwen3ASR
+    elif backend in {"faster-whisper", "faster_whisper", "whisper"}:
+        from src.ears.faster_whisper_asr import FasterWhisperASR
+
+        classe = FasterWhisperASR
+    else:
+        raise ValueError(
+            f"EARS_BACKEND inconnu: {backend!r} (attendu: qwen3 ou faster-whisper)"
+        )
+
+    kwargs = {"model_size": model_size, "language": language, "device": device}
+    if compute_type:
+        kwargs["compute_type"] = compute_type
+    return backend, classe(**kwargs)
 
 
 def lire_secret() -> str:
@@ -140,8 +312,14 @@ class HostPipeline:
         self._historique: list[dict] = []
         self.brain = None
         self.tts = None
+        # Le registre est vide tant que `load` ne l'a pas garni : un tour joue
+        # sans lui doit rester le tour d'avant, pas un tour degrade.
+        self.registre: ToolRegistry | None = None
+        self.porte: Gate | None = None
+        self._client_outils = None
         self._websocket = None
         self._lock = asyncio.Lock()
+        self.output_gain_db = float(os.getenv("MOUTH_OUTPUT_GAIN_DB", "0"))
 
     def peer_address_of(self, websocket) -> str:
         """Mémorise le socket pour le retour audio, et tranche la localité.
@@ -159,23 +337,36 @@ class HostPipeline:
             pass
         return "127.0.0.1"
 
-    def on_frames(self, frames) -> None:
-        """Rappel synchrone du transport : enfile le tour sur la boucle uvicorn."""
-        websocket = self._websocket
-        asyncio.get_running_loop().create_task(self._tour(frames, websocket))
+    def on_frames(self, frames):
+        """Rend le tour de parole au transport, qui l'attend.
+
+        Il était détaché par `create_task`, et la voix partait donc d'une tâche
+        extérieure au point d'entrée ASGI. Depuis la montée de version du socle
+        web, uvicorn ferme le transport dès que l'application rend la main : le
+        premier envoi du tour tombait sur un socket déjà fermé, l'exception était
+        avalée par le garde-fou, et le tour mourait sans un son. Rendre la
+        coroutine laisse le transport l'attendre — tout ce qui part sur le socket
+        part désormais de la tâche qui le détient.
+        """
+        return self._tour(frames, self._websocket)
 
     async def load(self) -> None:
         """Charge EARS, BRAIN et MOUTH une seule fois, avant d'accepter un client."""
         from src.brain.factory import build_brain_with_fallback
-        from src.ears.faster_whisper_asr import FasterWhisperASR
-
-        model_size = os.getenv("EARS_MODEL", "large-v3-turbo")
-        device = os.getenv("EARS_DEVICE", "cuda")
         voix = os.getenv("MOUTH_VOICE", VOIX_PIPER)
 
-        print(f"EARS  : chargement {model_size} sur {device}…", flush=True)
-        self.asr = FasterWhisperASR(
-            model_size=model_size, language="fr", device=device
+        gain_lineaire = 10.0 ** (self.output_gain_db / 20.0)
+        print(
+            f"MOUTH : post-gain sortie {self.output_gain_db:+.1f} dB "
+            f"(x{gain_lineaire:.2f}), limiteur doux tanh",
+            flush=True,
+        )
+
+        backend_ears, self.asr = construire_ears()
+        print(
+            f"EARS  : chargement {backend_ears} / {self.asr.model_size} "
+            f"sur {self.asr.device}…",
+            flush=True,
         )
         if not await self.asr.load_model():
             print("EARS  : modèle indisponible", flush=True)
@@ -188,6 +379,24 @@ class HostPipeline:
             flush=True,
         )
 
+        # Les outils. Le client HTTP vit aussi longtemps que le pipeline : le
+        # rouvrir par appel ajouterait une poignee de main TCP au milieu d'un
+        # tour de parole, sur un chemin qui compte deja en dizaines de secondes.
+        import httpx
+
+        self._client_outils = httpx.AsyncClient()
+        self.registre = construire_registre(client=self._client_outils)
+        self.porte = construire_porte()
+        actifs = verifier_registre(self.registre)
+        if actifs:
+            noms = ", ".join(sorted(actifs))
+            print(f"OUTILS: {noms} — porte en mode {self.porte.mode}", flush=True)
+        else:
+            print(
+                "OUTILS: aucun backend configure — tour de parole sans outil",
+                flush=True,
+            )
+
         # MOUTH : Pocket TTS par défaut. Piper reste joignable par MOUTH_BACKEND=piper,
         # parce qu'il ne coûte aucune VRAM — c'est le repli si le GPU est saturé.
         backend = os.getenv("MOUTH_BACKEND", "pocket").lower()
@@ -195,25 +404,40 @@ class HostPipeline:
             from src.mouth.pocket_tts import PocketTTS
 
             langue = os.getenv("MOUTH_LANGUAGE", "french_24l")
-            nom_voix = os.getenv("MOUTH_VOICE_NAME", "eponine")
-            profil = os.getenv("MOUTH_PROFILE", "mother")
+            nom_voix = os.getenv("MOUTH_VOICE_NAME", "estelle")
+            profil = os.getenv("MOUTH_PROFILE", "aurora")
             # pocket-tts n'a ni reglage de vitesse ni reglage de hauteur.
             # MOUTH_DEMI_TONS descend la voix par reechantillonnage, ce qui
             # ralentit la diction dans le meme rapport : -3 donne une tierce
-            # mineure plus bas et 19 % plus lent.
+            # mineure plus bas et 19 % plus lent. Device cpu : 0 VRAM, le
+            # GPU reste a EARS / llama-server.
             demi_tons = float(os.getenv("MOUTH_DEMI_TONS", "0"))
+            device = os.getenv("MOUTH_DEVICE", "cpu")
             print(
                 f"MOUTH : chargement pocket-tts {langue} / {nom_voix} "
-                f"profil={profil} demi_tons={demi_tons:+g}…",
+                f"profil={profil} device={device} demi_tons={demi_tons:+g}…",
                 flush=True,
             )
             self.tts = PocketTTS(
                 language=langue,
                 voice=nom_voix,
-                device=os.getenv("MOUTH_DEVICE", "cuda"),
+                device=device,
                 profile=profil,
                 demi_tons=demi_tons,
             )
+        elif backend == "supertonic":
+            from src.mouth.supertonic_tts import SupertonicTTS
+
+            # Voix feminine lente demandee le 15 sept : F5, la plus grave des
+            # styles feminins, ralentie. CPU, 0 VRAM.
+            style = os.getenv("MOUTH_STYLE", "F5")
+            vitesse = float(os.getenv("MOUTH_SPEED", "0.88"))
+            profil = os.getenv("MOUTH_PROFILE", "aurora")
+            print(
+                f"MOUTH : chargement supertonic-3 {style} vitesse={vitesse} profil={profil}…",
+                flush=True,
+            )
+            self.tts = SupertonicTTS(style=style, speed=vitesse, profile=profil)
         else:
             from src.mouth.piper_tts import PiperTTS
 
@@ -222,7 +446,7 @@ class HostPipeline:
             # hyper-ambient demande grave. MOUTH_DEMI_TONS les descend ; -6
             # ramene siwis a 155 Hz, la hauteur de la voix Pocket qu'il aimait.
             demi_tons = float(os.getenv("MOUTH_DEMI_TONS", "0"))
-            profil = os.getenv("MOUTH_PROFILE", "mother")
+            profil = os.getenv("MOUTH_PROFILE", "aurora")
             print(
                 f"MOUTH : chargement piper {voix} profil={profil} "
                 f"demi_tons={demi_tons:+g}…",
@@ -242,6 +466,23 @@ class HostPipeline:
     async def close(self) -> None:
         if self.brain is not None:
             await self.brain.close()
+        if self._client_outils is not None:
+            await self._client_outils.aclose()
+            self._client_outils = None
+
+    def _flux_brain(self, prompt: str):
+        """Le flux du tour : sous boucle d'outils si le registre est garni.
+
+        Le registre vide rend **exactement** l'appel d'avant, sans `tools` dans
+        la charge utile. C'est la garantie de non-regression du chemin vocal :
+        brancher les outils ne doit rien changer a un tour qui n'en utilise pas.
+        """
+        historique = list(self._historique)
+        if self.registre is not None and len(self.registre):
+            return run_tool_loop(
+                self.brain, prompt, self.registre, self.porte, history=historique
+            )
+        return self.brain.query_streaming(prompt, history=historique)
 
     async def _envoyer(self, websocket, trames: list[AudioFrame]) -> None:
         """Envoie des paquets d'une seconde, ou un marqueur vide de fin de tour."""
@@ -250,6 +491,12 @@ class HostPipeline:
         if not trames:
             await websocket.send_json(_json_trames([]))
             return
+        trames = [
+            AudioFrame(
+                samples=appliquer_gain_doux(trame.samples, self.output_gain_db)
+            )
+            for trame in trames
+        ]
         paquet = SAMPLE_RATE // FRAME_SAMPLES
         for debut in range(0, len(trames), paquet):
             await websocket.send_json(_json_trames(trames[debut : debut + paquet]))
@@ -471,17 +718,49 @@ class HostPipeline:
 
             async def deltas():
                 nonlocal ttft_ms, brain_error, brain_ms
-                async for chunk in self.brain.query_streaming(
-                    prompt, history=list(self._historique)
-                ):
+                # Vrai entre le retour d'un outil et le mot suivant : la phrase
+                # du modèle a été interrompue par l'appel, il faut la recoudre.
+                recoudre = False
+                async for chunk in self._flux_brain(prompt):
                     if presence_reflexion[0]:
                         presence_reflexion[0] = False
                         presence.emettre("reflexion")
                     if chunk.get("ttft_ms") is not None:
                         ttft_ms = chunk["ttft_ms"]
-                    if chunk["stop_reason"] == "error":
+                    # `.get`, pas `[...]` : les chunks de la boucle d'outils ne
+                    # portent ni `stop_reason` ni `ttft_ms`. L'indexation directe
+                    # levait KeyError au premier appel d'outil, le garde-fou de
+                    # `_enchainer` l'avalait, et le tour mourait sans un mot.
+                    if chunk.get("stop_reason") == "error":
                         brain_error = chunk.get("error", "unknown")
-                    if not chunk["delta"]:
+                    # Un chunk d'outil ne porte pas de texte : il porte une
+                    # attente. C'est la seule chose qui doive s'entendre ici —
+                    # le nom de l'outil, ses arguments et son resultat restent
+                    # hors de la voix.
+                    if chunk.get("channel") == "tool":
+                        if chunk.get("phase") == "call":
+                            phrase = annonce_outil(chunk.get("tool", ""))
+                            # Comptee comme une amorce : c'est une phrase
+                            # d'attente, pas une reponse. Recollee au texte, le
+                            # rapport lirait « Je demande a Codex, un instant.
+                            # Il y a neuf fichiers » comme une seule phrase.
+                            amorces.append(phrase)
+                            print(
+                                f"OUTIL : {chunk.get('tool')} — \"{phrase}\"",
+                                flush=True,
+                            )
+                            await self._dire_maintenant(websocket, phrase, leftover)
+                            # L'appel sort de la machine : c'est une escalade,
+                            # au sens ou la fenetre l'affiche deja.
+                            presence.emettre("escalade")
+                            await presence.vider()
+                        else:
+                            # Résultat rendu, ou refus de la porte : le
+                            # prochain mot du modèle reprend là où l'appel
+                            # l'avait coupé.
+                            recoudre = True
+                        continue
+                    if not chunk.get("delta"):
                         continue
                     # Le routeur marque « flush » les phrases d'attente
                     # (« Un instant. ») qu'il emet AVANT d'interroger le
@@ -512,8 +791,22 @@ class HostPipeline:
                         presence.emettre("escalade")
                         await presence.vider()
                         continue
-                    reponse.append(chunk["delta"])
-                    yield chunk["delta"]
+                    texte = chunk["delta"]
+                    # La couture entre deux tours de boucle. Mesuré deux fois
+                    # sur deux sur la chaîne réelle : « Je lui demande.Le
+                    # fichier router.py… ». MOUTH découpe sur la ponctuation,
+                    # et un point collé au mot suivant ne fait pas frontière :
+                    # les deux phrases partaient d'un seul souffle.
+                    if recoudre:
+                        recoudre = False
+                        if (
+                            reponse
+                            and not reponse[-1][-1:].isspace()
+                            and not texte[:1].isspace()
+                        ):
+                            texte = " " + texte
+                    reponse.append(texte)
+                    yield texte
                 brain_ms = (time.monotonic() - t_brain_mouth) * 1000.0
 
             t_gen = time.perf_counter()
@@ -616,7 +909,16 @@ class HostPipeline:
             await presence.vider()
             await self._envoyer(websocket, [])
         except Exception as exc:
-            print(f"tour interrompu : {exc}", flush=True)
+            # Le type et la trace, pas seulement `{exc}` : une exception dont le
+            # message est vide s'imprimait « tour interrompu : » et ne disait
+            # rien du tout. Un tour qui meurt en silence est deja assez penible
+            # a l'oreille pour ne pas l'etre aussi dans le journal.
+            import traceback
+
+            print(
+                f"tour interrompu : {type(exc).__name__}: {exc}", flush=True
+            )
+            print(traceback.format_exc(), flush=True)
             try:
                 await self._envoyer(websocket, [])
             except Exception:
@@ -669,7 +971,14 @@ def main() -> None:
         # « websockets » d'uvicorn : la poignee de main s'ouvrait puis restait
         # muette jusqu'au timeout du client. L'implementation sans-io est celle
         # prevue pour cette version.
-        ws="websockets-sansio",
+        # Choisissable, parce que c'est ici que la voix se perd. Mesure du
+        # 13 septembre, client et serveur tous deux dans le conteneur, sans NAT
+        # entre eux : EARS transcrit, MOUTH rend son premier audio à 692 ms, et
+        # le premier envoi meurt en `ClientDisconnected` — uvicorn voit la
+        # connexion perdue quand le client, lui, attend toujours. Pouvoir
+        # changer d'implémentation sans toucher au code est le seul moyen de
+        # trancher entre « notre code » et « cette pile-là ».
+        ws=os.getenv("HOSTAGENT_WS_IMPL", "websockets-sansio"),
     )
 
 
