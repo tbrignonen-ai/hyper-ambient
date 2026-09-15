@@ -10,6 +10,8 @@ httpx-sse>=0.4
 # --- EARS: ASR ---
 faster-whisper>=1.1        # CTranslate2 backend, int8_float16 on GPU
 av>=13                     # audio demux/decode
+qwen-asr==0.0.6            # Qwen3-ASR transformers backend (option 2)
+bitsandbytes>=0.45          # load_in_4bit pour tenir le budget VRAM option 2
 
 # --- TURN: endpointing ---
 silero-vad>=5.1            # ONNX VAD, L1 fallback for endpoint detection
