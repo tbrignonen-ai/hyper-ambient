@@ -62,3 +62,12 @@ htmlcov/
 *.temp
 scratchpad/
 .claude/
+
+# Sorties jetables de dev (echantillons audio, sondes, sorties brutes d'agents)
+dev/out/
+dev/scripts/_probe_*.py
+dev/scripts/_inspect_*.py
+dev/scripts/_hf_tts_*.py
+nights/*-OUT.json
+nights/*-OUT.txt
+Capture d'écran*.png
