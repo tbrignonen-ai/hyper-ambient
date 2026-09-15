@@ -30,7 +30,35 @@ from src.mouth.voice_design import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_VOICE = "/workspace/models/piper/fr_FR-siwis-medium.onnx"
+DEFAULT_VOICE = "/workspace/models/piper/fr_FR-tom-medium.onnx"
+
+# Taux que siwis/upmc annoncent nativement, et que le canal host-agent
+# chauffe par défaut. Tom sort à 44 100 Hz : sans alignement, un chemin
+# qui oublie `tts.sample_rate` joue le PCM deux fois trop lent — haché.
+PIPELINE_RATE = 22050
+
+
+def ramener_au_taux_pipeline(
+    pcm: np.ndarray, taux_source: int, taux_cible: int = PIPELINE_RATE
+) -> np.ndarray:
+    """Ramène un énoncé complet au taux Piper du pipeline.
+
+    Un énoncé entier, jamais un chunk de 80 ms : `soxr.resample` pose
+    ses bords à zéro, ce qui est correct ici et interdit sur le flux
+    (voir `RechantillonneurContinu`).
+    """
+    pcm = np.asarray(pcm)
+    if pcm.size == 0 or int(taux_source) == int(taux_cible):
+        return np.asarray(pcm, dtype=np.int16)
+    import soxr
+
+    x = pcm.astype(np.float32) / np.float32(32768.0)
+    y = np.asarray(
+        soxr.resample(x, int(taux_source), int(taux_cible)), dtype=np.float32
+    )
+    y = np.clip(y, -1.0, 1.0)
+    return (y * np.float32(32767.0)).astype(np.int16)
+
 
 # Split on sentence enders, but only when followed by space/end — keeps
 # "3.14" and "M. Dupont" from being cut in half.
@@ -89,15 +117,15 @@ class PiperTTS:
         config_path: Optional[str] = None,
         use_cuda: bool = False,
         length_scale: Optional[float] = None,
-        profile: str = "mother",
+        profile: str = "aurora",
         speaker_id: Optional[int] = None,
         demi_tons: float = 0.0,
     ):
         """
         Args:
             profile: voice character from src.mouth.voice_design.PROFILES.
-                "flat" is the raw voice; "mother" applies the MU/TH/UR
-                delivery and treatment.
+                "flat" is the raw voice; "aurora" is the close-mic profile
+                validated in production. "mother" is the hull treatment.
             length_scale: overrides the profile's rate if given.
             speaker_id: for multi-speaker voices (upmc, mls).
             demi_tons: transposition de la voix, en demi-tons. Les voix
@@ -118,7 +146,8 @@ class PiperTTS:
         if demi_tons:
             self.length_scale *= facteur_transposition(demi_tons)
         self.voice = None
-        self.sample_rate = 22050
+        self.native_sample_rate = PIPELINE_RATE
+        self.sample_rate = PIPELINE_RATE
         self._treatment: Optional[VoiceTreatment] = None
         self.ttfa_history: List[float] = []
         logger.info(
@@ -137,15 +166,21 @@ class PiperTTS:
         try:
             t0 = time.perf_counter()
             self.voice = await asyncio.to_thread(_load)
-            self.sample_rate = self.voice.config.sample_rate
+            self.native_sample_rate = int(self.voice.config.sample_rate)
+            # Le traitement DSP suit le taux natif (Tom : 44 100 Hz, le
+            # low-pass aurora à 12 kHz y a de la place). On n'annonce
+            # ensuite que PIPELINE_RATE, pour que le host-agent voie
+            # Tom comme siwis/upmc.
+            self.sample_rate = PIPELINE_RATE
             # Treatment is stateful across chunks — one instance per voice.
             self._treatment = (
-                VoiceTreatment(self.profile, self.sample_rate)
+                VoiceTreatment(self.profile, self.native_sample_rate)
                 if self.profile is not FLAT
                 else None
             )
             logger.info(
-                f"voice loaded in {(time.perf_counter() - t0):.2f}s @ {self.sample_rate} Hz"
+                f"voice loaded in {(time.perf_counter() - t0):.2f}s @ "
+                f"{self.native_sample_rate} Hz -> {self.sample_rate} Hz"
             )
             return True
         except Exception as e:
@@ -183,6 +218,9 @@ class PiperTTS:
             pcm = transposer(pcm, self.demi_tons)
         if self._treatment is not None:
             pcm = self._treatment.process(pcm)
+        pcm = ramener_au_taux_pipeline(
+            pcm, self.native_sample_rate, self.sample_rate
+        )
         return pcm, (first_chunk_s or 0.0), time.perf_counter() - t0
 
     async def synthesize(self, text: str) -> Dict[str, Any]:
