@@ -23,7 +23,7 @@ def runs_async(fn):
 
 
 from src.brain.tools import ToolRegistry
-from src.brain.tools_web import TavilySearch, register_web_search
+from src.brain.tools_web import SearXNGSearch, TavilySearch, WebSearch, register_web_search
 
 
 class _FakeResponse:
@@ -50,6 +50,12 @@ class FakeHTTPClient:
             raise self.raises
         return self.response
 
+    async def get(self, url, params=None, headers=None):
+        self.calls.append({"url": url, "params": params, "headers": headers or {}})
+        if self.raises:
+            raise self.raises
+        return self.response
+
 
 ANSWER = {
     "query": "meteo a Paris",
@@ -69,6 +75,63 @@ def test_loutil_est_en_lecture_et_enregistrable():
     schema = spec.to_openai_schema()
     assert "query" in schema["function"]["parameters"]["properties"]
     assert schema["function"]["parameters"]["required"] == ["query"]
+
+
+@runs_async
+async def test_searxng_utilise_le_format_json_et_ses_extraits():
+    payload = {
+        "results": [
+            {"title": "OpenAI Codex", "content": "Agent de code OpenAI."},
+            {"title": "Documentation", "content": "Guide officiel."},
+        ]
+    }
+    client = FakeHTTPClient(_FakeResponse(payload))
+    out = await SearXNGSearch("http://searxng:8080", client=client)("openai codex")
+
+    assert out.startswith("OpenAI Codex : Agent de code OpenAI.")
+    assert client.calls == [{
+        "url": "http://searxng:8080/search",
+        "params": {"q": "openai codex", "format": "json"},
+        "headers": {"Accept": "application/json"},
+    }]
+
+
+@runs_async
+async def test_searxng_est_prefere_a_tavily():
+    client = FakeHTTPClient(_FakeResponse({"results": [{"title": "Local", "content": "ok"}]}))
+    tool = WebSearch(
+        searxng_url="http://searxng:8080",
+        api_key="cle-tavily",
+        client=client,
+    )
+    assert await tool("question") == "Local : ok"
+    assert len(client.calls) == 1
+    assert "params" in client.calls[0], "Tavily ne doit pas etre appele si SearXNG repond"
+
+
+class _FallbackHTTPClient:
+    def __init__(self):
+        self.calls = []
+
+    async def get(self, url, params=None, headers=None):
+        self.calls.append(("get", url))
+        raise RuntimeError("searxng down")
+
+    async def post(self, url, json=None, headers=None):
+        self.calls.append(("post", url))
+        return _FakeResponse({"answer": "Reponse Tavily."})
+
+
+@runs_async
+async def test_tavily_prend_le_relais_si_searxng_est_injoignable():
+    client = _FallbackHTTPClient()
+    tool = WebSearch(
+        searxng_url="http://searxng:8080",
+        api_key="cle-tavily",
+        client=client,
+    )
+    assert await tool("question") == "Reponse Tavily."
+    assert [method for method, _url in client.calls] == ["get", "post"]
 
 
 @runs_async

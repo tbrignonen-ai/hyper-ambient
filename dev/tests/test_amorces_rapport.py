@@ -26,8 +26,19 @@ def _charger_serve_hostagent():
     """Charge le script sans exiger fastapi/uvicorn sur l'hote."""
     if str(RACINE) not in sys.path:
         sys.path.insert(0, str(RACINE))
-    for nom in ("fastapi", "fastapi.responses", "fastapi.websockets", "uvicorn"):
-        sys.modules.setdefault(nom, MagicMock(name=nom))
+    # Les doublures ne se posent que si le vrai paquet manque — c'est-a-dire
+    # sur l'hote. Les poser inconditionnellement empoisonnait `sys.modules`
+    # pour TOUT le reste de la session pytest : dans le conteneur, ou fastapi
+    # existe, `test_hostagent_rapport` et `test_hostagent_transport`
+    # recevaient ensuite un MagicMock a la place de FastAPI et tombaient en
+    # cascade. Mesure : ces cinq tests passent seuls, echouent des que ce
+    # fichier est charge avant eux.
+    try:  # pragma: no cover - depend de l'environnement, pas du code teste
+        import fastapi  # noqa: F401
+        import uvicorn  # noqa: F401
+    except ImportError:
+        for nom in ("fastapi", "fastapi.responses", "fastapi.websockets", "uvicorn"):
+            sys.modules.setdefault(nom, MagicMock(name=nom))
     chemin = RACINE / "dev" / "scripts" / "serve_hostagent.py"
     spec = importlib.util.spec_from_file_location("serve_hostagent_sous_test", chemin)
     module = importlib.util.module_from_spec(spec)

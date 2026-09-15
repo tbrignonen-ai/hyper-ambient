@@ -93,6 +93,18 @@ HOLDING = [
 LONGUEUR_ANAPHORIQUE = 25
 
 
+def est_une_suite_d_outil(messages: Optional[List[Dict[str, Any]]]) -> bool:
+    """Cet appel prolonge-t-il un tour de parole deja annonce ?
+
+    `run_tool_loop` rappelle `query_streaming` apres chaque outil, avec
+    l'historique enrichi du resultat. Le role `tool` n'apparait qu'a ce
+    moment-la : un tour neuf n'en porte jamais. C'est donc le signe le plus sur,
+    et il ne demande aucun etat partage entre la boucle et le routeur — ce qui
+    compte, puisque la boucle est volontairement neutre sur le harnais.
+    """
+    return any((message or {}).get("role") == "tool" for message in (messages or []))
+
+
 def doit_joindre_contexte(prompt: str) -> bool:
     """Le tour precedent doit-il peser sur la classification de celui-ci ?
 
@@ -121,9 +133,16 @@ class RouterBrain:
         classify_host: Optional[str] = None,
         enable_filler: bool = True,
         deep_timeout_ms: Optional[int] = None,
+        reflex_answers: Optional[bool] = None,
     ):
         self.reflex = reflex
         self.deep = deep
+        # False : le reflexe local trie mais ne repond plus. Mesure du 15 sept,
+        # MiniCPM5-2B recopiait les exemples du prompt et se trompait sans eux.
+        self.reflex_answers = (
+            reflex_answers if reflex_answers is not None
+            else os.getenv("BRAIN_REFLEX_ANSWERS", "1") != "0"
+        )
         self.classify_host = (classify_host or os.getenv(
             "LLAMA_SERVER_HOST", "http://localhost:8080")).rstrip("/")
         self.enable_filler = enable_filler
@@ -238,6 +257,8 @@ class RouterBrain:
         """
         decision = await self.classify(prompt, kw.get("history"))
         route = decision["route"]
+        if route == "reflex" and not self.reflex_answers:
+            route = "escalate"
         logger.info(f"router: {route} ({decision['latency_ms']:.0f} ms)")
 
         if route == "reflex":
@@ -251,7 +272,13 @@ class RouterBrain:
 
         # Speak first, think second. The filler goes out before the remote
         # request is even awaited, so MOUTH starts synthesising immediately.
-        if self.enable_filler:
+        #
+        # Sauf quand ce tour prolonge un appel d'outil : l'attente a deja ete
+        # annoncee AVANT l'outil (« Je demande a Codex... »), et une amorce
+        # ici tomberait APRES l'attente qu'elle est censee couvrir. Mesure du
+        # 13/09 sur la chaine reelle : trois phrases d'attente pour une seule
+        # question, dont la derniere a 18,1 s sur un outil rendu a 17,8 s.
+        if self.enable_filler and not est_une_suite_d_outil(kw.get("messages")):
             yield {
                 "delta": self._next_filler(),
                 "stop_reason": None,

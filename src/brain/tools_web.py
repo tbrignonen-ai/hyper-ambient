@@ -1,15 +1,12 @@
 """
 BRAIN: la recherche internet comme premier outil branche.
 
-Tavily par defaut : son champ `answer` est litteralement un texte court genere
-pour un agent — c'est exactement ce dont une voix a besoin, sans scraping et
-sans post-traitement. Palier gratuit de 1 000 credits par mois, sans carte
-bancaire ; `basic` coute 1 credit.
+SearXNG local est prioritaire lorsqu'une URL est configuree. Tavily reste le
+repli lorsque SearXNG n'est pas joignable et qu'une cle existe. Les deux
+backends rendent le meme contrat vocal court : reponse directe quand elle
+existe, sinon titres et extraits des premiers resultats.
 
-**Le client HTTP est injecte.** C'est ce qui rend l'outil testable sans reseau,
-et c'est indispensable ici : aucune cle `TAVILY_API_KEY` n'existe encore, et en
-creer une est une decision de Thomas. Sans cle, l'outil ne tente **aucun** appel
-et rend une phrase dicible.
+**Le client HTTP est injecte.** C'est ce qui rend l'outil testable sans reseau.
 
 Tout ce qui sort d'ici est destine a etre lu a voix haute : pas de JSON, pas de
 code HTTP, pas de trace d'exception.
@@ -23,6 +20,7 @@ from src.brain.tools import MAX_TOOL_CONTENT_CHARS, ToolRegistry, ToolSpec
 logger = logging.getLogger(__name__)
 
 TAVILY_ENDPOINT = "https://api.tavily.com/search"
+SEARXNG_SEARCH_PATH = "/search"
 
 WEB_SEARCH_DESCRIPTION = (
     "Cherche une information a jour sur internet et rend une reponse courte. "
@@ -109,6 +107,88 @@ class TavilySearch:
         return _speakable(payload, self.max_results)
 
 
+class SearXNGSearch:
+    """Recherche sans cle sur une instance SearXNG configuree."""
+
+    def __init__(self, url: str, client: Any = None, max_results: int = 3):
+        base = url.strip().rstrip("/")
+        self.endpoint = (
+            base if base.endswith(SEARXNG_SEARCH_PATH) else base + SEARXNG_SEARCH_PATH
+        )
+        self.client = client
+        self.max_results = max(1, min(int(max_results), 20))
+
+    async def search(self, query: str) -> tuple[bool, str]:
+        """Rend ``(joignable, texte)`` pour permettre un repli explicite."""
+        if self.client is None:
+            logger.warning("web_search SearXNG sans client HTTP")
+            return False, _NO_CLIENT
+
+        try:
+            response = await self.client.get(
+                self.endpoint,
+                params={"q": query, "format": "json"},
+                headers={"Accept": "application/json"},
+            )
+        except Exception as exc:
+            logger.warning(f"web_search: SearXNG injoignable ({exc})")
+            return False, _FAILED
+
+        if getattr(response, "status_code", 0) != 200:
+            logger.warning(
+                f"web_search: SearXNG HTTP {getattr(response, 'status_code', '?')}"
+            )
+            return False, _FAILED
+
+        try:
+            payload = response.json()
+        except Exception as exc:
+            logger.warning(f"web_search: reponse SearXNG illisible ({exc})")
+            return False, _FAILED
+
+        if not isinstance(payload, dict):
+            logger.warning("web_search: reponse SearXNG inattendue")
+            return False, _FAILED
+        return True, _speakable(payload, self.max_results)
+
+    async def __call__(self, query: str) -> str:
+        _available, text = await self.search(query)
+        return text
+
+
+class WebSearch:
+    """SearXNG d'abord, Tavily seulement si l'instance locale tombe."""
+
+    def __init__(
+        self,
+        searxng_url: str,
+        api_key: Optional[str] = None,
+        client: Any = None,
+        endpoint: str = TAVILY_ENDPOINT,
+        max_results: int = 3,
+        search_depth: str = "basic",
+    ):
+        self.searxng = SearXNGSearch(
+            url=searxng_url, client=client, max_results=max_results
+        )
+        self.tavily = TavilySearch(
+            api_key=api_key,
+            client=client,
+            endpoint=endpoint,
+            max_results=max_results,
+            search_depth=search_depth,
+        )
+
+    async def __call__(self, query: str) -> str:
+        available, text = await self.searxng.search(query)
+        if available:
+            return text
+        if self.tavily.api_key:
+            logger.info("web_search: repli Tavily apres echec SearXNG")
+            return await self.tavily(query)
+        return text
+
+
 def _speakable(payload: Dict[str, Any], max_results: int) -> str:
     """Met la reponse Tavily en une forme lisible a voix haute."""
     raw_answer = payload.get("answer")
@@ -150,16 +230,27 @@ def register_web_search(
     registry: ToolRegistry,
     api_key: Optional[str] = None,
     client: Any = None,
+    searxng_url: Optional[str] = None,
     **kwargs,
 ) -> ToolSpec:
     """Enregistre `web_search` dans un registre. `danger="read"` : la recherche
     lit le monde, elle ne le modifie pas."""
+    handler = (
+        WebSearch(
+            searxng_url=searxng_url,
+            api_key=api_key,
+            client=client,
+            **kwargs,
+        )
+        if searxng_url
+        else TavilySearch(api_key=api_key, client=client, **kwargs)
+    )
     return registry.register(
         ToolSpec(
             name="web_search",
             description=WEB_SEARCH_DESCRIPTION,
             parameters=WEB_SEARCH_PARAMETERS,
             danger="read",
-            handler=TavilySearch(api_key=api_key, client=client, **kwargs),
+            handler=handler,
         )
     )

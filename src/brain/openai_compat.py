@@ -376,3 +376,11 @@ class LlamaCppBrain(OpenAICompatBrain):
         kw.setdefault("api_endpoint", f"{host.rstrip('/')}/v1/chat/completions")
         kw.setdefault("api_key", "")  # llama-server needs no key by default
         super().__init__(model=model, **kw)
+
+    def _payload(self, *args, **kwargs) -> Dict[str, Any]:
+        # Le reflexe local (MiniCPM5-2B) est un modele a raisonnement : laisse
+        # faire, il brule son budget en `reasoning_content` et rend un contenu
+        # vide, ou recopie l'exemple du prompt. Mesure le 15 sept.
+        payload = super()._payload(*args, **kwargs)
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+        return payload
