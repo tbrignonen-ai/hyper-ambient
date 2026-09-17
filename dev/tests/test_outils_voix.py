@@ -539,3 +539,63 @@ async def test_les_outils_sont_declares_au_modele_quand_le_registre_est_garni(mo
     outils = pipeline.brain.appels[0].get("tools")
     assert outils, "aucun outil declare au modele : le registre n'est pas branche"
     assert [o["function"]["name"] for o in outils] == ["ask_codex"]
+
+
+class _ASRBonjour:
+    async def transcribe(self, audio):
+        return {"text": "Bonjour.", "latency_ms": 1.0}
+
+
+class _ChanOutils:
+    def __init__(self, name):
+        self.name = name
+        self.api_endpoint = f"http://{name}"
+        self.calls = []
+
+    async def query_streaming(self, prompt, **kw):
+        self.calls.append(kw)
+        yield {"delta": "Bonjour.", "stop_reason": None, "ttft_ms": 1.0}
+        yield {"delta": "", "stop_reason": "stop", "ttft_ms": None}
+
+
+@pytest.mark.asyncio
+async def test_bonjour_vocal_ne_declare_pas_d_outils_au_reflexe(monkeypatch):
+    """Le branchement voix : un salut classé REFLEXE ne voit aucun schéma."""
+    from src.brain.router import RouterBrain
+
+    monkeypatch.setenv("CODEX_BRIDGE_TOKEN", "jeton-de-test")
+    monkeypatch.setenv("SEARXNG_URL", "http://searxng.local")
+    monkeypatch.delenv("CLI_BRIDGE_TOKEN", raising=False)
+    monkeypatch.delenv("MUSE_BRIDGE_URL", raising=False)
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+
+    pipeline = serve_hostagent.HostPipeline()
+    pipeline.registre = serve_hostagent.construire_registre(client=object())
+    pipeline.porte = serve_hostagent.construire_porte()
+    pipeline.asr = _ASRBonjour()
+    pipeline.tts = _MOUTHDouble()
+    reflex = _ChanOutils("reflex")
+    deep = _ChanOutils("deep")
+    router = RouterBrain(reflex, deep, enable_filler=False)
+
+    class _Classify:
+        async def post(self, url, json=None):
+            class _R:
+                def json(inner):
+                    return {"content": "REFLEXE"}
+
+            return _R()
+
+    router._client = _Classify()
+    pipeline.brain = router
+    socket = _SocketDouble()
+    await pipeline._enchainer(_trames_de_parole(), socket)
+
+    assert pipeline.registre.schemas(), "le registre doit être garni"
+    assert reflex.calls, "le reflexe n'a pas été appelé"
+    assert "tools" not in reflex.calls[0]
+    assert deep.calls == []
+    rapport = _rapport(socket)
+    assert rapport is not None
+    assert rapport["reply"] == "Bonjour."
+    assert pipeline.tts.hors_flux == []

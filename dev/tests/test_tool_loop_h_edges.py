@@ -444,6 +444,10 @@ def test_max_iterations_defaut_est_trois():
     assert inspect.signature(run_tool_loop).parameters["max_iterations"].default == 3
 
 
+def test_max_tool_calls_defaut_est_un():
+    assert inspect.signature(run_tool_loop).parameters["max_tool_calls"].default == 1
+
+
 @runs_async
 async def test_stop_reason_length_est_cede():
     brain = FakeBrain([[

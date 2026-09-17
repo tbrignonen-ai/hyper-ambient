@@ -474,13 +474,19 @@ class HostPipeline:
         """Le flux du tour : sous boucle d'outils si le registre est garni.
 
         Le registre vide rend **exactement** l'appel d'avant, sans `tools` dans
-        la charge utile. C'est la garantie de non-regression du chemin vocal :
-        brancher les outils ne doit rien changer a un tour qui n'en utilise pas.
+        la charge utile. Un registre garni passe par la boucle : le routeur
+        retire les schemas sur un REFLEXE, et la boucle n'execute qu'un outil
+        par tour. Brancher Codex ne doit rien changer a « Bonjour. ».
         """
         historique = list(self._historique)
         if self.registre is not None and len(self.registre):
             return run_tool_loop(
-                self.brain, prompt, self.registre, self.porte, history=historique
+                self.brain,
+                prompt,
+                self.registre,
+                self.porte,
+                history=historique,
+                max_tool_calls=1,
             )
         return self.brain.query_streaming(prompt, history=historique)
 

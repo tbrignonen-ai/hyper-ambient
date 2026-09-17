@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # Single source of truth: MOUTH owns what "speakable" means, BRAIN just asks
 # for it. Stripping markup downstream is the safety net, not the plan.
 from src.mouth.normalize import VOICE_SYSTEM_PROMPT as DEFAULT_SYSTEM  # noqa: E402
-from src.brain.tools import ToolCall  # noqa: E402
+from src.brain.tools import MAX_TOOL_ARGUMENTS_CHARS, ToolCall  # noqa: E402
 
 
 class OpenAICompatBrain:
@@ -147,7 +147,14 @@ class OpenAICompatBrain:
             if function.get("name"):
                 slot["name"] = function["name"]
             if function.get("arguments"):
-                slot["arguments"] += function["arguments"]
+                fragment = function["arguments"]
+                room = MAX_TOOL_ARGUMENTS_CHARS - len(slot["arguments"])
+                if room > 0:
+                    slot["arguments"] += fragment[:room]
+                elif fragment:
+                    # Le JSON continue d'arriver : on le jette plutot que de
+                    # gonfler un brut deja illisible (mesure 17 sept).
+                    pass
 
     @staticmethod
     def _finalize_tool_calls(buffer: Dict[int, Dict[str, str]]) -> List[ToolCall]:
@@ -155,6 +162,8 @@ class OpenAICompatBrain:
         for index in sorted(buffer):
             slot = buffer[index]
             raw = slot["arguments"]
+            if len(raw) > MAX_TOOL_ARGUMENTS_CHARS:
+                raw = raw[:MAX_TOOL_ARGUMENTS_CHARS]
             try:
                 arguments = json.loads(raw) if raw.strip() else {}
                 if not isinstance(arguments, dict):

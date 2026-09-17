@@ -400,7 +400,9 @@ async def test_boucle_renvoie_assistant_puis_tool_au_modele():
     assert messages[-2]["tool_calls"][0]["id"] == "c1"
     assert messages[-1]["role"] == "tool"
     assert messages[-1]["tool_call_id"] == "c1"
-    assert brain.calls[1]["tools"], "les outils doivent rester declares au second tour"
+    assert not brain.calls[1].get("tools"), (
+        "apres un outil, plus de schemas : le modele doit repondre, pas encherir"
+    )
 
 
 @runs_async
@@ -443,7 +445,9 @@ async def test_resultat_long_est_tronque_avant_le_modele():
 @runs_async
 async def test_max_iterations_sarrete_avec_un_message_dicible():
     brain = FakeBrain([[tool_calls_chunk()] for _ in range(6)])
-    chunks = [c async for c in run_tool_loop(brain, "meteo", make_registry(), FakeGate(), max_iterations=3)]
+    chunks = [c async for c in run_tool_loop(
+        brain, "meteo", make_registry(), FakeGate(), max_iterations=3, max_tool_calls=10,
+    )]
 
     assert len(brain.calls) == 3
     spoken = "".join(c["delta"] for c in chunks)

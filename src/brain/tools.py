@@ -19,6 +19,11 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 # c'est un paragraphe : assez pour repondre, trop court pour un monologue.
 MAX_TOOL_CONTENT_CHARS = 1200
 
+# Plafond des arguments JSON d'un appel d'outil. Un modele local (Luciole 8B)
+# concatene des fragments SSE jusqu'a rendre le JSON illisible et noyer le
+# journal ; au-dela de ce plafond on arrete d'accumuler.
+MAX_TOOL_ARGUMENTS_CHARS = 800
+
 _TRUNCATION_MARK = " […]"
 
 

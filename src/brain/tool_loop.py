@@ -51,6 +51,12 @@ MAX_ITERATIONS_MESSAGE = (
     "Je n'arrive pas a aboutir avec mes outils. Je m'arrete la."
 )
 
+# Un tour vocal n'execute qu'un outil. `max_iterations` plafonne les allers-
+# retours avec le modele, pas le nombre d'appels *dans* un aller-retour :
+# Luciole 8B a pose 30+ `tool_calls` en une seule reponse (17 sept).
+MAX_TOOL_CALLS_PER_ITERATION = 1
+MAX_TOOL_CALLS_PER_TURN = 1
+
 # Cles jamais transmises a la porte ni journalisees : la requete de permission
 # est lue par un humain et ecrite dans un journal d'audit.
 _SECRET_KEYS = ("api_key", "apikey", "key", "token", "secret", "password", "authorization")
@@ -146,6 +152,15 @@ async def _execute(call: ToolCall, registry: ToolRegistry, gate) -> tuple:
     return (ToolResult(call.id, call.name, ok=True, content=content), "result")
 
 
+def _plafond_atteint(iteration: int, max_iterations: int, executed: int, max_tool_calls: int) -> Optional[str]:
+    """Raison d'arret dicible, ou None si on peut encore executer."""
+    if iteration == max_iterations - 1:
+        return "max_iterations"
+    if executed >= max_tool_calls:
+        return "max_tool_calls"
+    return None
+
+
 async def run_tool_loop(
     brain,
     prompt: str,
@@ -155,20 +170,31 @@ async def run_tool_loop(
     system: Optional[str] = None,
     history: Optional[List[Dict[str, Any]]] = None,
     max_iterations: int = 3,
+    max_tool_calls: int = MAX_TOOL_CALLS_PER_TURN,
 ) -> AsyncIterator[Dict[str, Any]]:
-    """Stream de chunks BRAIN, outils executes sous permission entre deux tours."""
+    """Stream de chunks BRAIN, outils executes sous permission entre deux tours.
+
+    Un tour n'execute qu'un outil par defaut (`max_tool_calls=1`), et jamais
+    plus d'un appel par iteration — meme si le modele en pose trente d'un coup.
+    Apres cet unique appel, les schemas ne sont plus renvoyes : le modele doit
+    formuler une reponse, pas encherir.
+    """
     messages = _build_messages(prompt, system, history)
     schemas = registry.schemas()
+    executed = 0
 
     for iteration in range(max_iterations):
         pending: List[ToolCall] = []
+        # Plus d'outils dans la charge utile une fois le plafond atteint :
+        # un schema encore declare, et Luciole 8B recommence la tempete.
+        tools_this_round = schemas if executed < max_tool_calls else []
 
         async for chunk in brain.query_streaming(
             prompt,
             system=system,
             history=history,
             messages=messages,
-            tools=schemas,
+            tools=tools_this_round,
         ):
             if chunk.get("stop_reason") == "tool_calls":
                 pending = list(chunk.get("tool_calls") or [])
@@ -178,19 +204,31 @@ async def run_tool_loop(
         if not pending:
             return
 
-        if iteration == max_iterations - 1:
-            # Le modele redemande un outil au dernier tour : on s'arrete, mais
-            # on le dit. Un silence serait la pire des sorties.
+        reason = _plafond_atteint(iteration, max_iterations, executed, max_tool_calls)
+        if reason is not None:
+            # Le modele redemande un outil alors qu'on s'arrete : on le dit.
+            # Un silence serait la pire des sorties.
             yield {
                 "delta": MAX_ITERATIONS_MESSAGE,
-                "stop_reason": "max_iterations",
+                "stop_reason": reason,
                 "ttft_ms": None,
             }
             return
 
-        messages.append(_assistant_message(pending))
-        for call in pending:
+        to_run = pending[:MAX_TOOL_CALLS_PER_ITERATION]
+        if len(pending) > len(to_run):
+            logger.warning(
+                "tool_loop: %s appels demandes, %s executes (plafond par iteration)",
+                len(pending),
+                len(to_run),
+            )
+
+        # L'historique ne porte que les appels vraiment executes : le protocole
+        # exige un message `tool` par `tool_call` de l'assistant.
+        messages.append(_assistant_message(to_run))
+        for call in to_run:
             yield {"channel": "tool", "tool": call.name, "phase": "call", "delta": ""}
             result, phase = await _execute(call, registry, gate)
             yield {"channel": "tool", "tool": call.name, "phase": phase, "delta": ""}
             messages.append(result.to_message())
+            executed += 1

@@ -93,6 +93,19 @@ HOLDING = [
 LONGUEUR_ANAPHORIQUE = 25
 
 
+def sans_outils(kw: Dict[str, Any]) -> Dict[str, Any]:
+    """Retire `tools` / `tool_choice` d'un appel.
+
+    Un tour REFLEXE n'a pas d'outils. Les laisser dans la charge utile
+    transforme un « Bonjour. » en tempete d'appels (mesure 17 sept, Luciole 8B
+    classé REFLEXE, 30+ web_search/ask_codex, aucun tour BRAIN final).
+    """
+    propre = dict(kw)
+    propre.pop("tools", None)
+    propre.pop("tool_choice", None)
+    return propre
+
+
 def est_une_suite_d_outil(messages: Optional[List[Dict[str, Any]]]) -> bool:
     """Cet appel prolonge-t-il un tour de parole deja annonce ?
 
@@ -263,7 +276,9 @@ class RouterBrain:
 
         if route == "reflex":
             self.stats["reflex"] += 1
-            async for chunk in self.reflex.query_streaming(prompt, system=system, **kw):
+            async for chunk in self.reflex.query_streaming(
+                prompt, system=system, **sans_outils(kw)
+            ):
                 chunk["channel"] = "reflex"
                 yield chunk
             return
@@ -323,7 +338,9 @@ class RouterBrain:
 
         # Nothing spoken past the filler — the local channel can still answer,
         # and "Un instant." followed by a local answer stays coherent.
-        async for chunk in self.reflex.query_streaming(prompt, system=system, **kw):
+        async for chunk in self.reflex.query_streaming(
+            prompt, system=system, **sans_outils(kw)
+        ):
             chunk["channel"] = "reflex"
             yield chunk
 
@@ -331,11 +348,12 @@ class RouterBrain:
         """Non-streaming convenience — no filler, since nothing is spoken."""
         decision = await self.classify(prompt)
         target = self.reflex if decision["route"] == "reflex" else self.deep
-        result = await target.query(prompt, system=system, **kw)
+        target_kw = kw if target is self.deep else sans_outils(kw)
+        result = await target.query(prompt, system=system, **target_kw)
         result["channel"] = decision["route"]
         if result["stop_reason"] == "error" and target is self.deep:
             self.stats["deep_failed"] += 1
-            result = await self.reflex.query(prompt, system=system, **kw)
+            result = await self.reflex.query(prompt, system=system, **sans_outils(kw))
             result["channel"] = "reflex"
         return result
 

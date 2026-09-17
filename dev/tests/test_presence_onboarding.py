@@ -22,6 +22,17 @@ from native.presence.onboarding import (
 )
 
 
+def test_overlay_importe_hors_windows():
+    """La bulle (transparence, nappe, éclair) doit rester importable sous Linux."""
+    pytest.importorskip("tkinter")
+    from native.presence import overlay as visuel
+
+    assert visuel.COULEUR_TRANSPARENTE == "#010203"
+    assert visuel.eclair_allume("escalade") is True
+    assert visuel.eclair_allume("repos") is False
+    assert visuel.PALETTES["escalade"]["vitesse_rotation"] > visuel.PALETTES["repos"]["vitesse_rotation"]
+
+
 def test_configuration_absente_declenche_onboarding(tmp_path):
     configuration = charger_configuration(tmp_path / "absent.json")
     assert configuration == ConfigurationPresence()
@@ -139,7 +150,10 @@ def _textes_widgets(widget) -> list[str]:
 
 
 def _ouvrir_tk():
-    import tkinter as tk
+    try:
+        import tkinter as tk
+    except ModuleNotFoundError as exc:
+        pytest.skip(f"Tk indisponible : {exc}")
 
     try:
         racine = tk.Tk()

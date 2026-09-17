@@ -16,7 +16,12 @@ import socket
 import sys
 import time
 import tkinter as tk
-from ctypes import Structure, byref, c_long, windll
+from ctypes import Structure, byref, c_long
+
+try:
+    from ctypes import windll
+except (AttributeError, ImportError):  # Linux : ctypes n'exporte pas windll
+    windll = None  # type: ignore
 from typing import Any
 
 try:
@@ -122,17 +127,18 @@ class RECT(Structure):
 
 def aire_utile(racine: tk.Tk) -> tuple[int, int, int, int]:
     """Rectangle hors barre des tâches — sa hauteur n'est pas une constante."""
-    try:
-        rectangle = RECT()
-        if windll.user32.SystemParametersInfoW(48, 0, byref(rectangle), 0):
-            return (
-                int(rectangle.left),
-                int(rectangle.top),
-                int(rectangle.right),
-                int(rectangle.bottom),
-            )
-    except Exception:
-        pass
+    if windll is not None:
+        try:
+            rectangle = RECT()
+            if windll.user32.SystemParametersInfoW(48, 0, byref(rectangle), 0):
+                return (
+                    int(rectangle.left),
+                    int(rectangle.top),
+                    int(rectangle.right),
+                    int(rectangle.bottom),
+                )
+        except Exception:
+            pass
     return 0, 0, racine.winfo_screenwidth(), racine.winfo_screenheight()
 
 

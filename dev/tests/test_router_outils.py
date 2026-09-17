@@ -36,15 +36,25 @@ def runs_async(fn):
 
 
 class FakeChan:
-    def __init__(self, name):
+    def __init__(self, name, query_result=None):
         self.name = name
         self.api_endpoint = f"http://{name}"
         self.calls = []
+        self.query_result = query_result or {
+            "response": f"{name}-reponse",
+            "stop_reason": "stop",
+            "tokens_used": 0,
+            "latency_ms": 1,
+        }
 
     async def query_streaming(self, prompt, **kw):
         self.calls.append({"prompt": prompt, **kw})
         yield {"delta": f"{self.name}-reponse", "stop_reason": None, "ttft_ms": 1.0}
         yield {"delta": "", "stop_reason": "stop", "ttft_ms": None}
+
+    async def query(self, prompt, **kw):
+        self.calls.append({"prompt": prompt, "query": True, **kw})
+        return dict(self.query_result)
 
 
 class FakeClassify:
@@ -147,3 +157,78 @@ async def test_la_suite_transmet_bien_messages_et_outils_au_canal_distant():
     assert deep.calls[0]["messages"] == MESSAGES_SUITE
     assert deep.calls[0]["tools"] == outils
     assert any(c.get("delta") == "deep-reponse" for c in chunks)
+
+
+SCHEMAS_OUTILS = [
+    {"type": "function", "function": {"name": "ask_codex"}},
+    {"type": "function", "function": {"name": "web_search"}},
+]
+
+
+@runs_async
+async def test_reflexe_ne_transmet_pas_les_outils_au_canal_local():
+    """« Bonjour. » classé REFLEXE ne doit plus voir les schémas (17 sept)."""
+    reflex = FakeChan("reflex")
+    deep = FakeChan("deep")
+    r = _router(reflex=reflex, deep=deep)
+    r._client = FakeClassify("REFLEXE")
+    chunks = [
+        c
+        async for c in r.query_streaming(
+            "Bonjour.", tools=SCHEMAS_OUTILS, tool_choice="auto"
+        )
+    ]
+    assert reflex.calls, "le canal local n'a pas été appelé"
+    assert "tools" not in reflex.calls[0]
+    assert "tool_choice" not in reflex.calls[0]
+    assert deep.calls == []
+    assert all(c.get("channel") == "reflex" for c in chunks)
+    assert any(c.get("delta") == "reflex-reponse" for c in chunks)
+
+
+@runs_async
+async def test_escalade_transmet_les_outils_au_canal_distant():
+    reflex = FakeChan("reflex")
+    deep = FakeChan("deep")
+    r = _router(reflex=reflex, deep=deep)
+    r._client = FakeClassify("ESCALADE")
+    _ = [
+        c
+        async for c in r.query_streaming("Demande à Codex ce que fait tool_loop.", tools=SCHEMAS_OUTILS)
+    ]
+    assert deep.calls
+    assert deep.calls[0]["tools"] == SCHEMAS_OUTILS
+    assert reflex.calls == []
+
+
+@runs_async
+async def test_repli_vers_le_reflexe_retire_aussi_les_outils():
+    class Boom(FakeChan):
+        async def query_streaming(self, prompt, **kw):
+            self.calls.append({"prompt": prompt, **kw})
+            yield {"delta": "", "stop_reason": "error", "ttft_ms": None, "error": "boom"}
+
+    reflex = FakeChan("reflex")
+    deep = Boom("deep")
+    r = _router(reflex=reflex, deep=deep)
+    r._client = FakeClassify("ESCALADE")
+    chunks = [
+        c async for c in r.query_streaming("capitale ?", tools=SCHEMAS_OUTILS)
+    ]
+    assert deep.calls and "tools" in deep.calls[0]
+    assert reflex.calls, "le repli local n'a pas eu lieu"
+    assert "tools" not in reflex.calls[0]
+    assert any(c.get("channel") == "reflex" for c in chunks)
+
+
+@runs_async
+async def test_query_non_stream_reflexe_sans_outils():
+    reflex = FakeChan("reflex")
+    deep = FakeChan("deep")
+    r = _router(reflex=reflex, deep=deep)
+    r._client = FakeClassify("REFLEXE")
+    result = await r.query("Bonjour.", tools=SCHEMAS_OUTILS, tool_choice="auto")
+    assert result["channel"] == "reflex"
+    assert "tools" not in reflex.calls[0]
+    assert "tool_choice" not in reflex.calls[0]
+    assert deep.calls == []

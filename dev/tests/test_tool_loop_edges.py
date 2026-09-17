@@ -162,7 +162,7 @@ def _brain():
 
 
 @runs_async
-async def test_deux_outils_du_meme_tour_sont_tous_executes():
+async def test_deux_outils_du_meme_tour_un_seul_est_execute():
     seen = []
 
     async def h_a(query):
@@ -183,14 +183,14 @@ async def test_deux_outils_du_meme_tour_sont_tous_executes():
     registry = make_registry(_spec("alpha", h_a), _spec("beta", h_b))
     chunks = [c async for c in run_tool_loop(brain, "x", registry, FakeGate())]
 
-    assert seen == [("a", "un"), ("b", "deux")]
+    assert seen == [("a", "un")]
     tools = [c for c in chunks if c.get("channel") == "tool"]
-    assert [c["phase"] for c in tools] == ["call", "result", "call", "result"]
-    assert [c["tool"] for c in tools] == ["alpha", "alpha", "beta", "beta"]
+    assert [c["phase"] for c in tools] == ["call", "result"]
+    assert [c["tool"] for c in tools] == ["alpha", "alpha"]
     messages = brain.calls[1]["messages"]
-    assert [m["role"] for m in messages[-3:]] == ["assistant", "tool", "tool"]
-    assert messages[-2]["tool_call_id"] == "c-a"
-    assert messages[-1]["tool_call_id"] == "c-b"
+    assert [m["role"] for m in messages[-2:]] == ["assistant", "tool"]
+    assert messages[-1]["tool_call_id"] == "c-a"
+    assert len(messages[-2]["tool_calls"]) == 1
 
 
 @runs_async
@@ -224,11 +224,11 @@ async def test_deux_outils_premier_refuse_second_autorise():
     ])
     registry = make_registry(_spec("alpha", h_a), _spec("beta", h_b))
     chunks = [c async for c in run_tool_loop(brain, "x", registry, SelectiveGate())]
-    assert called == ["b"]
+    assert called == []
     phases = [c.get("phase") for c in chunks if c.get("channel") == "tool"]
-    assert "denied" in phases and "result" in phases
-    assert brain.calls[1]["messages"][-2]["content"] == "Pas alpha."
-    assert brain.calls[1]["messages"][-1]["content"] == "B"
+    assert phases == ["call", "denied"]
+    assert brain.calls[1]["messages"][-1]["content"] == "Pas alpha."
+    assert brain.calls[1]["messages"][-1]["tool_call_id"] == "c-a"
 
 
 @runs_async
@@ -455,7 +455,7 @@ async def test_deuxieme_tour_conserve_l_historique_et_les_outils():
     second = brain.calls[1]["messages"]
     assert second[0]["content"] == "SYS"
     assert second[-1]["role"] == "tool"
-    assert brain.calls[1]["tools"]
+    assert not brain.calls[1]["tools"], "apres un outil, plus de schemas au second tour"
 
 
 @runs_async

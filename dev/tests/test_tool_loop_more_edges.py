@@ -297,7 +297,8 @@ async def test_deux_tours_d_outils_puis_texte():
         [{"delta": "fini.", "stop_reason": "stop", "ttft_ms": 1.0}],
     ])
     chunks = [c async for c in run_tool_loop(
-        brain, "x", make_registry(_spec(handler=handler)), FakeGate(), max_iterations=3,
+        brain, "x", make_registry(_spec(handler=handler)), FakeGate(),
+        max_iterations=3, max_tool_calls=2,
     )]
     assert seen == ["un", "deux"]
     assert len(brain.calls) == 3
