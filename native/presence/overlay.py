@@ -31,7 +31,10 @@ except ImportError:
 
 # Jamais du noir pur ni une teinte du dessin : Windows perce cette couleur
 # de part en part, y compris aux clics, et un overlap trouerait la bulle.
+# Réservé à l'overlay flottant. L'app garde un champ sombre plein : le
+# chroma-key sur toute la fenêtre (17 sept) rendait la présence illisible.
 COULEUR_TRANSPARENTE = "#010203"
+FOND_CHAMP = "#0c1820"
 
 # 33 ms ≈ 30 images/s sans occuper le fil — after, jamais un while True.
 INTERVALLE_MS = 33
@@ -52,11 +55,11 @@ COINS = ("bas-droite", "bas-gauche", "haut-droite", "haut-gauche")
 # la question est partie au loin, chaleur vive quand c'est elle qui parle.
 PALETTES: dict[str, dict[str, Any]] = {
     "repos": {
-        "coeur": "#142830",
-        "lueur": "#1c3848",
-        "anneau": "#243c50",
+        "coeur": "#2a5868",
+        "lueur": "#8ad4e6",
+        "anneau": "#4e90a4",
         "periode": 5.6,
-        "amplitude": 0.05,
+        "amplitude": 0.08,
         "alpha_min": 0.16,
         "alpha_max": 0.30,
         "vitesse_rotation": 8.0,
@@ -183,6 +186,300 @@ def melanger_palettes(actuelle: dict[str, Any], cible: dict[str, Any], t: float)
     return mixee
 
 
+def points_blob(
+    cx: float,
+    cy: float,
+    rayon: float,
+    maintenant: float,
+    *,
+    n: int = 16,
+    irreg: float = 0.14,
+    phase: float = 0.0,
+    rotation: float = 0.0,
+) -> tuple[float, ...]:
+    """Polygone irrégulier : une forme qui respire, pas un ovale figé."""
+    coords: list[float] = []
+    for i in range(n):
+        theta = rotation + (2.0 * math.pi * i / n)
+        wobble = (
+            1.0
+            + irreg * math.sin(theta * 3.0 + maintenant * 0.7 + phase)
+            + (irreg * 0.45) * math.sin(theta * 5.0 - maintenant * 1.1 + phase * 1.7)
+        )
+        r = rayon * wobble
+        coords.append(cx + r * math.cos(theta))
+        coords.append(cy + r * math.sin(theta))
+    return tuple(coords)
+
+
+def dessiner_souffle(
+    toile: tk.Canvas,
+    *,
+    cx: float,
+    cy: float,
+    rayon: float,
+    palette: dict[str, Any],
+    maintenant: float,
+    etat: str,
+    souffle: float,
+) -> None:
+    """Onde de souffle : anneaux qui s'éloignent du cœur — le geste HA lisible."""
+    periode = max(0.45, float(palette["periode"]))
+    lueur = str(palette["lueur"])
+    anneau = str(palette["anneau"])
+    n_ondes = 3 if etat in ("parole", "escalade", "ecoute") else 2
+    portee = 0.55 + 0.9 * max(0.0, min(1.0, souffle))
+    for i in range(n_ondes):
+        phase = (maintenant / periode + i / n_ondes) % 1.0
+        r = rayon * (0.85 + portee * phase)
+        largeur = max(2, int(6 * (1.0 - 0.7 * phase)))
+        couleur = interpoler_hex(lueur, anneau, phase)
+        toile.create_oval(
+            cx - r,
+            cy - r,
+            cx + r,
+            cy + r,
+            fill="",
+            outline=couleur,
+            width=largeur,
+            tags=("orbe", "souffle"),
+        )
+
+
+def dessiner_nappe(
+    toile: tk.Canvas,
+    *,
+    largeur: float,
+    hauteur: float,
+    palette: dict[str, Any],
+    maintenant: float,
+    etat: str,
+    ampleur: float = 0.38,
+    etendre: bool = False,
+) -> None:
+    """Nappe ambiante : un corps rempli qui dérive, pas des anneaux vides."""
+    cx, cy = largeur / 2.0, hauteur / 2.0
+    lueur = str(palette["lueur"])
+    anneau = str(palette["anneau"])
+    coeur = str(palette["coeur"])
+    portee = max(largeur, hauteur) if etendre else min(largeur, hauteur)
+    toile.create_polygon(
+        *points_blob(
+            cx,
+            cy,
+            portee * ampleur,
+            maintenant,
+            n=14,
+            irreg=0.14,
+            phase=0.4,
+        ),
+        fill=interpoler_hex(coeur, lueur, 0.28),
+        outline="",
+        smooth=True,
+        tags="nappe",
+    )
+    derivees = (
+        (0.18, 0.16, 0.0, ampleur * 0.74),
+        (0.14, 0.12, 1.7, ampleur * 0.58),
+        (0.11, 0.19, 3.1, ampleur * 0.47),
+    )
+    for i, (amp, spd, ph, scale) in enumerate(derivees):
+        ox = largeur * amp * math.sin(maintenant * spd + ph)
+        oy = hauteur * amp * 0.72 * math.cos(maintenant * spd * 0.8 + ph + 0.4)
+        r = portee * scale
+        fill = interpoler_hex(coeur, lueur, 0.40 + 0.18 * i)
+        toile.create_polygon(
+            *points_blob(
+                cx + ox,
+                cy + oy,
+                r,
+                maintenant,
+                n=12,
+                irreg=0.18,
+                phase=ph,
+            ),
+            fill=fill,
+            outline="",
+            smooth=True,
+            tags="nappe",
+        )
+    n_rubans = 3 if etat in ("reflexion", "escalade", "parole") else 2
+    for i in range(n_rubans):
+        start = (maintenant * (14.0 + i * 8.0) + i * 80.0) % 360.0
+        rr = portee * (ampleur + 0.04 + i * 0.10)
+        toile.create_arc(
+            cx - rr,
+            cy - rr * 0.74,
+            cx + rr,
+            cy + rr * 0.74,
+            start=start,
+            extent=72 + i * 16,
+            style=tk.ARC,
+            outline=anneau if i else lueur,
+            width=2 if i == 0 else 1,
+            tags="nappe",
+        )
+
+
+def dessiner_orbe(
+    toile: tk.Canvas,
+    *,
+    cx: float,
+    cy: float,
+    taille: float,
+    etat: str,
+    palette: dict[str, Any],
+    angle: float,
+    souffle: float,
+    maintenant: float,
+) -> None:
+    """Présence vivante : blobs, halos décalés, filaments et grains en orbite."""
+    rayon_base = taille * 0.28
+    rayon = rayon_base * (1.0 + float(palette["amplitude"]) * (souffle * 2.0 - 1.0))
+    scintil = float(palette["scintillement"])
+    if scintil:
+        rayon += rayon_base * 0.04 * scintil * math.sin(maintenant * 11.0)
+
+    coeur = str(palette["coeur"])
+    lueur = str(palette["lueur"])
+    anneau = str(palette["anneau"])
+    rotation = angle * math.pi / 180.0
+
+    dessiner_souffle(
+        toile,
+        cx=cx,
+        cy=cy,
+        rayon=rayon,
+        palette=palette,
+        maintenant=maintenant,
+        etat=etat,
+        souffle=souffle,
+    )
+
+    toile.create_polygon(
+        *points_blob(
+            cx,
+            cy,
+            rayon * 1.12,
+            maintenant,
+            n=16,
+            irreg=0.12,
+            phase=0.2,
+            rotation=rotation * 0.15,
+        ),
+        fill=interpoler_hex(coeur, lueur, 0.22),
+        outline=anneau,
+        width=max(2, int(taille * 0.025)),
+        smooth=True,
+        joinstyle=tk.ROUND,
+        tags="orbe",
+    )
+    toile.create_polygon(
+        *points_blob(
+            cx,
+            cy,
+            rayon * 0.72,
+            maintenant,
+            n=14,
+            irreg=0.13,
+            phase=1.1,
+            rotation=-rotation * 0.08,
+        ),
+        fill=coeur,
+        outline=lueur,
+        width=1,
+        smooth=True,
+        tags="orbe",
+    )
+    toile.create_oval(
+        cx - rayon * 0.32,
+        cy - rayon * 0.32,
+        cx + rayon * 0.32,
+        cy + rayon * 0.32,
+        fill=coeur,
+        outline=lueur,
+        width=1,
+        tags="orbe",
+    )
+    toile.create_oval(
+        cx - rayon * 0.14,
+        cy - rayon * 0.18,
+        cx + rayon * 0.10,
+        cy + rayon * 0.06,
+        fill=lueur,
+        outline="",
+        tags="orbe",
+    )
+
+    epaisseur = max(2, int(taille * 0.03))
+    etendue = 110 if etat == "escalade" else 64
+    toile.create_arc(
+        cx - rayon * 1.22,
+        cy - rayon * 1.22,
+        cx + rayon * 1.22,
+        cy + rayon * 1.22,
+        start=angle,
+        extent=etendue,
+        style=tk.ARC,
+        outline=lueur,
+        width=epaisseur,
+        tags="orbe",
+    )
+    toile.create_arc(
+        cx - rayon * 1.05,
+        cy - rayon * 1.05,
+        cx + rayon * 1.05,
+        cy + rayon * 1.05,
+        start=(-angle * 0.7 + 40.0) % 360.0,
+        extent=42,
+        style=tk.ARC,
+        outline=anneau,
+        width=max(1, epaisseur - 1),
+        tags="orbe",
+    )
+    if etat == "escalade":
+        toile.create_arc(
+            cx - rayon * 0.95,
+            cy - rayon * 0.95,
+            cx + rayon * 0.95,
+            cy + rayon * 0.95,
+            start=(-angle * 1.4) % 360.0,
+            extent=55,
+            style=tk.ARC,
+            outline=coeur,
+            width=max(2, epaisseur - 1),
+            tags="orbe",
+        )
+
+    n_motes = 5 if etat in ("reflexion", "escalade", "parole") else 4
+    for i in range(n_motes):
+        phase = maintenant * (0.55 + i * 0.12) + i * 1.1
+        theta = rotation + i * (2.0 * math.pi / n_motes) + maintenant * 0.35
+        rx = rayon * (1.05 + 0.18 * math.sin(phase))
+        x = cx + rx * math.cos(theta)
+        y = cy + rx * math.sin(theta)
+        p = 1.8 + 1.2 * (0.5 + 0.5 * math.sin(phase * 2.0))
+        toile.create_oval(
+            x - p, y - p, x + p, y + p, fill=lueur, outline="", tags="orbe"
+        )
+
+    if scintil > 0.15:
+        n_etincelles = 3 if etat == "reflexion" else 5
+        for i in range(n_etincelles):
+            phase = maintenant * (2.4 + i * 0.7) + i * 1.7
+            visibilite = 0.5 + 0.5 * math.sin(phase * 3.0)
+            if visibilite < 0.55:
+                continue
+            theta = rotation + i * (2.0 * math.pi / n_etincelles)
+            rx = rayon * (0.9 + 0.12 * math.sin(phase))
+            x = cx + rx * math.cos(theta)
+            y = cy + rx * math.sin(theta)
+            p = 1.6 + scintil * visibilite
+            toile.create_oval(
+                x - p, y - p, x + p, y + p, fill=lueur, outline="", tags="orbe"
+            )
+
+
 def dessiner_eclair(
     toile: tk.Canvas,
     *,
@@ -306,7 +603,9 @@ class Presence:
         self.racine.attributes("-topmost", True)
         # transparentcolor perce le fond ; -alpha ne teinte que la forme restante.
         self.racine.attributes("-transparentcolor", COULEUR_TRANSPARENTE)
-        self.racine.attributes("-alpha", PALETTES["repos"]["alpha_min"])
+        # Les pixels dessinés restent opaques : le chroma-key perce le carré,
+        # pas la bulle. L'alpha fenêtre du 17 (0,16 au repos) la rendait fantôme.
+        self.racine.attributes("-alpha", 1.0)
         self.racine.geometry(f"{taille}x{taille}+0+0")
         self.racine.resizable(False, False)
 
@@ -477,11 +776,8 @@ class Presence:
         self.angle = (self.angle + float(palette["vitesse_rotation"]) * dt) % 360.0
         souffle = self.respiration(palette, maintenant)
 
-        alpha = interpoler_canal(
-            float(palette["alpha_min"]), float(palette["alpha_max"]), souffle
-        )
         try:
-            self.racine.attributes("-alpha", max(0.08, min(1.0, alpha)))
+            self.racine.attributes("-alpha", 1.0)
         except tk.TclError:
             return
 
@@ -492,60 +788,26 @@ class Presence:
         if scintil:
             rayon += rayon_base * 0.04 * scintil * math.sin(maintenant * 11.0)
 
-        coeur = palette["coeur"]
-        lueur = palette["lueur"]
-        anneau = palette["anneau"]
-
         self.toile.delete("all")
-        # Trois ovaires concentriques plutôt qu'un dégradé : Canvas n'en a pas,
-        # et empiler des disques donne assez de halo pour une présence, pas un bouton.
-        self._ovale(cx, cy, rayon * 1.55, outline=lueur, width=2)
-        self._ovale(cx, cy, rayon * 1.22, outline=anneau, width=max(3, int(self.taille * 0.045)))
-        self._ovale(cx, cy, rayon * 0.62, fill=coeur, outline=anneau, width=1)
-        self._ovale(cx, cy, rayon * 0.22, fill=lueur, outline="")
-
-        if float(palette["vitesse_rotation"]) > 12.0:
-            epaisseur = max(2, int(self.taille * 0.03))
-            etendue = 72 if self.etat != "escalade" else 110
-            self.toile.create_arc(
-                cx - rayon * 1.22,
-                cy - rayon * 1.22,
-                cx + rayon * 1.22,
-                cy + rayon * 1.22,
-                start=self.angle,
-                extent=etendue,
-                style=tk.ARC,
-                outline=lueur,
-                width=epaisseur,
-            )
-            if self.etat == "escalade":
-                self.toile.create_arc(
-                    cx - rayon * 0.95,
-                    cy - rayon * 0.95,
-                    cx + rayon * 0.95,
-                    cy + rayon * 0.95,
-                    start=(-self.angle * 1.4) % 360.0,
-                    extent=55,
-                    style=tk.ARC,
-                    outline=coeur,
-                    width=max(2, epaisseur - 1),
-                )
-
-        if scintil > 0.15:
-            n_etincelles = 3 if self.etat == "reflexion" else 5
-            for i in range(n_etincelles):
-                phase = maintenant * (2.4 + i * 0.7) + i * 1.7
-                visibilite = 0.5 + 0.5 * math.sin(phase * 3.0)
-                if visibilite < 0.55:
-                    continue
-                theta = self.angle * math.pi / 180.0 + i * (2.0 * math.pi / n_etincelles)
-                rx = rayon * (0.9 + 0.12 * math.sin(phase))
-                x = cx + rx * math.cos(theta)
-                y = cy + rx * math.sin(theta)
-                p = 1.6 + scintil * visibilite
-                self.toile.create_oval(
-                    x - p, y - p, x + p, y + p, fill=lueur, outline=""
-                )
+        dessiner_nappe(
+            self.toile,
+            largeur=self.taille,
+            hauteur=self.taille,
+            palette=palette,
+            maintenant=maintenant,
+            etat=self.etat,
+        )
+        dessiner_orbe(
+            self.toile,
+            cx=cx,
+            cy=cy,
+            taille=self.taille,
+            etat=self.etat,
+            palette=palette,
+            angle=self.angle,
+            souffle=souffle,
+            maintenant=maintenant,
+        )
 
         if eclair_allume(self.etat):
             dessiner_eclair(

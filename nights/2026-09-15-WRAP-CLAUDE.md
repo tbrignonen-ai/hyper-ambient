@@ -51,7 +51,6 @@ VRAM avec Luciole-8B : **8,4 Go** (sous le plafond 10 Go). Luciole met **~5 min 
 
 ## Git
 
-Rien commité (≈80 entrées au `git status`). Fichiers du jour : `src/mouth/supertonic_tts.py`,
+**Commité et poussé le 15 sept au soir** sur `nuit/2026-08-27` (`3f4f092`..`8cac524`, 6 commits par thème + les 4 du 6 sept). Suite de tests : 1001 verts, 2 échecs tkinter dans le conteneur (verts sur l’hôte). Fichiers du jour : `src/mouth/supertonic_tts.py`,
 `src/brain/openai_compat.py`, `src/brain/router.py`, `native/presence/app.py`,
-`dev/scripts/serve_hostagent.py`, `dev/scripts/relancer_routeur.sh`, `.env.local`, 4 tests neufs.
-Commit sur accord de Thomas.
+`dev/scripts/serve_hostagent.py`, `dev/scripts/relancer_routeur.sh`, 4 tests neufs (`.env.local` modifié localement, ignoré par git).

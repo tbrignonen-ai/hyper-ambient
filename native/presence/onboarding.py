@@ -24,6 +24,7 @@ STATUT_APPEL_DISTANT = (
 
 TEXTE_BIENVENUE = (
     "Une présence vocale discrète, disponible quand vous la sollicitez. "
+    "La lumière respire avec elle. "
     "Trois réglages suffisent : comment parler, quel raccourci, comment masquer."
 )
 

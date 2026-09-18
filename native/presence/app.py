@@ -47,13 +47,16 @@ from onboarding import (
     terminer_onboarding,
 )
 
-# Fond opaque : contrairement à l'overlay, cette fenêtre n'est pas percée
-# par transparentcolor. Un fond proche du repos, pas du noir pur, pour que
-# la bulle reste lisible sans recoller la clé de transparence de l'overlay.
-FOND = "#0c141c"
+# Champ sombre plein : le bureau ne perce plus la fenêtre app.
+# L'overlay flottant, lui, garde le chroma-key (COULEUR_TRANSPARENTE).
+FOND = visuel.FOND_CHAMP
+FOND_VITRE = "#102028"
+MARGE_NAPPE = 28
+BORD_VITRE = "#2a4a5c"
 ENCRE = "#d8e4ec"
 ENCRE_SOURDE = "#8aa0b0"
-TAILLE_BULLE = 200
+ENCRE_FONCEE = "#0c141c"
+TAILLE_BULLE = 260
 URL_DEFAUT = "ws://127.0.0.1:8001/hostagent"
 moteur: Any | None = None
 
@@ -161,11 +164,7 @@ def consommer_reponse(
 
 
 class Bulle:
-    """La forme ronde de l'overlay, dessinée dans un Canvas d'une fenêtre normale.
-
-    On réutilise palettes, lissage et respiration ; on abandonne -alpha et
-    transparentcolor, qui n'ont de sens que pour une fenêtre percée.
-    """
+    """La présence ronde : même dessin vivant que l'overlay, dans l'app."""
 
     def __init__(self, toile: tk.Canvas, taille: int) -> None:
         self.toile = toile
@@ -202,26 +201,6 @@ class Bulle:
             return max(0.0, min(1.0, 0.35 * souffle + 0.65 * parole))
         return souffle
 
-    def _ovale(
-        self,
-        cx: float,
-        cy: float,
-        rayon: float,
-        *,
-        fill: str = "",
-        outline: str = "",
-        width: int = 1,
-    ) -> None:
-        self.toile.create_oval(
-            cx - rayon,
-            cy - rayon,
-            cx + rayon,
-            cy + rayon,
-            fill=fill,
-            outline=outline,
-            width=width,
-        )
-
     def dessiner(self) -> None:
         cible = visuel.PALETTES[self.etat]
         self.palette_affichee = visuel.melanger_palettes(
@@ -237,71 +216,26 @@ class Bulle:
         self.angle = (self.angle + float(palette["vitesse_rotation"]) * dt) % 360.0
         souffle = self.respiration(palette, maintenant)
 
-        cx = cy = self.taille / 2
-        rayon_base = self.taille * 0.28
-        rayon = rayon_base * (1.0 + float(palette["amplitude"]) * (souffle * 2.0 - 1.0))
-        scintil = float(palette["scintillement"])
-        if scintil:
-            rayon += rayon_base * 0.04 * scintil * math.sin(maintenant * 11.0)
-
-        coeur = palette["coeur"]
-        lueur = palette["lueur"]
-        anneau = palette["anneau"]
-
         self.toile.delete("all")
-        self._ovale(cx, cy, rayon * 1.55, outline=lueur, width=2)
-        self._ovale(
-            cx,
-            cy,
-            rayon * 1.22,
-            outline=anneau,
-            width=max(3, int(self.taille * 0.045)),
+        visuel.dessiner_nappe(
+            self.toile,
+            largeur=self.taille,
+            hauteur=self.taille,
+            palette=palette,
+            maintenant=maintenant,
+            etat=self.etat,
         )
-        self._ovale(cx, cy, rayon * 0.62, fill=coeur, outline=anneau, width=1)
-        self._ovale(cx, cy, rayon * 0.22, fill=lueur, outline="")
-
-        if float(palette["vitesse_rotation"]) > 12.0:
-            epaisseur = max(2, int(self.taille * 0.03))
-            etendue = 72 if self.etat != "escalade" else 110
-            self.toile.create_arc(
-                cx - rayon * 1.22,
-                cy - rayon * 1.22,
-                cx + rayon * 1.22,
-                cy + rayon * 1.22,
-                start=self.angle,
-                extent=etendue,
-                style=tk.ARC,
-                outline=lueur,
-                width=epaisseur,
-            )
-            if self.etat == "escalade":
-                self.toile.create_arc(
-                    cx - rayon * 0.95,
-                    cy - rayon * 0.95,
-                    cx + rayon * 0.95,
-                    cy + rayon * 0.95,
-                    start=(-self.angle * 1.4) % 360.0,
-                    extent=55,
-                    style=tk.ARC,
-                    outline=coeur,
-                    width=max(2, epaisseur - 1),
-                )
-
-        if scintil > 0.15:
-            n_etincelles = 3 if self.etat == "reflexion" else 5
-            for i in range(n_etincelles):
-                phase = maintenant * (2.4 + i * 0.7) + i * 1.7
-                visibilite = 0.5 + 0.5 * math.sin(phase * 3.0)
-                if visibilite < 0.55:
-                    continue
-                theta = self.angle * math.pi / 180.0 + i * (2.0 * math.pi / n_etincelles)
-                rx = rayon * (0.9 + 0.12 * math.sin(phase))
-                x = cx + rx * math.cos(theta)
-                y = cy + rx * math.sin(theta)
-                p = 1.6 + scintil * visibilite
-                self.toile.create_oval(
-                    x - p, y - p, x + p, y + p, fill=lueur, outline=""
-                )
+        visuel.dessiner_orbe(
+            self.toile,
+            cx=self.taille / 2,
+            cy=self.taille / 2,
+            taille=self.taille,
+            etat=self.etat,
+            palette=palette,
+            angle=self.angle,
+            souffle=souffle,
+            maintenant=maintenant,
+        )
 
 
 class BadgeEclair:
@@ -548,73 +482,124 @@ class Application:
         self.raccourci_en_cours = self.configuration.raccourci_ptt
         self.badge: BadgeEclair | None = None
         self.ligne_eclair: tk.Label | None = None
+        self.bulle: Bulle | None = None
+        self.orbe_accueil: Bulle | None = None
+        self.toile_fond: tk.Canvas | None = None
+        self.naissance_champ = time.perf_counter()
+        self._tic_arme = False
 
         self.racine = tk.Tk()
         self.racine.title("hyper-ambient")
         self.racine.configure(bg=FOND)
-        self.racine.geometry("480x760")
-        self.racine.minsize(420, 680)
+        self.racine.geometry("520x800")
+        self.racine.minsize(440, 700)
         # Fenêtre normale : pas d'overrideredirect, la croix doit fermer.
+        # Pas de chroma-key : le geste HA est la nappe/orbe, pas un trou.
         self.racine.protocol("WM_DELETE_WINDOW", self.fermer)
 
+        self.toile_fond = tk.Canvas(
+            self.racine,
+            bg=FOND,
+            highlightthickness=0,
+            bd=0,
+        )
+        self.toile_fond.place(x=0, y=0, relwidth=1, relheight=1)
+
+        # Vitre insete : la nappe du champ reste lisible dans la marge.
         self.conteneur = tk.Frame(self.racine, bg=FOND)
-        self.conteneur.pack(fill=tk.BOTH, expand=True)
+        self.conteneur.place(
+            x=MARGE_NAPPE,
+            y=MARGE_NAPPE,
+            relwidth=1,
+            relheight=1,
+            width=-2 * MARGE_NAPPE,
+            height=-2 * MARGE_NAPPE,
+        )
 
         if self.configuration.onboarding_termine:
             self._afficher_application()
         else:
             self._afficher_bienvenue()
+        self._armer_tic()
 
     def _vider(self) -> None:
+        self.orbe_accueil = None
+        self.bulle = None
+        self.badge = None
+        self.ligne_eclair = None
         for enfant in self.conteneur.winfo_children():
             enfant.destroy()
 
-    def _cadre_onboarding(self, indice: int, titre: str, description: str) -> tk.Frame:
+    def _cadre_onboarding(
+        self, indice: int, titre: str, description: str
+    ) -> tuple[tk.Frame, tk.Frame]:
         self._vider()
-        cadre = tk.Frame(self.conteneur, bg=FOND)
-        cadre.pack(fill=tk.BOTH, expand=True, padx=32, pady=28)
+        enveloppe = tk.Frame(self.conteneur, bg=FOND)
+        enveloppe.pack(fill=tk.BOTH, expand=True)
+        cadre = tk.Frame(
+            enveloppe,
+            bg=FOND_VITRE,
+            highlightthickness=1,
+            highlightbackground=BORD_VITRE,
+        )
+        cadre.pack(fill=tk.BOTH, expand=True)
+        inner = tk.Frame(cadre, bg=FOND_VITRE)
+        inner.pack(fill=tk.BOTH, expand=True, padx=26, pady=22)
+        pied = tk.Frame(inner, bg=FOND_VITRE)
+        pied.pack(side=tk.BOTTOM, fill=tk.X)
+        toile_orbe = tk.Canvas(
+            inner,
+            width=140,
+            height=140,
+            bg=FOND_VITRE,
+            highlightthickness=0,
+            bd=0,
+        )
+        toile_orbe.pack(pady=(0, 8))
+        self.orbe_accueil = Bulle(toile_orbe, 140)
+        self.orbe_accueil.appliquer_etat("ecoute", niveau=0.42)
         tk.Label(
-            cadre,
+            inner,
             text=f"Étape {indice} sur {len(ETAPES_WIZARD)}",
-            bg=FOND,
+            bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
             font=("Segoe UI", 10),
             anchor="w",
-        ).pack(fill=tk.X, pady=(0, 28))
+        ).pack(fill=tk.X, pady=(0, 16))
         tk.Label(
-            cadre,
+            inner,
             text=titre,
-            bg=FOND,
+            bg=FOND_VITRE,
             fg=ENCRE,
             font=("Segoe UI", 24, "bold"),
             anchor="w",
             justify="left",
         ).pack(fill=tk.X)
         tk.Label(
-            cadre,
+            inner,
             text=description,
-            bg=FOND,
+            bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
             font=("Segoe UI", 12),
             anchor="w",
             justify="left",
             wraplength=400,
-        ).pack(fill=tk.X, pady=(12, 28))
-        return cadre
+        ).pack(fill=tk.X, pady=(12, 20))
+        return inner, pied
 
     def _rendre_focus_visible(self, widget: tk.Misc) -> None:
         lueur = visuel.PALETTES["ecoute"]["lueur"]
         widget.configure(
             highlightthickness=3,
             highlightcolor=lueur,
-            highlightbackground=FOND,
+            highlightbackground=FOND_VITRE,
         )
 
         def entrer(_event: object) -> None:
             widget.configure(highlightbackground=lueur)
 
         def sortir(_event: object) -> None:
-            widget.configure(highlightbackground=FOND)
+            widget.configure(highlightbackground=FOND_VITRE)
 
         widget.bind("<FocusIn>", entrer, add="+")
         widget.bind("<FocusOut>", sortir, add="+")
@@ -628,9 +613,9 @@ class Application:
             command=commande,
             font=("Segoe UI", 12, "bold"),
             bg=visuel.PALETTES["ecoute"]["coeur"],
-            fg=FOND,
+            fg=ENCRE_FONCEE,
             activebackground=visuel.PALETTES["ecoute"]["lueur"],
-            activeforeground=FOND,
+            activeforeground=ENCRE_FONCEE,
             padx=18,
             pady=12,
             takefocus=1,
@@ -648,7 +633,7 @@ class Application:
             text=texte,
             command=commande,
             font=("Segoe UI", 10),
-            bg=FOND,
+            bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
             activebackground="#142028",
             activeforeground=ENCRE,
@@ -672,11 +657,11 @@ class Application:
         self._afficher_application()
 
     def _afficher_bienvenue(self) -> None:
-        cadre = self._cadre_onboarding(1, "Bienvenue", TEXTE_BIENVENUE)
+        cadre, pied = self._cadre_onboarding(1, "Bienvenue", TEXTE_BIENVENUE)
         tk.Label(
             cadre,
             text="Aucun son n'est enregistré pendant cette configuration.",
-            bg=FOND,
+            bg=FOND_VITRE,
             fg=ENCRE,
             font=("Segoe UI", 10),
             anchor="w",
@@ -686,22 +671,22 @@ class Application:
         tk.Label(
             cadre,
             text=RAPPEL_A11Y,
-            bg=FOND,
+            bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
             font=("Segoe UI", 10),
             anchor="w",
             justify="left",
             wraplength=400,
         ).pack(fill=tk.X, pady=(16, 0))
-        self._bouton_principal(cadre, "Continuer", self._afficher_reglage_ptt)
-        self._bouton_secondaire(cadre, "Passer", self._achever_onboarding)
+        self._bouton_principal(pied, "Continuer", self._afficher_reglage_ptt)
+        self._bouton_secondaire(pied, "Passer", self._achever_onboarding)
 
     def _afficher_reglage_ptt(self) -> None:
-        cadre = self._cadre_onboarding(2, "Appuyez pour parler", TEXTE_PTT)
+        cadre, pied = self._cadre_onboarding(2, "Appuyez pour parler", TEXTE_PTT)
         tk.Label(
             cadre,
             text="Raccourci clavier dans l'application",
-            bg=FOND,
+            bg=FOND_VITRE,
             fg=ENCRE,
             font=("Segoe UI", 11, "bold"),
             anchor="w",
@@ -718,9 +703,9 @@ class Application:
                 text=libelle,
                 variable=choix,
                 value=valeur,
-                bg=FOND,
+                bg=FOND_VITRE,
                 fg=ENCRE,
-                activebackground=FOND,
+                activebackground=FOND_VITRE,
                 activeforeground=ENCRE,
                 selectcolor="#142028",
                 font=("Segoe UI", 11),
@@ -730,19 +715,9 @@ class Application:
             radio.pack(fill=tk.X, pady=4)
             self._rendre_focus_visible(radio)
         self._monter_essai_ptt(cadre)
-        tk.Label(
-            cadre,
-            text=RAPPEL_A11Y,
-            bg=FOND,
-            fg=ENCRE_SOURDE,
-            font=("Segoe UI", 10),
-            anchor="w",
-            justify="left",
-            wraplength=400,
-        ).pack(fill=tk.X, pady=(18, 0))
-        self._bouton_principal(cadre, "Continuer", self._afficher_masquage)
+        self._bouton_principal(pied, "Continuer", self._afficher_masquage)
         self._bouton_secondaire(
-            cadre,
+            pied,
             "Passer",
             lambda: self._achever_onboarding(self.raccourci_en_cours),
         )
@@ -756,7 +731,7 @@ class Application:
             bg=visuel.PALETTES["repos"]["anneau"],
             fg=ENCRE,
             activebackground=visuel.PALETTES["ecoute"]["coeur"],
-            activeforeground=FOND,
+            activeforeground=ENCRE_FONCEE,
             relief=tk.RAISED,
             bd=3,
             padx=12,
@@ -772,7 +747,7 @@ class Application:
                 relief=tk.SUNKEN,
                 text="Je vous entends — relâchez pour envoyer",
                 bg=visuel.PALETTES["ecoute"]["coeur"],
-                fg=FOND,
+                fg=ENCRE_FONCEE,
             )
             return "break"
 
@@ -796,14 +771,14 @@ class Application:
         bouton.bind("<KeyRelease-space>", relacher)
 
     def _afficher_masquage(self) -> None:
-        cadre = self._cadre_onboarding(3, "Masquer la configuration", TEXTE_MASQUAGE)
+        cadre, pied = self._cadre_onboarding(3, "Masquer la configuration", TEXTE_MASQUAGE)
         tk.Label(
             cadre,
             text=(
                 f"Raccourci retenu : {RACCOURCIS[self.raccourci_en_cours]}. "
                 "Pendant un appel distant, l'éclair s'allume et le statut le dit en texte."
             ),
-            bg=FOND,
+            bg=FOND_VITRE,
             fg=ENCRE,
             font=("Segoe UI", 11),
             anchor="w",
@@ -813,7 +788,7 @@ class Application:
         tk.Label(
             cadre,
             text=RAPPEL_A11Y,
-            bg=FOND,
+            bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
             font=("Segoe UI", 10),
             anchor="w",
@@ -826,16 +801,16 @@ class Application:
             self.masquer_configuration()
 
         self._bouton_principal(
-            cadre,
+            pied,
             "Commencer",
             lambda: self._achever_onboarding(self.raccourci_en_cours),
         )
-        self._bouton_secondaire(cadre, "Commencer et masquer", commencer_et_masquer)
+        self._bouton_secondaire(pied, "Commencer et masquer", commencer_et_masquer)
 
     def _afficher_application(self) -> None:
         self._vider()
         cadre = tk.Frame(self.conteneur, bg=FOND)
-        cadre.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
+        cadre.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
 
         bandeau = tk.Frame(cadre, bg=FOND)
         bandeau.pack(fill=tk.X, pady=(4, 0))
@@ -851,14 +826,19 @@ class Application:
         self.toile.pack(side=tk.LEFT, expand=True)
         self.bulle = Bulle(self.toile, TAILLE_BULLE)
 
-        cote_eclair = tk.Frame(bandeau, bg=FOND)
-        cote_eclair.pack(side=tk.RIGHT, padx=(8, 4))
+        cote_eclair = tk.Frame(
+            bandeau,
+            bg=FOND_VITRE,
+            highlightthickness=1,
+            highlightbackground=BORD_VITRE,
+        )
+        cote_eclair.pack(side=tk.RIGHT, padx=(8, 4), pady=12)
         taille_eclair = 72
         self.toile_eclair = tk.Canvas(
             cote_eclair,
             width=taille_eclair,
             height=taille_eclair,
-            bg=FOND,
+            bg=FOND_VITRE,
             highlightthickness=0,
             bd=0,
         )
@@ -867,7 +847,7 @@ class Application:
         self.ligne_eclair = tk.Label(
             cote_eclair,
             text=libelle_eclair("repos"),
-            bg=FOND,
+            bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
             font=("Segoe UI", 10),
             wraplength=120,
@@ -905,20 +885,30 @@ class Application:
             cadre,
             text="Masquer la configuration",
             command=self.masquer_configuration,
-            bg=FOND,
+            bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
             activebackground="#142028",
             activeforeground=ENCRE,
             relief=tk.FLAT,
             takefocus=1,
         )
-        self.bouton_masquer.pack(fill=tk.X, pady=(0, 4))
+        self.bouton_masquer.pack(fill=tk.X, pady=(0, 8))
         self._rendre_focus_visible(self.bouton_masquer)
 
-        tk.Label(
+        vitre = tk.Frame(
             cadre,
+            bg=FOND_VITRE,
+            highlightthickness=1,
+            highlightbackground=BORD_VITRE,
+        )
+        vitre.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
+        panneau = tk.Frame(vitre, bg=FOND_VITRE)
+        panneau.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
+
+        tk.Label(
+            panneau,
             text=f"Raccourci : {raccourci}  ·  {TEXTE_MASQUAGE}",
-            bg=FOND,
+            bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
             font=("Segoe UI", 9),
             anchor="w",
@@ -927,29 +917,29 @@ class Application:
         ).pack(fill=tk.X, pady=(0, 4))
 
         tk.Label(
-            cadre,
+            panneau,
             text="Compris",
-            bg=FOND,
+            bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
             font=("Segoe UI", 9),
             anchor="w",
         ).pack(fill=tk.X, pady=(8, 0))
-        self.zone_compris = self._zone_texte(cadre)
+        self.zone_compris = self._zone_texte(panneau)
 
         tk.Label(
-            cadre,
+            panneau,
             text="Réponse",
-            bg=FOND,
+            bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
             font=("Segoe UI", 9),
             anchor="w",
         ).pack(fill=tk.X, pady=(8, 0))
-        self.zone_reponse = self._zone_texte(cadre)
+        self.zone_reponse = self._zone_texte(panneau)
 
         self.ligne_etat = tk.Label(
-            cadre,
+            panneau,
             text=self._composer_statut(),
-            bg=FOND,
+            bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
             font=("Segoe UI", 9),
             anchor="w",
@@ -967,7 +957,6 @@ class Application:
         if not self.session_lancee:
             self.session_lancee = True
             self.session.start()
-        self.racine.after(visuel.INTERVALLE_MS, self.tic)
 
     def masquer_configuration(self) -> None:
         """Masque dans la barre des tâches, qui reste le geste de rappel fiable."""
@@ -1007,6 +996,8 @@ class Application:
     def _afficher_statut(self, texte: str | None = None) -> None:
         if texte is not None:
             self.texte_statut = texte
+        if getattr(self, "ligne_etat", None) is None:
+            return
         self.ligne_etat.configure(text=self._composer_statut())
 
     def _appliquer_eclair(self, etat: str) -> None:
@@ -1026,7 +1017,8 @@ class Application:
             return
         self.enfonce = True
         self.session.tenu.set()
-        self.bulle.appliquer_etat("ecoute", niveau=None)
+        if self.bulle is not None:
+            self.bulle.appliquer_etat("ecoute", niveau=None)
         self._appliquer_eclair("ecoute")
         self.bouton.configure(
             relief=tk.SUNKEN,
@@ -1073,7 +1065,8 @@ class Application:
             except (TypeError, ValueError):
                 valeur = None
             if isinstance(etat, str):
-                self.bulle.appliquer_etat(etat, niveau=valeur)
+                if self.bulle is not None:
+                    self.bulle.appliquer_etat(etat, niveau=valeur)
                 self._appliquer_eclair(etat)
                 distant = statut_pour_etat(etat)
                 if distant:
@@ -1092,6 +1085,34 @@ class Application:
         elif kind == "erreur":
             self._afficher_statut(str(message.get("texte") or "Erreur."))
 
+    def _armer_tic(self) -> None:
+        if self._tic_arme:
+            return
+        self._tic_arme = True
+        self.racine.after(visuel.INTERVALLE_MS, self.tic)
+
+    def _dessiner_champ(self) -> None:
+        if self.toile_fond is None:
+            return
+        largeur = max(int(self.toile_fond.winfo_width()), 2)
+        hauteur = max(int(self.toile_fond.winfo_height()), 2)
+        etat = "repos"
+        if self.bulle is not None:
+            etat = self.bulle.etat
+        elif self.orbe_accueil is not None:
+            etat = self.orbe_accueil.etat
+        self.toile_fond.delete("nappe")
+        visuel.dessiner_nappe(
+            self.toile_fond,
+            largeur=largeur,
+            hauteur=hauteur,
+            palette=visuel.PALETTES.get(etat, visuel.PALETTES["repos"]),
+            maintenant=time.perf_counter() - self.naissance_champ,
+            etat=etat,
+            ampleur=0.58,
+            etendre=True,
+        )
+
     def tic(self) -> None:
         # after() doit toujours être réarmé : une exception dans le dessin
         # gèlerait l'interface, y compris la ligne d'état.
@@ -1101,7 +1122,10 @@ class Application:
                     self._traiter(self.file_ui.get_nowait())
             except queue.Empty:
                 pass
-            if getattr(self, "bulle", None) is not None:
+            self._dessiner_champ()
+            if self.orbe_accueil is not None:
+                self.orbe_accueil.dessiner()
+            if self.bulle is not None:
                 self.bulle.dessiner()
             if self.badge is not None:
                 self.badge.dessiner()
