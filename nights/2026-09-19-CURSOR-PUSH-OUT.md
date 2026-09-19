@@ -18,15 +18,15 @@ Cette session n'a **pas** codé de lane : reçu l'ordre d'arrêt, inventaire, co
 
 ## Git poussé
 
-Pointe origin : `8776254` (`nuit/2026-08-27`).
+Pointe origin au wrap : `71eb94d` (`nuit/2026-08-27`). URLs : `[[2026-09-19-PUSH]]`.
 
 | Commit | Message |
 |---|---|
 | `0570d46` | Soir 19 sept : carte figee Granite+Whisper large-v3+Magpie Sofia, C1-C4 C8-C12, notes nights/ |
 | `9baa116` | Soir 19 sept : OUT P0-2/C4, branchement JeV, README EN 0.1 |
-| `f0ac939` | docs(nights): OUT C8 EN + PUSH 19 sept |
-| `1c34edc` | docs(nights): C4 OUT complete |
-| `8776254` | docs(nights): OUT stop 20:50, C8 EN, runbook push OC |
+| `e9b172c` | fix(web): remove duplicate ddgs wrapper |
+| `0e95315` | docs(nights): OUT WIRE JeV+calculer+hotwords |
+| `71eb94d` | docs(nights): WIRE-OUT + PUSH URLs |
 
 URLs : `[[2026-09-19-PUSH]]`.
 
@@ -58,5 +58,5 @@ gitignore : `.env` / `.env.local` / `_tmp_*.py` / `.carte-secrete*` / `.carte-re
 |---|---|
 | Stop | oui |
 | OUT `nights/` | ce fichier + C4 / C8 / P0-2 / WIRE |
-| Push origin | **oui** `nuit/2026-08-27` → `8776254` |
+| Push origin | **oui** `nuit/2026-08-27` → `71eb94d` (+ SHA de ce fichier après coup) |
 | Secrets dans l'arbre | aucun |
