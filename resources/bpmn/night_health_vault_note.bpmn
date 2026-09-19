@@ -12,7 +12,7 @@
                   modeler:executionPlatform="Camunda Cloud"
                   modeler:executionPlatformVersion="8.8.0">
   <bpmn:process id="night_health_vault_note" name="Night health vault note" isExecutable="true">
-    <bpmn:documentation>Nuit MOTHER 2026-08-31 : verifie la topologie Camunda puis ecrit la note de sante dans le coffre Obsidian. Aucun secret dans ce modele.</bpmn:documentation>
+    <bpmn:documentation>Verifie les ponts (Codex, Claude), l accueil vocal, le modele local et optionnellement la topologie Camunda, puis ecrit la note de sante dans le coffre Obsidian. Si Camunda est indisponible, le worker --once sonde en stdlib. Aucun secret dans ce modele.</bpmn:documentation>
 
     <bpmn:startEvent id="start_night" name="Nuit declenchee">
       <bpmn:outgoing>flow_start_to_health</bpmn:outgoing>
@@ -20,7 +20,7 @@
 
     <bpmn:sequenceFlow id="flow_start_to_health" sourceRef="start_night" targetRef="health_check" />
 
-    <bpmn:serviceTask id="health_check" name="Health check topologie">
+    <bpmn:serviceTask id="health_check" name="Health check ponts et services">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="health-check" retries="3" />
       </bpmn:extensionElements>

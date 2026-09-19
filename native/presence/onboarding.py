@@ -125,15 +125,27 @@ def eclair_allume(etat: str) -> bool:
     return etat == "escalade"
 
 
+def ui_presence() -> dict[str, str]:
+    from src.i18n import ui
+
+    return ui()
+
+
+def raccourcis_lisibles() -> dict[str, str]:
+    textes = ui_presence()
+    return {"space": textes["shortcut"], "ctrl-space": textes["shortcut_ctrl"]}
+
+
 def libelle_eclair(etat: str) -> str:
+    textes = ui_presence()
     if eclair_allume(etat):
-        return LIBELLE_ECLAIR_ALLUME
-    return LIBELLE_ECLAIR_ETEINT
+        return textes["remote_call"]
+    return textes["local_model"]
 
 
 def statut_pour_etat(etat: str) -> str | None:
     if eclair_allume(etat):
-        return STATUT_APPEL_DISTANT
+        return ui_presence()["remote_status"]
     return None
 
 

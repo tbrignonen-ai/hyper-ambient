@@ -30,21 +30,19 @@ for _chemin in (str(_ROOT), str(_ICI)):
         sys.path.insert(0, _chemin)
 
 import overlay as visuel
+import sante as etat_sante
 from onboarding import (
     ETAPES_WIZARD,
-    RACCOURCIS,
-    RAPPEL_A11Y,
-    TEXTE_BIENVENUE,
-    TEXTE_MASQUAGE,
-    TEXTE_PTT,
     ConfigurationPresence,
     charger_configuration,
     eclair_allume,
     enregistrer_configuration,
     libelle_eclair,
+    raccourcis_lisibles,
     sequences_tk,
     statut_pour_etat,
     terminer_onboarding,
+    ui_presence,
 )
 
 # Champ sombre plein : le bureau ne perce plus la fenêtre app.
@@ -59,6 +57,13 @@ ENCRE_FONCEE = "#0c141c"
 TAILLE_BULLE = 260
 URL_DEFAUT = "ws://127.0.0.1:8001/hostagent"
 moteur: Any | None = None
+
+
+def _trace_c10(evenement: str, **champs: Any) -> None:
+    """Trace minimale C10 : PTT, WS, premier audio. Horloge monotone."""
+    extra = " ".join(f"{cle}={valeur}" for cle, valeur in champs.items())
+    suffixe = f" {extra}" if extra else ""
+    print(f"C10 t={time.monotonic():.3f} {evenement}{suffixe}", flush=True)
 
 
 def consommer_reponse(
@@ -287,6 +292,7 @@ class SessionVocale(threading.Thread):
         self.raccourci_label = raccourci_label
         self.arreter = threading.Event()
         self.tenu = threading.Event()
+        self.canal_pret = threading.Event()
         self.ws = None
 
     def deposer(self, message: dict[str, Any]) -> None:
@@ -361,6 +367,7 @@ class SessionVocale(threading.Thread):
                         try:
                             moteur._poignee_de_main(ws, secret)
                         except SystemExit:
+                            self.canal_pret.clear()
                             self.deposer(
                                 {
                                     "type": "erreur",
@@ -372,6 +379,8 @@ class SessionVocale(threading.Thread):
                             )
                             self.arreter.wait(2.0)
                             continue
+                        self.canal_pret.set()
+                        _trace_c10("WS_OPEN", url=self.url)
                         self.deposer(
                             {
                                 "type": "statut",
@@ -394,6 +403,7 @@ class SessionVocale(threading.Thread):
                     self.deposer({"type": "erreur", "texte": texte})
                     self.arreter.wait(2.0)
                 finally:
+                    self.canal_pret.clear()
                     self.ws = None
         finally:
             try:
@@ -425,6 +435,7 @@ class SessionVocale(threading.Thread):
             if self.arreter.is_set():
                 return
             if not trames:
+                _trace_c10("AUDIO_SEND", n_trames=0, n_samples=0)
                 self.deposer(
                     {
                         "type": "statut",
@@ -433,6 +444,8 @@ class SessionVocale(threading.Thread):
                 )
                 self.deposer({"type": "etat", "etat": "repos", "niveau": None})
                 continue
+            n_samples = sum(int(trame.samples.size) for trame in trames)
+            _trace_c10("AUDIO_SEND", n_trames=len(trames), n_samples=n_samples)
             self.deposer(
                 {
                     "type": "statut",
@@ -473,7 +486,7 @@ class Application:
             url=args.url,
             device=args.device,
             sortie=args.sortie,
-            raccourci_label=RACCOURCIS[self.configuration.raccourci_ptt],
+            raccourci_label=raccourcis_lisibles()[self.configuration.raccourci_ptt],
         )
         self.enfonce = False
         self.dernier_delai_ms: float | None = None
@@ -487,6 +500,14 @@ class Application:
         self.toile_fond: tk.Canvas | None = None
         self.naissance_champ = time.perf_counter()
         self._tic_arme = False
+        self.chemin_sante = Path(args.sante) if getattr(args, "sante", None) else None
+        self.sondes_actives = bool(getattr(args, "sondes", False)) and self.chemin_sante is None
+        self.bandeau_alerte: tk.Label | None = None
+        self.cadre_sante: tk.Frame | None = None
+        self._dernier_sante_ts = 0.0
+        self._sondes_stop = threading.Event()
+        self._sondes_fil: threading.Thread | None = None
+        self._phrase_reprise = ""
 
         self.racine = tk.Tk()
         self.racine.title("hyper-ambient")
@@ -527,6 +548,8 @@ class Application:
         self.bulle = None
         self.badge = None
         self.ligne_eclair = None
+        self.bandeau_alerte = None
+        self.cadre_sante = None
         for enfant in self.conteneur.winfo_children():
             enfant.destroy()
 
@@ -560,7 +583,9 @@ class Application:
         self.orbe_accueil.appliquer_etat("ecoute", niveau=0.42)
         tk.Label(
             inner,
-            text=f"Étape {indice} sur {len(ETAPES_WIZARD)}",
+            text=ui_presence()["step"].format(
+                indice=indice, total=len(ETAPES_WIZARD)
+            ),
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
             font=("Segoe UI", 10),
@@ -649,7 +674,9 @@ class Application:
             self.configuration, raccourci_ptt=raccourci_ptt
         )
         self.raccourci_en_cours = self.configuration.raccourci_ptt
-        self.session.raccourci_label = RACCOURCIS[self.configuration.raccourci_ptt]
+        self.session.raccourci_label = raccourcis_lisibles()[
+            self.configuration.raccourci_ptt
+        ]
         try:
             enregistrer_configuration(self.configuration, self.chemin_configuration)
         except OSError as exc:
@@ -657,10 +684,11 @@ class Application:
         self._afficher_application()
 
     def _afficher_bienvenue(self) -> None:
-        cadre, pied = self._cadre_onboarding(1, "Bienvenue", TEXTE_BIENVENUE)
+        u = ui_presence()
+        cadre, pied = self._cadre_onboarding(1, u["welcome_title"], u["welcome_body"])
         tk.Label(
             cadre,
-            text="Aucun son n'est enregistré pendant cette configuration.",
+            text=u["no_recording"],
             bg=FOND_VITRE,
             fg=ENCRE,
             font=("Segoe UI", 10),
@@ -670,7 +698,7 @@ class Application:
         ).pack(fill=tk.X)
         tk.Label(
             cadre,
-            text=RAPPEL_A11Y,
+            text=u["a11y"],
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
             font=("Segoe UI", 10),
@@ -678,14 +706,15 @@ class Application:
             justify="left",
             wraplength=400,
         ).pack(fill=tk.X, pady=(16, 0))
-        self._bouton_principal(pied, "Continuer", self._afficher_reglage_ptt)
-        self._bouton_secondaire(pied, "Passer", self._achever_onboarding)
+        self._bouton_principal(pied, u["continue"], self._afficher_reglage_ptt)
+        self._bouton_secondaire(pied, u["skip"], self._achever_onboarding)
 
     def _afficher_reglage_ptt(self) -> None:
-        cadre, pied = self._cadre_onboarding(2, "Appuyez pour parler", TEXTE_PTT)
+        u = ui_presence()
+        cadre, pied = self._cadre_onboarding(2, u["ptt_title"], u["ptt_body"])
         tk.Label(
             cadre,
-            text="Raccourci clavier dans l'application",
+            text=u["shortcut_in_app"],
             bg=FOND_VITRE,
             fg=ENCRE,
             font=("Segoe UI", 11, "bold"),
@@ -697,7 +726,7 @@ class Application:
             self.raccourci_en_cours = choix.get()
 
         choix.trace_add("write", retenir)
-        for valeur, libelle in RACCOURCIS.items():
+        for valeur, libelle in raccourcis_lisibles().items():
             radio = tk.Radiobutton(
                 cadre,
                 text=libelle,
@@ -715,10 +744,10 @@ class Application:
             radio.pack(fill=tk.X, pady=4)
             self._rendre_focus_visible(radio)
         self._monter_essai_ptt(cadre)
-        self._bouton_principal(pied, "Continuer", self._afficher_masquage)
+        self._bouton_principal(pied, u["continue"], self._afficher_masquage)
         self._bouton_secondaire(
             pied,
-            "Passer",
+            u["skip"],
             lambda: self._achever_onboarding(self.raccourci_en_cours),
         )
 
@@ -745,7 +774,7 @@ class Application:
             tenu["on"] = True
             bouton.configure(
                 relief=tk.SUNKEN,
-                text="Je vous entends — relâchez pour envoyer",
+                text=ui_presence()["hearing"],
                 bg=visuel.PALETTES["ecoute"]["coeur"],
                 fg=ENCRE_FONCEE,
             )
@@ -811,6 +840,23 @@ class Application:
         self._vider()
         cadre = tk.Frame(self.conteneur, bg=FOND)
         cadre.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+        self.cadre_sante = tk.Frame(cadre, bg=etat_sante.BANDEAU_BG)
+        self.bandeau_alerte = tk.Label(
+            self.cadre_sante,
+            text="",
+            bg=etat_sante.BANDEAU_BG,
+            fg=etat_sante.BANDEAU_FG,
+            font=("Segoe UI", 12, "bold"),
+            anchor="w",
+            justify="left",
+            wraplength=440,
+            padx=12,
+            pady=10,
+            takefocus=1,
+        )
+        self.bandeau_alerte.pack(fill=tk.X)
+        self._rendre_focus_visible(self.bandeau_alerte)
 
         bandeau = tk.Frame(cadre, bg=FOND)
         bandeau.pack(fill=tk.X, pady=(4, 0))
@@ -954,6 +1000,18 @@ class Application:
         self.racine.bind_all("<Escape>", lambda _e: self.fermer())
 
         print("UI_PRETE", flush=True)
+        if self.chemin_sante and self.chemin_sante.exists():
+            try:
+                self.appliquer_etat_sante(etat_sante.lire_snapshot(self.chemin_sante))
+            except (OSError, UnicodeError, json.JSONDecodeError, TypeError):
+                pass
+        elif self.sondes_actives and not self._sondes_fil:
+            self._sondes_fil = threading.Thread(
+                target=self._boucle_sondes,
+                name="sondes-sante",
+                daemon=True,
+            )
+            self._sondes_fil.start()
         if not self.session_lancee:
             self.session_lancee = True
             self.session.start()
@@ -1015,8 +1073,13 @@ class Application:
     def enfoncer(self, _event: object | None = None) -> None:
         if self.enfonce:
             return
+        if not self.session.canal_pret.is_set():
+            _trace_c10("PTT_IGNORE")
+            self._afficher_statut("Canal pas encore prêt.")
+            return
         self.enfonce = True
         self.session.tenu.set()
+        _trace_c10("PTT_ON")
         if self.bulle is not None:
             self.bulle.appliquer_etat("ecoute", niveau=None)
         self._appliquer_eclair("ecoute")
@@ -1033,6 +1096,7 @@ class Application:
             return
         self.enfonce = False
         self.session.tenu.clear()
+        _trace_c10("PTT_OFF")
         self.bouton.configure(
             relief=tk.RAISED,
             text="Parler",
@@ -1053,6 +1117,78 @@ class Application:
             return None
         self.relacher()
         return "break"
+
+    def appliquer_etat_sante(self, etat: dict[str, Any]) -> None:
+        vue = etat_sante.bandeau_depuis_etat(etat)
+        self._phrase_reprise = str(vue.get("texte_reprise") or "")
+        if self.bandeau_alerte is None or self.cadre_sante is None:
+            if vue["visible"]:
+                self._afficher_statut(str(vue["texte"]))
+            elif self._phrase_reprise:
+                self._afficher_statut(self._phrase_reprise)
+            return
+        if vue["visible"]:
+            self.bandeau_alerte.configure(
+                text=str(vue["texte"]),
+                bg=str(vue["bg"]),
+                fg=str(vue["fg"]),
+                takefocus=1,
+            )
+            self.cadre_sante.configure(bg=str(vue["bg"]))
+            if not self.bandeau_alerte.winfo_manager():
+                self.bandeau_alerte.pack(fill=tk.X)
+            if not self.cadre_sante.winfo_manager():
+                freres = [
+                    enfant
+                    for enfant in self.cadre_sante.master.pack_slaves()
+                    if enfant is not self.cadre_sante
+                ]
+                options = {"fill": tk.X, "pady": (0, 8)}
+                if freres:
+                    options["before"] = freres[0]
+                self.cadre_sante.pack(**options)
+            try:
+                self.bandeau_alerte.focus_set()
+            except tk.TclError:
+                pass
+            self._afficher_statut(str(vue["texte"]))
+        else:
+            self.bandeau_alerte.pack_forget()
+            self.cadre_sante.pack_forget()
+            if self._phrase_reprise:
+                self._afficher_statut(self._phrase_reprise)
+
+    def _boucle_sondes(self) -> None:
+        racine_depot = Path(__file__).resolve().parents[2]
+        worker_dir = racine_depot / "workers" / "night_health_vault_note"
+        if str(worker_dir) not in sys.path:
+            sys.path.insert(0, str(worker_dir))
+        try:
+            from handlers import handle_health_check
+        except ImportError as exc:
+            print(f"sondes : {exc}", flush=True)
+            return
+        while not self._sondes_stop.is_set():
+            try:
+                etat = handle_health_check({})
+                self.file_ui.put({"type": "sante", "etat": etat})
+            except Exception as exc:
+                print(f"sondes : {exc}", flush=True)
+            self._sondes_stop.wait(2.0)
+
+    def _rafraichir_sante_fichier(self) -> None:
+        if self.chemin_sante is None:
+            return
+        maintenant = time.perf_counter()
+        if maintenant - self._dernier_sante_ts < 1.0:
+            return
+        self._dernier_sante_ts = maintenant
+        if not self.chemin_sante.exists():
+            return
+        try:
+            self.appliquer_etat_sante(etat_sante.lire_snapshot(self.chemin_sante))
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError):
+            return
 
     def _traiter(self, message: dict[str, Any]) -> None:
         kind = message.get("type")
@@ -1084,6 +1220,10 @@ class Application:
             self._afficher_statut(str(message.get("texte") or ""))
         elif kind == "erreur":
             self._afficher_statut(str(message.get("texte") or "Erreur."))
+        elif kind == "sante":
+            brut = message.get("etat")
+            if isinstance(brut, dict):
+                self.appliquer_etat_sante(brut)
 
     def _armer_tic(self) -> None:
         if self._tic_arme:
@@ -1122,6 +1262,7 @@ class Application:
                     self._traiter(self.file_ui.get_nowait())
             except queue.Empty:
                 pass
+            self._rafraichir_sante_fichier()
             self._dessiner_champ()
             if self.orbe_accueil is not None:
                 self.orbe_accueil.dessiner()
@@ -1139,6 +1280,7 @@ class Application:
             return
 
     def fermer(self, _event: object | None = None) -> None:
+        self._sondes_stop.set()
         self.session.demander_arret()
         try:
             self.racine.destroy()
@@ -1182,11 +1324,24 @@ def analyser_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="réafficher l'onboarding sans effacer le choix enregistré",
     )
+    parseur.add_argument(
+        "--sante",
+        type=Path,
+        default=None,
+        help="fichier JSON d'état de santé (bandeau d'alerte, tests et mode dégradé)",
+    )
+    parseur.add_argument(
+        "--sondes",
+        action="store_true",
+        help="sonder les ponts en direct (activé tout seul si --sante est absent)",
+    )
     return parseur.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> None:
     args = analyser_arguments(argv)
+    if args.sante is None:
+        args.sondes = True
     Application(args).boucler()
 
 

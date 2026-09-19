@@ -23,7 +23,20 @@ def runs_async(fn):
 
 
 from src.brain.tools import ToolRegistry
-from src.brain.tools_web import SearXNGSearch, TavilySearch, WebSearch, register_web_search
+from src.brain.tools_web import (
+    BRAVE_ENDPOINT,
+    EXA_ENDPOINT,
+    JINA_ENDPOINT,
+    SERPER_ENDPOINT,
+    BraveSearch,
+    ExaSearch,
+    JinaSearch,
+    SearXNGSearch,
+    SerperSearch,
+    TavilySearch,
+    WebSearch,
+    register_web_search,
+)
 
 
 class _FakeResponse:
@@ -132,6 +145,76 @@ async def test_tavily_prend_le_relais_si_searxng_est_injoignable():
     )
     assert await tool("question") == "Reponse Tavily."
     assert [method for method, _url in client.calls] == ["get", "post"]
+
+
+class _EmptySearXThenTavilyClient:
+    """Reproduction du CAPTCHA : SearXNG repond 200 mais sans resultat."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def get(self, url, params=None, headers=None):
+        self.calls.append(("get", url))
+        return _FakeResponse({"results": []})
+
+    async def post(self, url, json=None, headers=None):
+        self.calls.append(("post", url))
+        return _FakeResponse({"answer": "Reponse Tavily apres CAPTCHA."})
+
+
+@runs_async
+async def test_zero_resultat_searxng_declenche_le_repli_tavily():
+    """Un 200 vide est un echec de recherche, pas un resultat final."""
+    client = _EmptySearXThenTavilyClient()
+    tool = WebSearch(
+        searxng_url="http://searxng:8080",
+        api_key="cle-tavily",
+        client=client,
+    )
+
+    assert await tool("question bloquee par CAPTCHA") == "Reponse Tavily apres CAPTCHA."
+    assert [method for method, _url in client.calls] == ["get", "post"]
+
+
+class _Provider:
+    def __init__(self, name, available, text):
+        self.name, self.available, self.text, self.calls = name, available, text, []
+
+    async def search(self, query):
+        self.calls.append(query)
+        return self.available, self.text
+
+
+@runs_async
+async def test_la_chaine_passe_au_fournisseur_suivant_apres_un_vide():
+    searx = _Provider("searx", False, "Je n'ai rien trouve sur ce sujet.")
+    ddgs = _Provider("ddgs", False, "La recherche internet n'a pas repondu.")
+    brave = _Provider("brave", True, "Resultat Brave.")
+    serper = _Provider("serper", True, "Ne doit pas etre appele.")
+
+    tool = WebSearch(providers=[searx, ddgs, brave, serper])
+    assert await tool("une question") == "Resultat Brave."
+    assert [provider.calls for provider in (searx, ddgs, brave, serper)] == [
+        ["une question"], ["une question"], ["une question"], [],
+    ]
+
+
+@runs_async
+async def test_squelettes_http_ont_les_endpoints_et_jetons_attendus():
+    providers = [
+        (BraveSearch(api_key="brave-secret", client=FakeHTTPClient(_FakeResponse({"web": {"results": [{"title": "B", "description": "ok"}]}}))), BRAVE_ENDPOINT, "get"),
+        (ExaSearch(api_key="exa-secret", client=FakeHTTPClient(_FakeResponse({"results": [{"title": "E", "text": "ok"}]}))), EXA_ENDPOINT, "post"),
+        (JinaSearch(api_key="jina-secret", client=FakeHTTPClient(_FakeResponse({"data": [{"title": "J", "description": "ok"}]}))), JINA_ENDPOINT, "get"),
+        (SerperSearch(api_key="serper-secret", client=FakeHTTPClient(_FakeResponse({"organic": [{"title": "S", "snippet": "ok"}]}))), SERPER_ENDPOINT, "post"),
+    ]
+    for provider, endpoint, method in providers:
+        out = await provider("question")
+        assert out.endswith("ok")
+        call = provider.client.calls[0]
+        assert call["url"] == endpoint
+        assert "secret" not in out
+        assert provider.api_key in str(call["headers"])
+        assert method in {"get", "post"}
 
 
 @runs_async

@@ -30,12 +30,14 @@ class FasterWhisperASR:
         language: str = "fr",
         device: str = "cuda",
         compute_type: Optional[str] = None,
+        hotwords: Optional[str] = None,
     ):
         self.model_size = model_size
         self.language = language
         self.device = device
         # int8_float16 halves VRAM against float16 at ~no WER cost on turbo.
         self.compute_type = compute_type or ("int8_float16" if device == "cuda" else "int8")
+        self.hotwords = (hotwords or "").strip() or None
         self.model = None
         self.revisions = 0
         self._last_partial = ""
@@ -65,14 +67,16 @@ class FasterWhisperASR:
     # -- inference ---------------------------------------------------------
 
     def _decode(self, audio: np.ndarray, beam_size: int) -> Dict[str, Any]:
-        segments, info = self.model.transcribe(
-            audio,
-            language=self.language,
-            beam_size=beam_size,
-            vad_filter=False,             # TURN owns endpointing, not EARS
-            condition_on_previous_text=False,  # prevents drift on long sessions
-            without_timestamps=False,
-        )
+        kwargs: Dict[str, Any] = {
+            "language": self.language,
+            "beam_size": beam_size,
+            "vad_filter": False,  # TURN owns endpointing, not EARS
+            "condition_on_previous_text": False,  # prevents drift on long sessions
+            "without_timestamps": False,
+        }
+        if self.hotwords:
+            kwargs["hotwords"] = self.hotwords
+        segments, info = self.model.transcribe(audio, **kwargs)
         segs: List[Dict[str, Any]] = [
             {"start": s.start, "end": s.end, "text": s.text} for s in segments
         ]

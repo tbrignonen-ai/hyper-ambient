@@ -1,0 +1,5 @@
+Salut MOTHER, tu peux me résumer ce que Codex a fait cette nuit ?
+Rappelle-moi jeudi à quinze heures trente d'appeler le docteur Lefebvre.
+Cherche la météo à Aix-en-Provence pour ce week-end.
+Attends, stop, c'est pas ça que je voulais dire.
+Ouvre le dossier BGB et lis-moi la section sur l'interopérabilité avec Camunda.

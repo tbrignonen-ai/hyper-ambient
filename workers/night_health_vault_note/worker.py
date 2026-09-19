@@ -36,7 +36,25 @@ def activate_jobs(camunda_url: str, job_type: str, timeout: int = 30000, request
         "timeout": timeout,
         "maxJobsToActivate": 1,
         "requestTimeout": request_timeout,
-        "fetchVariable": ["nightDate", "vaultDir", "topologyUrl", "healthStatus", "httpStatus", "clusterSize", "brokersCount", "partitionsCount", "gatewayVersion", "checkedAt", "latencyMs"]
+        "fetchVariable": [
+            "nightDate",
+            "vaultDir",
+            "topologyUrl",
+            "healthStatus",
+            "httpStatus",
+            "clusterSize",
+            "brokersCount",
+            "partitionsCount",
+            "gatewayVersion",
+            "checkedAt",
+            "latencyMs",
+            "alertMessage",
+            "recoveryMessage",
+            "degradedComponents",
+            "componentsJson",
+            "snapshotPath",
+            "endpoints",
+        ]
     }
     
     data = json.dumps(payload).encode("utf-8")
@@ -156,9 +174,59 @@ def run_loop(camunda_url: str = DEFAULT_CAMUNDA_URL):
         logging.info("Arrêt du worker par KeyboardInterrupt.")
 
 
+def run_once(
+    *,
+    night_date: str,
+    vault_dir: str,
+    topology_url: str,
+    snapshot_path: str = "",
+) -> Dict[str, Any]:
+    """Mode dégradé : sonde + note Obsidian sans job Camunda."""
+    variables = {
+        "nightDate": night_date,
+        "vaultDir": vault_dir,
+        "topologyUrl": topology_url,
+    }
+    if snapshot_path:
+        variables["snapshotPath"] = snapshot_path
+    sante = handle_health_check(variables)
+    sante.update(nightDate=night_date, vaultDir=vault_dir)
+    note = handle_vault_note(sante)
+    logging.info(
+        "once status=%s degraded=%s note=%s",
+        sante.get("healthStatus"),
+        sante.get("degradedComponents") or "aucun",
+        note.get("notePath"),
+    )
+    return {**sante, **note}
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Camunda stdlib worker")
     parser.add_argument("--camunda-url", default=DEFAULT_CAMUNDA_URL, help="URL REST Camunda v2")
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Sonde et écrit la note sans attendre un job Camunda",
+    )
+    parser.add_argument("--night-date", default=time.strftime("%Y-%m-%d"))
+    parser.add_argument(
+        "--vault-dir",
+        default=r"C:\Users\thoma\obsidian-vault\10-Projects\MOTHER\nights",
+    )
+    parser.add_argument(
+        "--topology-url",
+        default="http://127.0.0.1:8088/v2/topology",
+    )
+    parser.add_argument("--snapshot", default="", help="JSON lu par Presence (--sante)")
     args = parser.parse_args()
-    
-    run_loop(args.camunda_url)
+
+    if args.once:
+        run_once(
+            night_date=args.night_date,
+            vault_dir=args.vault_dir,
+            topology_url=args.topology_url,
+            snapshot_path=args.snapshot,
+        )
+    else:
+        run_loop(args.camunda_url)

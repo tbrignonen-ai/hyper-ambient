@@ -34,6 +34,7 @@ from src.mouth.secours import LIMITE_ENONCE_S, est_silence, phrase_de_secours
 from src.mouth.output_gain import appliquer_gain_doux
 from src.brain.tool_loop import run_tool_loop
 from src.brain.tools import ToolRegistry
+from src.brain.tools_calculator import register_calculator
 from src.brain.tools_codex import register_ask_codex
 from src.brain.tools_cli import register_ask_claude
 from src.brain.tools_muse import register_ask_muse
@@ -73,6 +74,7 @@ ANNONCES_OUTILS = {
     # qui ne l'est pas.
     "ask_claude": "Je demande son analyse à Claude.",
     "web_search": "Je cherche ça sur le web.",
+    "calculer": "Je calcule ça.",
 }
 ANNONCE_OUTIL_PAR_DEFAUT = "Je consulte un outil."
 
@@ -95,20 +97,166 @@ def annonce_outil(nom: str) -> str:
     Un nom d'outil ne se prononce pas : « ask_codex » lu à voix haute est un
     bruit, pas une information. La table rend une phrase pour les outils connus,
     et une formule neutre pour les autres — jamais l'identifiant brut.
+    FR par défaut ; ``HA_LANG=en`` bascule les phrases.
     """
-    return ANNONCES_OUTILS.get(nom, ANNONCE_OUTIL_PAR_DEFAUT)
+    from src.i18n import t
+
+    phrase = t(f"tools.{nom}")
+    if phrase == f"tools.{nom}":
+        return t("tools.default")
+    return phrase
+
+
+# La carte de dégustation fige voix / oreille / cerveau. Ce chargeur propage
+# les jetons d'outils ; il ne doit pas déplacer MOUTH_*, EARS_*, BRAIN_*, MODEL,
+# ni le reste du dotenv (HF_TOKEN, ALIAS, …).
+_PREFIXES_MODELE = ("MOUTH_", "EARS_", "BRAIN_")
+_CLES_MODELE = frozenset({"MODEL"})
+_CLES_OUTILS = frozenset(
+    {
+        "CODEX_BRIDGE_TOKEN",
+        "CODEX_BRIDGE_URL",
+        "CLI_BRIDGE_TOKEN",
+        "CLI_BRIDGE_URL",
+        "MUSE_BRIDGE_URL",
+        "SEARXNG_URL",
+        "TAVILY_API_KEY",
+        "BRAVE_API_KEY",
+        "EXA_API_KEY",
+        "JINA_API_KEY",
+        "SERPER_API_KEY",
+    }
+)
+# Carte figée 19 sept : cerveau / oreille / voix. Aucun secret. Écrase
+# l'ancienne carte (router / Qwen3 / Supertonic) au boot, sauf CARTE_FIGEE=0
+# ou une variable *_FORCE déjà utile.
+_CLES_CARTE = frozenset(
+    {
+        "BRAIN_SERVICE",
+        "BRAIN_MODEL",
+        "BRAIN_MODEL_LOCAL",
+        "MODEL",
+        "EARS_BACKEND",
+        "EARS_MODEL",
+        "EARS_LANGUAGE",
+        "EARS_DEVICE",
+        "EARS_COMPUTE_TYPE",
+        "EARS_HOTWORDS",
+        "MOUTH_BACKEND",
+        "MOUTH_VOICE_NAME",
+        "MOUTH_LANGUAGE",
+        "MOUTH_DEVICE",
+    }
+)
+_CARTE_FIGEE = _ROOT / "dev" / "scripts" / "carte_figee.env"
+
+
+def _est_cle_modele(cle: str) -> bool:
+    return cle in _CLES_MODELE or cle.startswith(_PREFIXES_MODELE)
+
+
+def _valeur_utile(valeur: object) -> bool:
+    if valeur is None:
+        return False
+    return bool(str(valeur).replace("\r", "").strip())
+
+
+def parser_env_local(chemin: Path) -> dict[str, str]:
+    """Lit un dotenv Windows-safe : splitlines enlève LF/CRLF, on jette le `\\r` restant."""
+    if not chemin.is_file():
+        return {}
+    paires: dict[str, str] = {}
+    for ligne in chemin.read_bytes().splitlines():
+        ligne = ligne.replace(b"\r", b"")
+        if not ligne or ligne.lstrip().startswith(b"#"):
+            continue
+        if b"=" not in ligne:
+            continue
+        cle_b, val_b = ligne.split(b"=", 1)
+        cle = cle_b.decode("utf-8", "replace").strip().lstrip("\ufeff")
+        val = val_b.decode("utf-8", "replace").strip().strip('"').strip("'")
+        if cle:
+            paires[cle] = val
+    return paires
+
+
+def charger_env_local(
+    chemin: Path | None = None,
+    environ: dict[str, str] | None = None,
+) -> list[str]:
+    """Propage `.env.local` dans l'env du process.
+
+    Cause racine du 19 sept : `serve_hostagent` ne lisait que `os.getenv`, et le
+    boot du jour n'est pas passé par `relancer_routeur.sh`. `docker start` ne
+    recharge pas `env_file`. Les jetons sont dans le fichier monté, absents du
+    process. On les injecte ici, sans coller de `\\r`, sans toucher aux clés
+    modèle, sans écraser une valeur déjà utile.
+    """
+    if environ is None:
+        environ = os.environ
+    if chemin is None:
+        chemin = _ROOT / ".env.local"
+    injectees: list[str] = []
+    for cle, val in parser_env_local(Path(chemin)).items():
+        if cle not in _CLES_OUTILS or _est_cle_modele(cle):
+            continue
+        if _valeur_utile(environ.get(cle, "")):
+            continue
+        environ[cle] = val
+        injectees.append(cle)
+    return injectees
+
+
+def _carte_desactivee(environ: dict[str, str]) -> bool:
+    val = str(environ.get("CARTE_FIGEE", "1")).replace("\r", "").strip().lower()
+    return val in {"0", "off", "false", "non"}
+
+
+def charger_carte_figee(
+    chemin: Path | None = None,
+    environ: dict[str, str] | None = None,
+) -> list[str]:
+    """Propage la carte figée (modèles seulement) dans l'env du process.
+
+    Distinct de ``charger_env_local`` : la whitelist C1 ne touche pas
+    MOUTH_*/EARS_*/BRAIN_*/MODEL, donc un reboot retombait sur Pocket/Estelle.
+    Ici la carte **écrase** l'ancienne, sans secret, sans jeton d'outil.
+    """
+    if environ is None:
+        environ = os.environ
+    if _carte_desactivee(environ):
+        return []
+    if chemin is None:
+        chemin = _CARTE_FIGEE
+    injectees: list[str] = []
+    for cle, val in parser_env_local(Path(chemin)).items():
+        if cle not in _CLES_CARTE or not _valeur_utile(val):
+            continue
+        force = environ.get(f"{cle}_FORCE", "")
+        environ[cle] = (
+            str(force).replace("\r", "").strip() if _valeur_utile(force) else val
+        )
+        injectees.append(cle)
+    return injectees
+
+
+def _appliquer_env_boot(environ: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
+    """Jetons d'outils puis carte figée. Ordre figé : C1 ne déplace pas les modèles."""
+    outils = charger_env_local(environ=environ)
+    carte = charger_carte_figee(environ=environ)
+    return outils, carte
 
 
 def construire_registre(client=None) -> ToolRegistry:
     """Les outils que hyper-ambient peut déclencher à la voix.
 
-    Vide sans jeton, et c'est voulu : un outil déclaré mais incapable de
-    répondre ferait payer une boucle d'outil complète pour finir sur « Je n'ai
-    pas encore d'accès à Codex ». Registre vide, le tour reste exactement celui
-    d'avant.
+    Le calculateur est toujours disponible : il est local et ne dépend ni d'un
+    jeton ni d'un client HTTP. Les autres outils restent conditionnels à leur
+    configuration, afin de ne pas exposer au modèle un pont inutilisable.
     """
     registre = ToolRegistry()
-    jeton = os.getenv("CODEX_BRIDGE_TOKEN", "")
+    register_calculator(registre)
+    jeton = os.getenv("CODEX_BRIDGE_TOKEN", "").strip()
     if jeton and client is not None:
         register_ask_codex(
             registre, token=jeton, client=client, timeout_s=DELAI_OUTIL_S
@@ -117,25 +265,32 @@ def construire_registre(client=None) -> ToolRegistry:
     # non a l'import, pour qu'ajouter un agent ne demande ni reconstruction
     # d'image ni recreation de conteneur — `docker start` reste la seule
     # commande de reprise.
-    url_muse = os.getenv("MUSE_BRIDGE_URL", "")
+    url_muse = os.getenv("MUSE_BRIDGE_URL", "").strip()
     if url_muse and client is not None:
         register_ask_muse(registre, url=url_muse, client=client)
     # Claude : analyse et revue, sur le pont CLI. `ask_hermes` existe dans le
     # meme module et n'est **pas** enregistre : le chemin vers Hermes est ecrit,
     # il n'est pas emprunte aujourd'hui. Un outil declare au modele finit
     # toujours par etre appele.
-    jeton_cli = os.getenv("CLI_BRIDGE_TOKEN", "")
+    jeton_cli = os.getenv("CLI_BRIDGE_TOKEN", "").strip()
     if jeton_cli and client is not None:
         register_ask_claude(
             registre, token=jeton_cli, client=client, timeout_s=DELAI_OUTIL_CLAUDE_S
         )
     # Web : l'instance SearXNG locale ne demande aucune cle. Si elle devient
-    # injoignable, le handler se replie sur Tavily uniquement lorsqu'une cle
-    # est configuree. Au moins un des deux backends doit exister pour declarer
-    # l'outil au modele.
+    # injoignable ou renvoie zero resultat (CAPTCHA), le handler essaie ddgs,
+    # Tavily, Brave, Exa, Jina et Serper dans cet ordre. Au moins un backend
+    # configure doit exister pour declarer l'outil au modele.
     url_searxng = os.getenv("SEARXNG_URL", "").strip()
     cle_tavily = os.getenv("TAVILY_API_KEY", "").strip()
-    if client is not None and (url_searxng or cle_tavily):
+    cles_web = (
+        cle_tavily,
+        os.getenv("BRAVE_API_KEY", "").strip(),
+        os.getenv("EXA_API_KEY", "").strip(),
+        os.getenv("JINA_API_KEY", "").strip(),
+        os.getenv("SERPER_API_KEY", "").strip(),
+    )
+    if client is not None and (url_searxng or any(cles_web)):
         register_web_search(
             registre,
             searxng_url=url_searxng or None,
@@ -147,14 +302,20 @@ def construire_registre(client=None) -> ToolRegistry:
 
 def outils_attendus_depuis_env() -> set[str]:
     """Noms qui doivent etre exposes pour la configuration courante."""
-    attendus: set[str] = set()
+    attendus: set[str] = {"calculer"}
     if os.getenv("CODEX_BRIDGE_TOKEN", "").strip():
         attendus.add("ask_codex")
     if os.getenv("CLI_BRIDGE_TOKEN", "").strip():
         attendus.add("ask_claude")
     if os.getenv("MUSE_BRIDGE_URL", "").strip():
         attendus.add("ask_muse")
-    if os.getenv("SEARXNG_URL", "").strip() or os.getenv("TAVILY_API_KEY", "").strip():
+    if any(
+        os.getenv(key, "").strip()
+        for key in (
+            "SEARXNG_URL", "TAVILY_API_KEY", "BRAVE_API_KEY", "EXA_API_KEY",
+            "JINA_API_KEY", "SERPER_API_KEY",
+        )
+    ):
         attendus.add("web_search")
     return attendus
 
@@ -212,6 +373,9 @@ def construire_ears():
     kwargs = {"model_size": model_size, "language": language, "device": device}
     if compute_type:
         kwargs["compute_type"] = compute_type
+    hotwords = os.getenv("EARS_HOTWORDS", "").strip()
+    if hotwords and backend in {"faster-whisper", "faster_whisper", "whisper"}:
+        kwargs["hotwords"] = hotwords
     return backend, classe(**kwargs)
 
 
@@ -353,6 +517,21 @@ class HostPipeline:
     async def load(self) -> None:
         """Charge EARS, BRAIN et MOUTH une seule fois, avant d'accepter un client."""
         from src.brain.factory import build_brain_with_fallback
+        injectees, cles_carte = _appliquer_env_boot()
+        if injectees:
+            print(
+                "ENV   : "
+                + ", ".join(sorted(injectees))
+                + " depuis .env.local",
+                flush=True,
+            )
+        if cles_carte:
+            print(
+                "CARTE : "
+                + ", ".join(sorted(cles_carte))
+                + " depuis carte_figee.env",
+                flush=True,
+            )
         voix = os.getenv("MOUTH_VOICE", VOIX_PIPER)
 
         gain_lineaire = 10.0 ** (self.output_gain_db / 20.0)
@@ -363,9 +542,11 @@ class HostPipeline:
         )
 
         backend_ears, self.asr = construire_ears()
+        hotwords = getattr(self.asr, "hotwords", None)
+        extra_hw = f" hotwords={hotwords}" if hotwords else ""
         print(
             f"EARS  : chargement {backend_ears} / {self.asr.model_size} "
-            f"sur {self.asr.device}…",
+            f"sur {self.asr.device}{extra_hw}…",
             flush=True,
         )
         if not await self.asr.load_model():
@@ -438,6 +619,20 @@ class HostPipeline:
                 flush=True,
             )
             self.tts = SupertonicTTS(style=style, speed=vitesse, profile=profil)
+        elif backend == "magpie":
+            from src.mouth.magpie_tts import MagpieTTS
+
+            # Voix retenue à la dégustation : Magpie Sofia, CPU, 0 VRAM.
+            # Le modèle reste chargé (nemo-speech serve), pas un binaire
+            # relancé à chaque phrase. llama-server (:8080) n'est pas touché.
+            nom_voix = os.getenv("MOUTH_VOICE_NAME", "Sofia")
+            langue = os.getenv("MOUTH_LANGUAGE", "fr")
+            device = os.getenv("MOUTH_DEVICE", "cpu")
+            print(
+                f"MOUTH : chargement magpie {nom_voix}…",
+                flush=True,
+            )
+            self.tts = MagpieTTS(voice=nom_voix, language=langue, device=device)
         else:
             from src.mouth.piper_tts import PiperTTS
 
@@ -612,11 +807,20 @@ class HostPipeline:
         presence = Presence(websocket)
         try:
             if not frames:
+                print(
+                    f"C10 t={time.monotonic():.3f} AUDIO_RECV n_trames=0 duree_s=0",
+                    flush=True,
+                )
                 await self._envoyer(websocket, [])
                 return
 
             audio = np.concatenate([trame.samples for trame in frames])
             duree_audio_s = float(audio.size) / SAMPLE_RATE
+            print(
+                f"C10 t={time.monotonic():.3f} AUDIO_RECV "
+                f"n_trames={len(frames)} duree_s={duree_audio_s:.3f}",
+                flush=True,
+            )
 
             # Silence mesuré sur le signal, jamais déduit du transcript :
             # Whisper hallucine sur du vide (« Sous-titrage ST' 501 » observé
@@ -685,6 +889,11 @@ class HostPipeline:
             result = await self.asr.transcribe(audio)
             ears_ms = (time.monotonic() - t_ears) * 1000.0
             prompt = (result.get("text") or "").strip()
+            print(
+                f"C10 t={time.monotonic():.3f} TRANSCRIPT {prompt!r} "
+                f"ears_ms={ears_ms:.0f}",
+                flush=True,
+            )
             print(
                 f"EARS  : \"{prompt}\" — {result.get('latency_ms', 0):.0f} ms",
                 flush=True,
@@ -932,6 +1141,21 @@ class HostPipeline:
 
 
 def main() -> None:
+    injectees, cles_carte = _appliquer_env_boot()
+    if injectees:
+        print(
+            "ENV   : "
+            + ", ".join(sorted(injectees))
+            + " depuis .env.local",
+            flush=True,
+        )
+    if cles_carte:
+        print(
+            "CARTE : "
+            + ", ".join(sorted(cles_carte))
+            + " depuis carte_figee.env",
+            flush=True,
+        )
     secret = lire_secret()
     pipeline = HostPipeline()
     app = create_transport_app(

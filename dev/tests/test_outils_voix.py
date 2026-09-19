@@ -97,7 +97,7 @@ def test_registre_vide_sans_jeton_codex(monkeypatch):
     monkeypatch.delenv("SEARXNG_URL", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     registre = serve_hostagent.construire_registre(client=object())
-    assert len(registre) == 0
+    assert [s["function"]["name"] for s in registre.schemas()] == ["calculer"]
 
 
 def test_registre_expose_web_search_quand_searxng_est_configure(monkeypatch):
@@ -109,7 +109,10 @@ def test_registre_expose_web_search_quand_searxng_est_configure(monkeypatch):
 
     registre = serve_hostagent.construire_registre(client=object())
 
-    assert [s["function"]["name"] for s in registre.schemas()] == ["web_search"]
+    assert [s["function"]["name"] for s in registre.schemas()] == [
+        "calculer",
+        "web_search",
+    ]
     assert registre.danger_of("web_search") == "read"
 
 
@@ -133,6 +136,7 @@ def test_assert_registre_reflete_exactement_la_configuration(monkeypatch):
         "ask_codex",
         "ask_muse",
         "web_search",
+        "calculer",
     }
 
 
@@ -271,6 +275,7 @@ def test_registre_expose_ask_muse_quand_le_pont_est_configure(monkeypatch):
     assert sorted(o["function"]["name"] for o in registre.schemas()) == [
         "ask_codex",
         "ask_muse",
+        "calculer",
     ]
 
 
@@ -538,7 +543,7 @@ async def test_les_outils_sont_declares_au_modele_quand_le_registre_est_garni(mo
     assert pipeline.brain.appels, "le modele n'a pas ete appele"
     outils = pipeline.brain.appels[0].get("tools")
     assert outils, "aucun outil declare au modele : le registre n'est pas branche"
-    assert [o["function"]["name"] for o in outils] == ["ask_codex"]
+    assert [o["function"]["name"] for o in outils] == ["calculer", "ask_codex"]
 
 
 class _ASRBonjour:

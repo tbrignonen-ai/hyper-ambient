@@ -68,6 +68,10 @@ dev/out/
 dev/scripts/_probe_*.py
 dev/scripts/_inspect_*.py
 dev/scripts/_hf_tts_*.py
+dev/scripts/_tmp_*.py
 nights/*-OUT.json
 nights/*-OUT.txt
+nights/**/.carte-secrete*.json
+nights/**/.carte-reel*.json
+nights/degustation-19/oreille/enregistrements/
 Capture d'écran*.png

@@ -486,6 +486,7 @@ def _poignee_de_main(ws, secret: str) -> None:
     if reponse.get("type") != "ready":
         print(f"Poignée de main refusée : {reponse}")
         raise SystemExit(1)
+    print(f"C10 t={time.monotonic():.3f} WS_OPEN", flush=True)
     print("Canal prêt.", flush=True)
 
 
@@ -497,9 +498,16 @@ def _tour(ws, capture, sortie) -> None:
     t_fin_parole = time.perf_counter()
 
     if not trames:
+        print(f"C10 t={time.monotonic():.3f} AUDIO_SEND n_trames=0 n_samples=0", flush=True)
         print("Aucune trame capturée (parole trop courte).")
         return
 
+    n_samples = sum(int(trame.samples.size) for trame in trames)
+    print(
+        f"C10 t={time.monotonic():.3f} AUDIO_SEND "
+        f"n_trames={len(trames)} n_samples={n_samples}",
+        flush=True,
+    )
     ws.send(
         json.dumps(
             {

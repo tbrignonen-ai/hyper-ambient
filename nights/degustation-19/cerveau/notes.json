@@ -1,0 +1,221 @@
+{
+ "debut": "2026-09-19T16:32:41",
+ "cerveaux": {
+  "W": {
+   "notes": [
+    {
+     "theme": "Conversation / personnalité",
+     "debut": "2026-09-19T16:33:26",
+     "fin": "2026-09-19T16:38:18",
+     "note": "4",
+     "commentaire": "elle demande son analyse a claude"
+    },
+    {
+     "theme": "Culture générale",
+     "debut": "2026-09-19T16:38:18",
+     "fin": "2026-09-19T16:39:13",
+     "note": "5",
+     "commentaire": "rien  a dire, mais parles trop apres la reponse"
+    },
+    {
+     "theme": "Consigne de forme",
+     "debut": "2026-09-19T16:39:13",
+     "fin": "2026-09-19T16:41:12",
+     "note": "2",
+     "commentaire": "n'a pas compris le mot \"menage\" et sa reponse n'a pas arretable je note, il faut un moyen, en push tout talk de lui faire arreter, la j'ai fiat parler : et j'ai dis stop (je dirais un petit bouton stop )"
+    },
+    {
+     "theme": "Info à jour",
+     "debut": "2026-09-19T16:41:12",
+     "fin": "2026-09-19T16:42:19",
+     "note": "3",
+     "commentaire": "je pense  a bien fa&it la recherche web et l'appel au modele distant, mais n'ap as trouvé la reponse (ou vulu la trouver)"
+    },
+    {
+     "theme": "Suite de conversation",
+     "debut": "2026-09-19T16:42:19",
+     "fin": "2026-09-19T16:43:44",
+     "note": "4*",
+     "commentaire": "connait bien le contexte, mais sa reponse est un peu trop longue"
+    },
+    {
+     "theme": "Raisonnement concret",
+     "debut": "2026-09-19T16:43:44",
+     "fin": "2026-09-19T16:44:23",
+     "note": "1",
+     "commentaire": "la fentere s'est carement fermee"
+    },
+    {
+     "theme": "Question d'onboarding",
+     "debut": "2026-09-19T16:44:23",
+     "fin": "2026-09-19T16:44:36",
+     "note": "1",
+     "commentaire": "l'appli est down"
+    }
+   ],
+   "general": "3"
+  },
+  "X": {
+   "notes": [
+    {
+     "theme": "Conversation / personnalité",
+     "debut": "2026-09-19T16:45:45",
+     "fin": "2026-09-19T16:46:35",
+     "note": "5",
+     "commentaire": ""
+    },
+    {
+     "theme": "Culture générale",
+     "debut": "2026-09-19T16:46:35",
+     "fin": "2026-09-19T16:47:37",
+     "note": "4",
+     "commentaire": "bonne repoonse avec double check rapide, en recvnach ela voix a eu du mal a dire le chiffres (la voix est pas pargfaite mais c n'est pas lié au test actuel, comme certains autres de mes commentaires d'aillerus...)"
+    },
+    {
+     "theme": "Consigne de forme",
+     "debut": "2026-09-19T16:47:37",
+     "fin": "2026-09-19T16:48:53",
+     "note": "3",
+     "commentaire": "ca va mais elle me ressor tanopleon, mais c acceptable"
+    },
+    {
+     "theme": "Info à jour",
+     "debut": "2026-09-19T16:48:53",
+     "fin": "2026-09-19T16:49:38",
+     "note": "3",
+     "commentaire": "recherche web n'a pas fonctionné"
+    },
+    {
+     "theme": "Suite de conversation",
+     "debut": "2026-09-19T16:49:38",
+     "fin": "2026-09-19T16:49:56",
+     "note": "5",
+     "commentaire": ""
+    },
+    {
+     "theme": "Raisonnement concret",
+     "debut": "2026-09-19T16:49:56",
+     "fin": "2026-09-19T16:50:37",
+     "note": "4",
+     "commentaire": "modele teste ok,; le modele voix arrive pas a prononcer les nombres"
+    },
+    {
+     "theme": "Question d'onboarding",
+     "debut": "2026-09-19T16:50:37",
+     "fin": "2026-09-19T16:51:19",
+     "note": "4",
+     "commentaire": "je m'appelle ambiance, pas Hyper ambiant comme elle devrait"
+    }
+   ],
+   "general": "4"
+  },
+  "Y": {
+   "notes": [
+    {
+     "theme": "Conversation / personnalité",
+     "debut": "2026-09-19T16:53:06",
+     "fin": "2026-09-19T16:53:35",
+     "note": "5",
+     "commentaire": "toujours la voix qui prononce mal"
+    },
+    {
+     "theme": "Culture générale",
+     "debut": "2026-09-19T16:53:35",
+     "fin": "2026-09-19T16:54:25",
+     "note": "5",
+     "commentaire": ""
+    },
+    {
+     "theme": "Consigne de forme",
+     "debut": "2026-09-19T16:54:25",
+     "fin": "2026-09-19T16:55:13",
+     "note": "5",
+     "commentaire": ""
+    },
+    {
+     "theme": "Info à jour",
+     "debut": "2026-09-19T16:55:13",
+     "fin": "2026-09-19T16:55:51",
+     "note": "5",
+     "commentaire": ""
+    },
+    {
+     "theme": "Suite de conversation",
+     "debut": "2026-09-19T16:55:51",
+     "fin": "2026-09-19T16:56:31",
+     "note": "5",
+     "commentaire": ""
+    },
+    {
+     "theme": "Raisonnement concret",
+     "debut": "2026-09-19T16:56:31",
+     "fin": "2026-09-19T16:57:10",
+     "note": "5",
+     "commentaire": "la voix pourrie mais le modele repond, au fait , les interruptions fonctionnent bien en appyant sur paler en tous cas"
+    },
+    {
+     "theme": "Question d'onboarding",
+     "debut": "2026-09-19T16:57:10",
+     "fin": "2026-09-19T16:57:53",
+     "note": "5",
+     "commentaire": ""
+    }
+   ],
+   "general": "4"
+  },
+  "Z": {
+   "notes": [
+    {
+     "theme": "Conversation / personnalité",
+     "debut": "2026-09-19T16:58:29",
+     "fin": "2026-09-19T17:06:39",
+     "note": "4",
+     "commentaire": "j'ai du reposer la quesiton la preimere fois"
+    },
+    {
+     "theme": "Culture générale",
+     "debut": "2026-09-19T17:06:39",
+     "fin": "2026-09-19T17:07:06",
+     "note": "4",
+     "commentaire": ""
+    },
+    {
+     "theme": "Consigne de forme",
+     "debut": "2026-09-19T17:07:06",
+     "fin": "2026-09-19T17:08:39",
+     "note": "2",
+     "commentaire": "n'a rien comlpris"
+    },
+    {
+     "theme": "Info à jour",
+     "debut": "2026-09-19T17:08:39",
+     "fin": "2026-09-19T17:09:35",
+     "note": "0",
+     "commentaire": "ce modele es tout wtf"
+    },
+    {
+     "theme": "Suite de conversation",
+     "debut": "2026-09-19T17:09:35",
+     "fin": "2026-09-19T17:09:39",
+     "note": "0",
+     "commentaire": ""
+    },
+    {
+     "theme": "Raisonnement concret",
+     "debut": "2026-09-19T17:09:39",
+     "fin": "2026-09-19T17:09:41",
+     "note": "",
+     "commentaire": ""
+    },
+    {
+     "theme": "Question d'onboarding",
+     "debut": "2026-09-19T17:09:41",
+     "fin": "2026-09-19T17:09:42",
+     "note": "",
+     "commentaire": ""
+    }
+   ],
+   "general": "0"
+  }
+ }
+}

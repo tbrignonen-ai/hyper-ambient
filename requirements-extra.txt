@@ -6,6 +6,8 @@ fastapi>=0.115
 uvicorn[standard]>=0.32
 sse-starlette>=2.1
 httpx-sse>=0.4
+# Repli DuckDuckGo local a l'outil web (import paresseux dans le runtime).
+ddgs>=9.0
 
 # --- EARS: ASR ---
 faster-whisper>=1.1        # CTranslate2 backend, int8_float16 on GPU

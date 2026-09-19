@@ -105,10 +105,22 @@ class PushToTalkCapture:
         self._trames: list[AudioFrame] = []
         self._leftover: list = [np.zeros(0, dtype=np.float32)]
         self._actif = False
+        self._t_start: float | None = None
+        self._t_premier_chunk: float | None = None
 
     def _on_audio(self, indata, frames, time_info, status) -> None:
         if not self._actif:
             return
+        if self._t_premier_chunk is None:
+            self._t_premier_chunk = time.monotonic()
+            attente_ms = 0.0
+            if self._t_start is not None:
+                attente_ms = (self._t_premier_chunk - self._t_start) * 1000.0
+            print(
+                f"C10 t={self._t_premier_chunk:.3f} MIC_CHUNK "
+                f"n={getattr(indata, 'size', frames)} attente_ms={attente_ms:.0f}",
+                flush=True,
+            )
         self._trames.extend(
             frames_from_samples(indata, stamper=_next_stamp, leftover=self._leftover)
         )
@@ -117,7 +129,10 @@ class PushToTalkCapture:
         """Ouvre le flux et commence à retenir les échantillons."""
         self._trames = []
         self._leftover = [np.zeros(0, dtype=np.float32)]
+        self._t_premier_chunk = None
         self._actif = True
+        self._t_start = time.monotonic()
+        print(f"C10 t={self._t_start:.3f} MIC_START", flush=True)
         self._stream = self._stream_factory(self._on_audio)
         self._stream.start()
 

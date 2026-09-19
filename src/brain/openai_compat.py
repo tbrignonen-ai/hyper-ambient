@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # for it. Stripping markup downstream is the safety net, not the plan.
 from src.mouth.normalize import VOICE_SYSTEM_PROMPT as DEFAULT_SYSTEM  # noqa: E402
 from src.brain.tools import MAX_TOOL_ARGUMENTS_CHARS, ToolCall  # noqa: E402
+from src.i18n import system_prompt as LOCAL_SYSTEM_PROMPT_FN  # noqa: E402
 
 
 class OpenAICompatBrain:
@@ -386,10 +387,40 @@ class LlamaCppBrain(OpenAICompatBrain):
         kw.setdefault("api_key", "")  # llama-server needs no key by default
         super().__init__(model=model, **kw)
 
-    def _payload(self, *args, **kwargs) -> Dict[str, Any]:
+    def _payload(
+        self,
+        prompt: str,
+        system: Optional[str],
+        temperature: float,
+        stream: bool,
+        history: Optional[List[Dict[str, str]]],
+        *,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Any] = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         # Le reflexe local (MiniCPM5-2B) est un modele a raisonnement : laisse
         # faire, il brule son budget en `reasoning_content` et rend un contenu
         # vide, ou recopie l'exemple du prompt. Mesure le 15 sept.
-        payload = super()._payload(*args, **kwargs)
+        if not system:
+            system = LOCAL_SYSTEM_PROMPT_FN()
+            if messages is not None:
+                # `run_tool_loop` fournit déjà la liste complète. Copie-la pour
+                # ne pas modifier l'historique conservé par l'appelant.
+                messages = [dict(message) for message in messages]
+                if messages and messages[0].get("role") == "system":
+                    messages[0]["content"] = system
+                else:
+                    messages.insert(0, {"role": "system", "content": system})
+        payload = super()._payload(
+            prompt,
+            system,
+            temperature,
+            stream,
+            history,
+            tools=tools,
+            tool_choice=tool_choice,
+            messages=messages,
+        )
         payload["chat_template_kwargs"] = {"enable_thinking": False}
         return payload
