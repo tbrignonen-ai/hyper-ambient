@@ -160,11 +160,6 @@ class DuckDuckGoSearch:
         )
         return _result_is_usable(text), text
 
-    async def __call__(self, query: str) -> str:
-        _available, text = await self.search(query)
-        return text
-
-
 async def _in_thread(func: Any, *args: Any, **kwargs: Any) -> Any:
     """Compatibilite Python 3.8+ sans bloquer le tour vocal sur ddgs synchrone."""
     import asyncio
