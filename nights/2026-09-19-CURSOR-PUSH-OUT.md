@@ -1,6 +1,6 @@
 ---
 date: 2026-09-19
-heure: ~20:15 Europe/Paris
+heure: ~20:16 Europe/Paris
 type: out
 lane: CURSOR-PUSH
 cible: OC + Claude (WRAP-SOIR)
@@ -18,13 +18,15 @@ Cette session n'a **pas** codé de lane : reçu l'ordre d'arrêt, inventaire, co
 
 ## Git poussé
 
-```
-origin/nuit/2026-08-27  1c34edc
-0570d46  Soir 19 sept : carte figee Granite+Whisper large-v3+Magpie Sofia, C1-C4 C8-C12, notes nights/
-9baa116  Soir 19 sept : OUT P0-2/C4, branchement JeV, README EN 0.1
-f0ac939  docs(nights): OUT C8 EN + PUSH 19 sept
-1c34edc  docs(nights): C4 OUT complete
-```
+Pointe origin : `8776254` (`nuit/2026-08-27`).
+
+| Commit | Message |
+|---|---|
+| `0570d46` | Soir 19 sept : carte figee Granite+Whisper large-v3+Magpie Sofia, C1-C4 C8-C12, notes nights/ |
+| `9baa116` | Soir 19 sept : OUT P0-2/C4, branchement JeV, README EN 0.1 |
+| `f0ac939` | docs(nights): OUT C8 EN + PUSH 19 sept |
+| `1c34edc` | docs(nights): C4 OUT complete |
+| `8776254` | docs(nights): OUT stop 20:50, C8 EN, runbook push OC |
 
 URLs : `[[2026-09-19-PUSH]]`.
 
@@ -44,18 +46,17 @@ gitignore : `.env` / `.env.local` / `_tmp_*.py` / `.carte-secrete*` / `.carte-re
 | **C2 live pont** | HTTP `:1` prouvée ; pont `:8765` non tué ; voix alerte non |
 | **C4 live** | SearXNG 0 résultat ; repli code présent |
 | C13 `pythonw` / 1er tour | encore ouvert |
+| Relance host-agent carte persistante | `carte_figee.env` dans git ; process live encore `/tmp` |
 
 ## Ne pas casser
 
 `mother-core-dev` · llama `:8080` Granite · host-agent `:8001` via `/tmp/relance_hostagent.sh` · Magpie `:8092` CUDA. Pas de `docker compose up` / recreate.
-
-P0-2 : `dev/scripts/carte_figee.env` + `relance_hostagent.sh` sont dans le commit ; le process live tourne encore sur `/tmp/relance_hostagent.sh` jusqu'à relance (pas faite ici).
 
 ## Done cette session
 
 | Attendu | Statut |
 |---|---|
 | Stop | oui |
-| OUT `nights/` | ce fichier + C4 / C8 / P0-2 |
-| Push origin | **oui** `nuit/2026-08-27` → `1c34edc` |
+| OUT `nights/` | ce fichier + C4 / C8 / P0-2 / WIRE |
+| Push origin | **oui** `nuit/2026-08-27` → `8776254` |
 | Secrets dans l'arbre | aucun |
