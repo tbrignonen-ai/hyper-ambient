@@ -128,6 +128,10 @@ class DuckDuckGoSearch:
         self.max_results = max(1, min(int(max_results), 20))
         self.searcher = searcher
 
+    async def __call__(self, query: str) -> str:
+        _available, text = await self.search(query)
+        return text
+
     async def search(self, query: str) -> tuple[bool, str]:
         searcher = self.searcher
         if searcher is None:
@@ -143,8 +147,22 @@ class DuckDuckGoSearch:
         except Exception as exc:
             logger.warning(f"web_search: DuckDuckGo en echec ({exc})")
             return False, _FAILED
-        text = _speakable({"results": list(results or [])}, self.max_results)
+        raw_results = list(results or [])
+        text = _speakable(
+            {"results": [
+                {
+                    "title": item.get("title", ""),
+                    "content": item.get("body") or item.get("content", ""),
+                }
+                for item in raw_results if isinstance(item, dict)
+            ]},
+            self.max_results,
+        )
         return _result_is_usable(text), text
+
+    async def __call__(self, query: str) -> str:
+        _available, text = await self.search(query)
+        return text
 
 
 async def _in_thread(func: Any, *args: Any, **kwargs: Any) -> Any:

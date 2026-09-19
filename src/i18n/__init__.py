@@ -13,6 +13,7 @@ _FR: dict[str, str] = {
     "tools.ask_muse": "Je demande son avis à Muse, ça prend une trentaine de secondes.",
     "tools.ask_claude": "Je demande son analyse à Claude.",
     "tools.web_search": "Je cherche ça sur le web.",
+    "tools.calculer": "Je calcule ça.",
     "tools.default": "Je consulte un outil.",
     "ui.welcome_title": "Bienvenue",
     "ui.welcome_body": (
@@ -68,6 +69,7 @@ _EN: dict[str, str] = {
     "tools.ask_muse": "I'll ask Muse — that takes about thirty seconds.",
     "tools.ask_claude": "I'll ask Claude for her analysis.",
     "tools.web_search": "I'll look that up on the web.",
+    "tools.calculer": "I'll calculate that.",
     "tools.default": "I'll check a tool.",
     "ui.welcome_title": "Welcome",
     "ui.welcome_body": (

@@ -11,14 +11,13 @@ refusent ce catalogue ; une voix explicitement configuree reste alors utilisable
 """
 from __future__ import annotations
 
-import asyncio
 import io
 import logging
 import os
 import re
 import time
 import wave
-from typing import Any, AsyncIterator, Dict, Iterable, Optional
+from typing import Any, AsyncIterator, Dict, Optional
 
 import numpy as np
 
@@ -206,9 +205,7 @@ class RemoteTTS:
         return True
 
     async def _fallback_or_empty(self, text: str, exc: Exception) -> Dict[str, Any]:
-        logger.warning(
-            "MOUTH distant: synthese echouee (%s)", type(exc).__name__
-        )
+        logger.warning("MOUTH distant: synthese echouee (%s)", type(exc).__name__)
         if self.fallback is not None:
             result = await self.fallback.synthesize(text)
             result.update({"remote": False, "fallback": True})
@@ -323,4 +320,3 @@ class RemoteTTS:
             await self.client.aclose()
             self.client = None
         self._ready = False
-

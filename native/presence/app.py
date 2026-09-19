@@ -755,7 +755,7 @@ class Application:
         tenu = {"on": False}
         bouton = tk.Button(
             parent,
-            text="Essayer : maintenez ici (souris ou Entrée)",
+            text=ui_presence()["try_hold"],
             font=("Segoe UI", 11, "bold"),
             bg=visuel.PALETTES["repos"]["anneau"],
             fg=ENCRE,
@@ -786,7 +786,7 @@ class Application:
             tenu["on"] = False
             bouton.configure(
                 relief=tk.RAISED,
-                text="Essayer : maintenez ici (souris ou Entrée)",
+                text=ui_presence()["try_hold"],
                 bg=visuel.PALETTES["repos"]["anneau"],
                 fg=ENCRE,
             )
@@ -800,12 +800,12 @@ class Application:
         bouton.bind("<KeyRelease-space>", relacher)
 
     def _afficher_masquage(self) -> None:
-        cadre, pied = self._cadre_onboarding(3, "Masquer la configuration", TEXTE_MASQUAGE)
+        u = ui_presence()
+        cadre, pied = self._cadre_onboarding(3, u["hide_title"], u["hide_body"])
         tk.Label(
             cadre,
-            text=(
-                f"Raccourci retenu : {RACCOURCIS[self.raccourci_en_cours]}. "
-                "Pendant un appel distant, l'éclair s'allume et le statut le dit en texte."
+            text=u["shortcut_kept"].format(
+                raccourci=raccourcis_lisibles()[self.raccourci_en_cours]
             ),
             bg=FOND_VITRE,
             fg=ENCRE,
@@ -816,7 +816,7 @@ class Application:
         ).pack(fill=tk.X)
         tk.Label(
             cadre,
-            text=RAPPEL_A11Y,
+            text=u["a11y"],
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
             font=("Segoe UI", 10),
@@ -831,10 +831,10 @@ class Application:
 
         self._bouton_principal(
             pied,
-            "Commencer",
+            u["start"],
             lambda: self._achever_onboarding(self.raccourci_en_cours),
         )
-        self._bouton_secondaire(pied, "Commencer et masquer", commencer_et_masquer)
+        self._bouton_secondaire(pied, u["start_and_hide"], commencer_et_masquer)
 
     def _afficher_application(self) -> None:
         self._vider()
@@ -901,12 +901,13 @@ class Application:
         )
         self.ligne_eclair.pack(pady=(4, 0))
 
-        raccourci = RACCOURCIS[self.configuration.raccourci_ptt]
+        raccourci = raccourcis_lisibles()[self.configuration.raccourci_ptt]
+        u = ui_presence()
         # Les événements explicites conservent la sémantique maintenir/relâcher,
         # y compris lorsque le bouton est atteint avec Tab.
         self.bouton = tk.Button(
             cadre,
-            text="Parler",
+            text=u["speak"],
             font=("Segoe UI", 18, "bold"),
             bg=visuel.PALETTES["repos"]["anneau"],
             fg=ENCRE,
@@ -929,7 +930,7 @@ class Application:
 
         self.bouton_masquer = tk.Button(
             cadre,
-            text="Masquer la configuration",
+            text=u["hide_config"],
             command=self.masquer_configuration,
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
@@ -953,7 +954,7 @@ class Application:
 
         tk.Label(
             panneau,
-            text=f"Raccourci : {raccourci}  ·  {TEXTE_MASQUAGE}",
+            text=f"{raccourci}  ·  {u['hide_body']}",
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
             font=("Segoe UI", 9),
@@ -964,7 +965,7 @@ class Application:
 
         tk.Label(
             panneau,
-            text="Compris",
+            text=u["understood"],
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
             font=("Segoe UI", 9),
@@ -974,7 +975,7 @@ class Application:
 
         tk.Label(
             panneau,
-            text="Réponse",
+            text=u["reply"],
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
             font=("Segoe UI", 9),
@@ -1075,7 +1076,7 @@ class Application:
             return
         if not self.session.canal_pret.is_set():
             _trace_c10("PTT_IGNORE")
-            self._afficher_statut("Canal pas encore prêt.")
+            self._afficher_statut(ui_presence()["channel_not_ready"])
             return
         self.enfonce = True
         self.session.tenu.set()
@@ -1085,7 +1086,7 @@ class Application:
         self._appliquer_eclair("ecoute")
         self.bouton.configure(
             relief=tk.SUNKEN,
-            text="Parler…",
+            text=ui_presence()["speaking"],
             bg=visuel.PALETTES["ecoute"]["coeur"],
             fg="#0c141c",
         )
@@ -1099,7 +1100,7 @@ class Application:
         _trace_c10("PTT_OFF")
         self.bouton.configure(
             relief=tk.RAISED,
-            text="Parler",
+            text=ui_presence()["speak"],
             bg=visuel.PALETTES["repos"]["anneau"],
             fg=ENCRE,
         )

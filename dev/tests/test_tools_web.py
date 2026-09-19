@@ -25,6 +25,7 @@ def runs_async(fn):
 from src.brain.tools import ToolRegistry
 from src.brain.tools_web import (
     BRAVE_ENDPOINT,
+    DuckDuckGoSearch,
     EXA_ENDPOINT,
     JINA_ENDPOINT,
     SERPER_ENDPOINT,
@@ -197,6 +198,19 @@ async def test_la_chaine_passe_au_fournisseur_suivant_apres_un_vide():
     assert [provider.calls for provider in (searx, ddgs, brave, serper)] == [
         ["une question"], ["une question"], ["une question"], [],
     ]
+
+
+class _DDGSSearcher:
+    def text(self, query, max_results):
+        assert query == "question ddgs"
+        assert max_results == 2
+        return [{"title": "DDG", "body": "resultat exploitable"}]
+
+
+@runs_async
+async def test_ddgs_est_injectable_et_normalise_son_champ_body():
+    out = await DuckDuckGoSearch(max_results=2, searcher=_DDGSSearcher())("question ddgs")
+    assert out == "DDG : resultat exploitable"
 
 
 @runs_async

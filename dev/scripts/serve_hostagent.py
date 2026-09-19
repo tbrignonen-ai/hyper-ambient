@@ -125,6 +125,7 @@ _CLES_OUTILS = frozenset(
         "EXA_API_KEY",
         "JINA_API_KEY",
         "SERPER_API_KEY",
+        "TYPESAFE_API_KEY",
     }
 )
 # Carte figée 19 sept : cerveau / oreille / voix. Aucun secret. Écrase
@@ -245,6 +246,20 @@ def _appliquer_env_boot(environ: dict[str, str] | None = None) -> tuple[list[str
     outils = charger_env_local(environ=environ)
     carte = charger_carte_figee(environ=environ)
     return outils, carte
+
+
+def jev_ignore_tour(evaluation) -> bool:
+    """True seulement si JeV a tranché : la phrase n'est pas adressée à MOTHER.
+
+    ``None`` (pas de clé, timeout, erreur) = repli bouton : on n'ignore pas.
+    Un harnais nommé n'a aucun effet ici : aucun modèle n'envoie une tâche.
+    """
+    if evaluation is None:
+        return False
+    signals = getattr(evaluation, "signals", None)
+    if signals is None:
+        return False
+    return not bool(signals.addressed_to_mother)
 
 
 def construire_registre(client=None) -> ToolRegistry:
@@ -481,6 +496,7 @@ class HostPipeline:
         self.registre: ToolRegistry | None = None
         self.porte: Gate | None = None
         self._client_outils = None
+        self._jev = None
         self._websocket = None
         self._lock = asyncio.Lock()
         self.output_gain_db = float(os.getenv("MOUTH_OUTPUT_GAIN_DB", "0"))
@@ -577,6 +593,11 @@ class HostPipeline:
                 "OUTILS: aucun backend configure — tour de parole sans outil",
                 flush=True,
             )
+
+        from src.ears.jev_reflexe import JevReflexe
+
+        self._jev = JevReflexe()
+        print("JEV   : réflexe en entrée (repli silencieux sans clé)", flush=True)
 
         # MOUTH : Pocket TTS par défaut. Piper reste joignable par MOUTH_BACKEND=piper,
         # parce qu'il ne coûte aucune VRAM — c'est le repli si le GPU est saturé.
@@ -919,6 +940,27 @@ class HostPipeline:
                 else:
                     await self._envoyer(websocket, [])
                 return
+
+            jev = getattr(self, "_jev", None)
+            if jev is not None:
+                evaluation = await jev.evaluate(prompt)
+                if jev_ignore_tour(evaluation):
+                    print(
+                        "JEV   : pas adressée à MOTHER — tour ignoré",
+                        flush=True,
+                    )
+                    presence.emettre("repos")
+                    await presence.vider()
+                    await self._envoyer(websocket, [])
+                    return
+                harness = getattr(
+                    getattr(evaluation, "signals", None), "named_harness", None
+                )
+                if harness:
+                    print(
+                        "JEV   : harnais nommé (observation, aucun envoi)",
+                        flush=True,
+                    )
 
             ttft_ms = None
             amorces: list[str] = []

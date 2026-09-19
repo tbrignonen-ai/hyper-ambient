@@ -46,6 +46,7 @@ CLES_OUTILS = (
     "CODEX_BRIDGE_URL",
     "CLI_BRIDGE_URL",
     "MUSE_BRIDGE_URL",
+    "TYPESAFE_API_KEY",
 )
 
 
@@ -162,4 +163,4 @@ def test_registre_expose_le_web_avec_un_repli_avec_cle(monkeypatch):
     monkeypatch.setenv("BRAVE_API_KEY", "cle-de-test")
 
     registre = serve_hostagent.construire_registre(client=object())
-    assert serve_hostagent.verifier_registre(registre) == {"web_search"}
+    assert serve_hostagent.verifier_registre(registre) == {"web_search", "calculer"}

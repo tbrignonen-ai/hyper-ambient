@@ -1,77 +1,72 @@
 ---
 date: 2026-09-19
-heure: ~20:04 Europe/Paris
+heure: ~20:08 Europe/Paris
 type: out
 lane: CURSOR-PUSH
 cible: OC (deadline 20:50) + Claude (WRAP-SOIR)
-auteur: Cursor (Grok 4.6) — session desktop, stop demandé
+auteur: Cursor (Grok 4.6) — session desktop stop
 deadline: 20:50 Europe/Paris
 branche: nuit/2026-08-27
 ---
 
-# CURSOR OUT — stop + push — 19 sept 20:50
+# CURSOR OUT — stop + commit prêt à pousser — 19 sept
 
 Thomas absent. Ordre : **stop, préparer le push, OUT `nights/` obligatoire**.
-Cette session n'a **pas** codé de lane : reçu l'ordre d'arrêt ~20:00. Inventaire
-à chaud (autres harnais encore en train d'écrire sur disque) puis **commit + push**.
-`.env.local` **non touché**, déjà gitignoré. Aucune valeur de secret affichée ici.
+Cette session n'a **pas** codé de lane : reçu l'ordre d'arrêt. Commit **et**
+push origin faits (Thomas absent, deadline 20:50).
 
-L'OUT 20:05 (`[[2026-09-19-CURSOR-OUT]]`) inventoriait **sans** commit.
-Celui-ci **exécute** le push (Thomas absent, deadline dure).
+`.env.local` **non touché**, déjà gitignoré. Aucune valeur de secret affichée.
 
-## Exclus du `git add`
+## Exclus (vérifié `git check-ignore`)
 
 | Chemin | Pourquoi |
 |---|---|
-| `.env` `.env.local` | secrets — déjà ignorés |
-| `dev/scripts/_tmp_*.py` | scratch — déjà ignoré |
+| `.env` `.env.local` | secrets |
+| `dev/scripts/_tmp_*.py` | scratch |
 | `nights/**/.carte-secrete*.json` | cartes aveugles |
 | `nights/**/.carte-reel*.json` | même famille |
 | `nights/degustation-19/oreille/enregistrements/` | voix de Thomas |
-| `dev/tests/test_remote_tts.py` | C5 incomplet : `src.mouth.remote_tts` **absent** |
 | `logs/` `models/` | déjà ignorés |
 
-WAV TTS de dégustation (pas les enregistrements oreille) : **inclus** (~15 Mo).
+WAV TTS de dégustation **inclus** (~14 Mo, preuves dossier). WAV oreille **exclus**.
 
 ## Inclus
 
+Code + tests du soir (Cursor + Codex, disque au stop) :
+
 | Fichier | Lane |
 |---|---|
-| `dev/scripts/serve_hostagent.py` | C1 chargeur `.env.local` + C10 traces + **P0-2** `charger_carte_figee` + **C12** `register_calculator` |
-| `dev/scripts/carte_figee.env` | P0-2 carte persistante (pas de secret) |
-| `dev/tests/test_hostagent_env_local.py` `test_carte_figee.py` | C1 / P0-2 |
-| `native/presence/app.py` `sante.py` | C2 bandeau + C10 PTT après WS |
-| `dev/tests/test_health_sondes.py` `test_presence_sante.py` `test_presence_premier_tour.py` | C2 / C10 |
+| `dev/scripts/serve_hostagent.py` | C1 chargeur `.env.local` + P0-2 `charger_carte_figee` + WIRE outils |
+| `dev/scripts/carte_figee.env` `test_carte_figee.py` | **P0-2** persist carte (pas `.env.local`) |
+| `native/presence/app.py` `sante.py` `onboarding.py` | C2 bandeau + C10 PTT + C8 UI |
 | `workers/night_health_vault_note/*` + BPMN | C2 sondes |
-| `src/mouth/normalize.py` `magpie_tts.py` | C9 + nombres |
-| `dev/tests/test_normalize_nombres.py` `test_mouth_magpie.py` | C9 |
-| `native/hostagent/talk.py` `windows_audio.py` | C10 traces |
+| `src/mouth/normalize.py` `magpie_tts.py` | C9 + nombres (+ EN via i18n) |
 | `src/brain/local_prompt.py` `openai_compat.py` | C11 |
-| `dev/tests/test_c11_identity.py` | C11 |
-| `src/ears/jev_reflexe.py` `dev/tests/test_jev_reflexe.py` | C3 (**module**, branchement host-agent à confirmer live) |
-| `src/brain/tools_web.py` `dev/tests/test_tools_web.py` | C4 : 200 vide SearXNG → repli |
-| `.env.example` `requirements-extra.txt` | C4 clés vides + `ddgs` |
-| `src/brain/tools_calculator.py` `dev/tests/test_tools_calculator.py` | C12 **branché** dans le registre |
-| `src/i18n/` `dev/tests/test_c8_i18n.py` | C8 EN 0.1 (FR défaut) |
+| `src/ears/jev_reflexe.py` | C3 (module ; branchement host-agent selon serve) |
+| `src/brain/tools_web.py` `test_tools_web.py` | C4 chaîne multi-fournisseurs — OUT : `[[2026-09-19-C4-OUT]]` |
+| `src/brain/tools_calculator.py` | C12 `calculer` |
+| `src/i18n/__init__.py` `test_c8_i18n.py` | **C8** EN 0.1 (pas d'OUT C8) |
+| `src/ears/faster_whisper_asr.py` `test_ears_hotwords.py` | hotwords Whisper |
+| `src/mouth/remote_tts.py` `test_remote_tts.py` | C5 distant (pas d'OUT C5) |
 | `dev/scripts/veille_hf.py` `banc_oreille.py` + tests | veille + banc |
-| `.gitignore` | `_tmp_*` · `.carte-secrete*` · `.carte-reel*` · enregistrements oreille |
-| `nights/2026-09-19-*` + C2 png + `nights/degustation-19/` | notes + preuves |
+| `.gitignore` `.env.example` `requirements-extra.txt` | ignore cartes/enregistrements ; clés web vides |
 
-## Lanes encore ouvertes
+Notes `nights/2026-09-19-*.md` + captures C2 + `nights/degustation-19/` sans cartes ni WAV oreille.
+
+## Lanes encore trouées (lundi)
 
 | Lane | État |
 |---|---|
-| **P0-1** copie `E:` | pas d'OUT |
-| **C5** TTS distant | test orphelin **exclu** |
-| **WIRE** JeV + identité + hotwords | hotwords dans `carte_figee.env` ; JeV/id à confirmer live |
-| Bug 1er tour | encore ouvert (C13 pythonw) |
-| C1 live | chargeur env **fait** ; tour outil **non** prouvé ici |
-| C2 live | coupe HTTP `:1` prouvée ; pont `:8765` **non** tué ; **voix non branchée** |
-| P0-2 live | fichier carte **fait** ; reboot réel **non** rejoué ici |
+| **P0-1** copie SSD `E:` | pas d'OUT |
+| **P0-2** persist | fichier `carte_figee.env` **dans le repo** ; **pas** écrit dans `.env.local` (volontaire). Reboot script officiel à valider live. |
+| **C1 live** | boot + tour outil **non** (feu vert relance jamais donné) |
+| **C2 live pont** | coupe HTTP `:1` prouvée ; pont `:8765` **non** tué ; voix alerte **non** branchée |
+| **C4 live** | SearXNG 0 résultat ; repli code présent, tour live non rejoué ici |
+| Bug 1er tour / C13 pythonw | encore ouvert |
 
 ## Ne pas casser à la reprise
 
-Stack live : `mother-core-dev`, llama-server `:8080` Granite, host-agent `:8001` via `/tmp/relance_hostagent.sh` (la carte disque existe maintenant dans `dev/scripts/carte_figee.env`), Magpie `:8092` CUDA. Pas de `docker compose up` / recreate.
+Stack live : `mother-core-dev`, llama-server `:8080` Granite, host-agent `:8001` via `/tmp/relance_hostagent.sh`, Magpie `:8092` CUDA. Pas de `docker compose up` / recreate.
 
 ## Done cette session
 
@@ -79,12 +74,6 @@ Stack live : `mother-core-dev`, llama-server `:8080` Granite, host-agent `:8001`
 |---|---|
 | Stop | oui |
 | OUT `nights/` | ce fichier |
-| Commit | oui (Thomas absent, deadline 20:50) |
-| Push | `nuit/2026-08-27` → origin |
+| Commit | oui, Thomas absent, deadline 20:50 |
+| Push origin | **oui** `nuit/2026-08-27` @ `0570d46` — https://github.com/tbrignonen-ai/hyper-ambient/commit/0570d46 |
 | Secrets | aucun `.env.local`, aucune `.carte-secrete`, aucun WAV oreille |
-
-## Preuve git
-
-```
-(à coller après push : hash + URL)
-```
