@@ -21,11 +21,36 @@ erreur de configuration, et une conversion implicite la masquerait.
 from __future__ import annotations
 
 import math
+import os
+import threading
 import time
 
 import numpy as np
 
 from src.hostagent.audio import FRAME_SAMPLES, SAMPLE_RATE, AudioFrame
+
+# RMS int16 en dessous duquel un bloc n'est jamais de la parole (souffle, bits).
+PLANCHER_RMS = 150.0
+# Seuil = max(PLANCHER_RMS, bruit_ambiant * FACTEUR) après ~500 ms de calage.
+FACTEUR = 2.5
+# Pendant la lecture : seuil relevé (anti-écho) sans sourdine totale.
+FACTEUR_SEUIL_LECTURE = 2.5
+
+# Bande parole : fondamentale voisée (~85 Hz) jusqu'aux formants (~3400 Hz).
+BANDE_VOIX_BAS_HZ = 85.0
+BANDE_VOIX_HAUT_HZ = 3400.0
+# Rapport énergie_bande / énergie_totale au-delà duquel la trame est de la parole.
+RATIO_BANDE_VOIX = 0.60
+
+_CALIBRAGE_MS = 500.0
+_DEBUT_TOUR_MS = 150.0
+# Barge-in vocal : un « euh » ou un raclement ne doit pas couper la lecture.
+_DEBUT_BARGE_IN_MS = 400.0
+# Whisper hallucine sous ~1 s (segments 1,06–1,12 s → « Realise par Neo035 »).
+# Plancher porté de 400 ms à 700 ms pour ne plus envoyer ces salves.
+_MIN_SEGMENT_MS = 700.0
+_MAX_SEGMENT_MS = 15_000.0
+_TRAME_MS = 1000.0 * FRAME_SAMPLES / SAMPLE_RATE
 
 # Même principe que src.hostagent.audio._next_stamp : time.monotonic, et
 # math.nextafter si deux lectures tombent dans la même graduation.
@@ -144,6 +169,279 @@ class PushToTalkCapture:
             self._stream.close()
             self._stream = None
         return self._trames
+
+
+def _silence_ms_tour() -> float:
+    brut = os.environ.get("TURN_SILENCE_MS", "700")
+    try:
+        return max(0.0, float(brut))
+    except (TypeError, ValueError):
+        return 700.0
+
+
+def _rms_int16(echantillons: np.ndarray) -> float:
+    """RMS du bloc, ramené en unités int16 (le callback est temps réel)."""
+    arr = np.asarray(echantillons).reshape(-1)
+    if arr.size == 0:
+        return 0.0
+    if arr.dtype == np.int16:
+        carres = arr.astype(np.float64)
+    else:
+        carres = arr.astype(np.float64) * 32768.0
+    return float(np.sqrt(np.mean(np.square(carres))))
+
+
+def _trame_voix(echantillons: np.ndarray) -> bool:
+    """Vrai si l'énergie de la trame est concentrée dans la bande parole.
+
+    FFT réelle sur 20 ms (320 échantillons à 16 kHz). Rejette ventilateur
+    et grave continu (< 85 Hz), sifflements et clavier (> 3400 Hz),
+    souffle large bande (rapport sous RATIO_BANDE_VOIX).
+    """
+    arr = np.asarray(echantillons).reshape(-1)
+    if arr.size == 0:
+        return False
+    spectre = np.square(np.abs(np.fft.rfft(arr.astype(np.float64))))
+    freqs = np.fft.rfftfreq(arr.size, d=1.0 / SAMPLE_RATE)
+    energie_totale = float(np.sum(spectre))
+    if energie_totale <= 0.0:
+        return False
+    dans_bande = (freqs >= BANDE_VOIX_BAS_HZ) & (freqs <= BANDE_VOIX_HAUT_HZ)
+    energie_bande = float(np.sum(spectre[dans_bande]))
+    return (energie_bande / energie_totale) >= RATIO_BANDE_VOIX
+
+
+class CaptureContinue:
+    """Flux ouvert en permanence : tours découpés au silence, sans fermer le micro.
+
+    Le callback audio ne fait que du calcul court et un verrou bref sur le
+    tampon partagé — pas de print par bloc.
+    """
+
+    def __init__(self, stream_factory=None) -> None:
+        self._stream_factory = (
+            stream_factory if stream_factory is not None else _default_stream_factory
+        )
+        self._stream = None
+        self._lock = threading.Lock()
+        self._actif = False
+        self._suspendu = False
+        self._silence_ms = _silence_ms_tour()
+        self.barge_in = threading.Event()
+        self._reset_etat()
+
+    def _reset_etat(self) -> None:
+        self._leftover: list = [np.zeros(0, dtype=np.float32)]
+        self._prets: list[list[AudioFrame]] = []
+        self._tour: list[AudioFrame] = []
+        self._preambule: list[AudioFrame] = []
+        self._calibrage_ms = 0.0
+        self._somme_rms = 0.0
+        self._seuil = PLANCHER_RMS
+        self._calibre = False
+        self._above_ms = 0.0
+        self._below_ms = 0.0
+        self._tour_ms = 0.0
+        self._silence_ms = _silence_ms_tour()
+        self._regime_lecture = False
+        self._dernier_rms = 0.0
+        self._on_barge_in = None
+        self.barge_in.clear()
+
+    def start(self) -> None:
+        """Ouvre le flux et le laisse ouvert jusqu'à stop()."""
+        with self._lock:
+            deja = self._stream is not None
+            self._reset_etat()
+            self._actif = True
+            self._suspendu = False
+            if deja:
+                return
+        self._stream = self._stream_factory(self._on_audio)
+        self._stream.start()
+
+    def stop(self) -> list[AudioFrame]:
+        """Ferme le flux. Les segments non pris sont abandonnés."""
+        with self._lock:
+            self._actif = False
+            restes = [trame for segment in self._prets for trame in segment]
+            self._prets = []
+            self._tour = []
+        if self._stream is not None:
+            self._stream.stop()
+            self._stream.close()
+            self._stream = None
+        return restes
+
+    def suspendre(self) -> None:
+        """Cesse d'accumuler sans fermer le flux (anti-écho pendant la lecture)."""
+        with self._lock:
+            self._suspendu = True
+            self._preambule = []
+            self._tour = []
+            self._above_ms = 0.0
+            self._below_ms = 0.0
+            self._tour_ms = 0.0
+            self._leftover = [np.zeros(0, dtype=np.float32)]
+
+    def reprendre(self) -> None:
+        """Reprend l'accumulation ; l'état VAD repart propre (seuil conservé)."""
+        with self._lock:
+            self._suspendu = False
+            self._preambule = []
+            self._tour = []
+            self._above_ms = 0.0
+            self._below_ms = 0.0
+            self._tour_ms = 0.0
+            self._leftover = [np.zeros(0, dtype=np.float32)]
+
+    def regime_lecture(self, actif: bool, on_barge_in=None) -> None:
+        """Écoute exigeante pendant la TTS : pas de sourdine, seuil relevé.
+
+        ``on_barge_in`` est appelé une fois, hors verrou, quand 400 ms de
+        voix (bande 85–3400 Hz, RMS ≥ seuil × FACTEUR_SEUIL_LECTURE) sont
+        réunies. L'audio déjà capté est conservé comme début du tour
+        suivant si on quitte le régime après un barge-in.
+        """
+        with self._lock:
+            if actif:
+                self._regime_lecture = True
+                self._suspendu = False
+                self._on_barge_in = on_barge_in
+                self.barge_in.clear()
+                self._preambule = []
+                self._tour = []
+                self._above_ms = 0.0
+                self._below_ms = 0.0
+                self._tour_ms = 0.0
+                self._leftover = [np.zeros(0, dtype=np.float32)]
+                return
+            conserver = self.barge_in.is_set()
+            self._regime_lecture = False
+            self._on_barge_in = None
+            if conserver:
+                return
+            self._preambule = []
+            self._tour = []
+            self._above_ms = 0.0
+            self._below_ms = 0.0
+            self._tour_ms = 0.0
+            self._leftover = [np.zeros(0, dtype=np.float32)]
+
+    def instantane(self) -> dict:
+        """Snapshot VAD pour le pouls ML : seuil, dernier RMS, accumulation."""
+        with self._lock:
+            return {
+                "seuil": float(self._seuil),
+                "rms": float(self._dernier_rms),
+                "accumulation": bool(self._tour or self._preambule),
+                "suspendue": bool(self._suspendu),
+                "regime_lecture": bool(self._regime_lecture),
+            }
+
+    def segment_pret(self) -> bool:
+        with self._lock:
+            return bool(self._prets)
+
+    def prendre_segment(self) -> list[AudioFrame]:
+        """Rend les trames du tour écoulé et les retire, sans fermer le flux."""
+        with self._lock:
+            if not self._prets:
+                return []
+            return self._prets.pop(0)
+
+    def forcer_fin(self) -> None:
+        """Clôt le tour en cours sans attendre le silence (bouton Parler)."""
+        with self._lock:
+            self._cloturer(forcer=True)
+
+    def _on_audio(self, indata, frames, time_info, status) -> None:
+        if not self._actif:
+            return
+        arr = np.asarray(indata).reshape(-1)
+        callback_barge = None
+        with self._lock:
+            self._dernier_rms = _rms_int16(arr)
+            if not self._actif or self._suspendu:
+                return
+            trames = frames_from_samples(
+                arr, stamper=_next_stamp, leftover=self._leftover
+            )
+            for trame in trames:
+                if self._ingerer(trame):
+                    callback_barge = self._on_barge_in
+        if callback_barge is not None:
+            try:
+                callback_barge()
+            except Exception:
+                pass
+
+    def _ingerer(self, trame: AudioFrame) -> bool:
+        """Ingère une trame. True si un barge-in vocal vient d'être déclaré."""
+        rms = _rms_int16(trame.samples)
+        self._dernier_rms = rms
+        if not self._calibre:
+            self._somme_rms += rms
+            self._calibrage_ms += _TRAME_MS
+            n = max(1.0, self._calibrage_ms / _TRAME_MS)
+            if self._calibrage_ms >= _CALIBRAGE_MS:
+                bruit = self._somme_rms / n
+                self._seuil = max(PLANCHER_RMS, bruit * FACTEUR)
+                self._calibre = True
+            return False
+
+        seuil = self._seuil
+        debut_ms = _DEBUT_TOUR_MS
+        if self._regime_lecture:
+            seuil = self._seuil * FACTEUR_SEUIL_LECTURE
+            debut_ms = _DEBUT_BARGE_IN_MS
+        au_dessus = rms >= seuil and _trame_voix(trame.samples)
+        if not self._tour:
+            if au_dessus:
+                self._preambule.append(trame)
+                self._above_ms += _TRAME_MS
+                if self._above_ms >= debut_ms:
+                    self._tour = self._preambule
+                    self._tour_ms = self._above_ms
+                    self._preambule = []
+                    self._below_ms = 0.0
+                    if self._regime_lecture and not self.barge_in.is_set():
+                        self.barge_in.set()
+                        return True
+            else:
+                self._preambule = []
+                self._above_ms = 0.0
+            return False
+
+        self._tour.append(trame)
+        self._tour_ms += _TRAME_MS
+        if au_dessus:
+            self._below_ms = 0.0
+        else:
+            self._below_ms += _TRAME_MS
+            if self._below_ms >= self._silence_ms:
+                self._cloturer()
+                return False
+        if self._tour_ms >= _MAX_SEGMENT_MS:
+            self._cloturer()
+        return False
+
+    def _cloturer(self, *, forcer: bool = False) -> None:
+        trames = self._tour
+        duree = self._tour_ms
+        silence_final = self._below_ms
+        self._tour = []
+        self._preambule = []
+        self._above_ms = 0.0
+        self._below_ms = 0.0
+        self._tour_ms = 0.0
+        if not trames:
+            return
+        # Le silence qui clôt le tour ne compte pas : 500 ms de voix + 700 ms
+        # de silence ne doivent pas passer le plancher (Whisper hallucine).
+        if not forcer and (duree - silence_final) < _MIN_SEGMENT_MS:
+            return
+        self._prets.append(trames)
 
 
 def _lister_peripheriques_entree() -> None:

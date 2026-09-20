@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>fr</string>
+    <key>CFBundleExecutable</key>
+    <string>hyper-ambient</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.hyperambient.presence</string>
+    <key>CFBundleName</key>
+    <string>HyperAmbient</string>
+    <key>CFBundleDisplayName</key>
+    <string>Hyper Ambient</string>
+    <key>CFBundleIconFile</key>
+    <string>hyper-ambient.icns</string>
+    <key>CFBundleShortVersionString</key>
+    <string>3.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>3</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Hyper Ambient utilise le micro pour la capture appuyer-pour-parler et l'ecoute continue mains libres.</string>
+    <key>LSUIElement</key>
+    <false/>
+</dict>
+</plist>
