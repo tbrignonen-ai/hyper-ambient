@@ -127,3 +127,44 @@ def test_hostagent_branche_magpie():
     src = Path("dev/scripts/serve_hostagent.py").read_text(encoding="utf-8")
     assert 'elif backend == "magpie"' in src
     assert "chargement magpie" in src
+
+
+def test_stream_premier_fragment_sans_ponctuation_est_court():
+    """Une phrase d'ouverture sans virgule ne doit pas retarder le premier son.
+
+    Mesure du 2026-09-20 sur le pont audio : Granite a ouvert par une phrase
+    de 190 caracteres sans une seule virgule, aucun point de coupe n'est
+    arrive avant le point final, et Magpie a synthetise le bloc entier avant
+    d'emettre — 3422 ms de MOUTH sur un budget NFR-01 de 1200 ms.
+
+    Piper avait deja le correctif (`_word_cut` + plancher d'ouverture
+    distinct) ; Magpie ne l'avait jamais recu.
+    """
+    tts = _voix()
+    phrase = (
+        "Le facteur temps reel doit rester inferieur a 1 pour garantir que "
+        "les calculs ne depassent pas le temps disponible et eviter les "
+        "retards ou les depassements de limite dans un systeme dynamique."
+    )
+
+    async def run():
+        return [o async for o in tts.synthesize_stream(_tokens([phrase]))]
+
+    outs = asyncio.run(run())
+    textes = [a[0] for a in tts.engine.appels]
+    # Le premier fragment borne le premier son : il doit etre court.
+    assert len(textes[0]) <= 34, f"premier fragment de {len(textes[0])} car. : {textes[0]!r}"
+
+    # Rien ne doit etre perdu. Le temoin passe la meme phrase en un seul bloc
+    # (flush), ce qui traverse les memes conversions — les nombres en lettres
+    # notamment — sans dependre de leur detail d'implementation.
+    temoin = _voix()
+
+    async def run_temoin():
+        return [o async for o in temoin.synthesize_stream(
+            _tokens([{"text": phrase, "flush": True}]))]
+
+    asyncio.run(run_temoin())
+    attendu = temoin.engine.appels[0][0]
+    assert " ".join(textes).split() == attendu.split()
+    assert outs[0]["index"] == 0 and outs[-1]["is_final"] is True

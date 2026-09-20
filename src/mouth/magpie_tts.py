@@ -212,9 +212,13 @@ class MagpieTTS:
         }
 
     async def synthesize_stream(
-        self, token_stream: AsyncIterator, min_chars: int = 24, **_
+        self,
+        token_stream: AsyncIterator,
+        min_chars: int = 24,
+        first_chunk_max_chars: int = 34,
+        **_,
     ) -> AsyncIterator[Dict[str, Any]]:
-        from src.mouth.piper_tts import _CLAUSE_END, _first_cut
+        from src.mouth.piper_tts import _CLAUSE_END, _first_cut, _word_cut
 
         pending, index = "", 0
 
@@ -244,6 +248,11 @@ class MagpieTTS:
                 # Pas de flux intra-WAV : on coupe les phrases longues aux
                 # virgules pour jouer le premier morceau plus tôt.
                 cut = _first_cut(pending, _CLAUSE_END, min_chars)
+                if cut is None and index == 0:
+                    # Aucune ponctuation n'est arrivee : le fragment
+                    # d'ouverture est coupe a un mot, sinon il porte toute la
+                    # phrase et c'est lui qui fixe le premier son.
+                    cut = _word_cut(pending, first_chunk_max_chars)
                 if cut is None:
                     break
                 sentence, pending = cut
