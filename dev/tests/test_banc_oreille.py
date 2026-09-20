@@ -214,5 +214,5 @@ def test_kwargs_transcribe_whisper_hotwords():
     base = kwargs_transcribe_whisper("")
     assert "hotwords" not in base
     assert base["language"] == "fr"
-    hw = kwargs_transcribe_whisper("MOTHER Codex Camunda Claude")
-    assert hw["hotwords"] == "MOTHER Codex Camunda Claude"
+    hw = kwargs_transcribe_whisper("Hyper Ambient")
+    assert hw["hotwords"] == "Hyper Ambient"

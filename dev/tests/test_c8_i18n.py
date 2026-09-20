@@ -57,6 +57,21 @@ def test_prompt_systeme_fr_identite(lang_env):
     assert "français" in texte
 
 
+def test_prompt_systeme_fr_calibre_longueur_et_stop(lang_env):
+    lang_env("fr")
+    texte = system_prompt().lower()
+    assert "une phrase" in texte
+    assert "deux" in texte and "quatre" in texte
+    assert "explique" in texte
+    assert "développe" in texte
+    assert "pourquoi" in texte
+    assert "je peux aussi" in texte
+    assert "sinon" in texte
+    assert "veux-tu que" in texte
+    assert "féminin" in texte
+    assert "liste" in texte
+
+
 def test_prompt_systeme_en_identite(lang_env):
     lang_env("en")
     texte = system_prompt()
@@ -64,6 +79,30 @@ def test_prompt_systeme_en_identite(lang_env):
     assert "English" in texte
     assert "français" not in texte
     assert "Markdown" in texte
+
+
+def test_prompt_systeme_en_calibre_longueur_et_stop(lang_env):
+    lang_env("en")
+    texte = system_prompt().lower()
+    assert "one sentence" in texte
+    assert "two" in texte and "four" in texte
+    assert "explain" in texte
+    assert "why" in texte
+    assert "i can also" in texte
+    assert "would you like" in texte
+    assert "list" in texte
+    assert "markdown" in texte
+
+
+def test_voice_system_prompt_aligne_sur_soul():
+    from src.mouth.normalize import VOICE_SYSTEM_PROMPT
+
+    texte = VOICE_SYSTEM_PROMPT.lower()
+    assert "hyper ambient" in texte or "hyper-ambient" in texte
+    assert "une phrase" in texte
+    assert "je peux aussi" in texte
+    assert "veux-tu que" in texte
+    assert "liste" in texte
 
 
 def test_nombres_fr_inchanges_par_defaut(lang_env):
@@ -89,9 +128,14 @@ def test_jev_labels_en_memes_identifiants(lang_env):
     fr = questions_jev("fr")
     en = questions_jev("en")
     assert set(fr) == set(en)
-    assert "MOTHER" in en["addressed_to_mother"]["instructions"]
-    assert en["addressed_to_mother"]["instructions"] != fr["addressed_to_mother"]["instructions"]
-    assert "true" in en["addressed_to_mother"]["criteria"]
+    # `addressed_to_mother` a ete remplacee par le jeu V2 decompose ; la
+    # question du nom porte desormais l'identite du produit.
+    assert "Hyper Ambient" in en["assistant_name_spoken"]["instructions"]
+    assert (
+        en["assistant_name_spoken"]["instructions"]
+        != fr["assistant_name_spoken"]["instructions"]
+    )
+    assert "true" in en["assistant_name_spoken"]["criteria"]
 
 
 def test_ui_onboarding_fr_defaut(lang_env):
@@ -99,7 +143,9 @@ def test_ui_onboarding_fr_defaut(lang_env):
     textes = ui()
     assert textes["welcome_title"] == "Bienvenue"
     assert "présence vocale" in textes["welcome_body"]
-    assert "Étape" in textes["step"].format(indice=1, total=3)
+    assert "Étape" in textes["step"].format(indice=1, total=4)
+    assert "ON" in textes["hands_free_on"]
+    assert "OFF" in textes["hands_free_off"]
 
 
 def test_ui_onboarding_en(lang_env):
@@ -107,5 +153,7 @@ def test_ui_onboarding_en(lang_env):
     textes = ui()
     assert textes["welcome_title"] == "Welcome"
     assert "voice" in textes["welcome_body"].lower()
-    assert "Step" in textes["step"].format(indice=1, total=3)
+    assert "Step" in textes["step"].format(indice=1, total=4)
     assert textes["skip"] == "Skip"
+    assert "ON" in textes["hands_free_on"]
+    assert "OFF" in textes["hands_free_off"]

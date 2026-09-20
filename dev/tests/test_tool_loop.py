@@ -383,6 +383,8 @@ async def test_boucle_execute_loutil_autorise():
     assert phases == ["call", "result"]
     assert all(c["delta"] == "" for c in chunks if c.get("channel") == "tool")
     assert "Il fait beau a Paris." in "".join(c["delta"] for c in chunks)
+    resultats = [c for c in chunks if c.get("channel") == "tool" and c.get("phase") == "result"]
+    assert resultats and resultats[0].get("content") == "Il fait beau."
 
 
 @runs_async

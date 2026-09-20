@@ -62,6 +62,7 @@ def create_transport_app(
     journal=None,
     peer_address_of=None,
     on_report=None,
+    on_options=None,
 ):
     """Application FastAPI exposant LocalChannel sur WS /hostagent.
 
@@ -77,6 +78,9 @@ def create_transport_app(
     qu'au moins une trame a quitté le serveur, jamais avant : le
     rapport ne doit pas retarder la première voix (NFR-01). Absent,
     ou ``on_frames`` qui ne rend rien : pas de message ``report``.
+
+    ``on_options(message)`` reçoit le hello (flag optionnel) puis les
+    messages ``{"type":"options",...}`` sans fermer la session.
     """
     app = FastAPI()
     canal = LocalChannel(secret, journal=journal)
@@ -99,12 +103,29 @@ def create_transport_app(
                 await _fermer_admission(websocket)
                 return
             await websocket.send_json({"type": "ready"})
+            if on_options is not None:
+                on_options(premier)
 
             while True:
                 message = await websocket.receive_json()
-                if not isinstance(message, dict) or message.get("type") != "invoke":
+                if not isinstance(message, dict):
                     await _fermer_admission(websocket)
                     return
+                kind = message.get("type")
+                if kind == "options":
+                    if on_options is not None:
+                        on_options(message)
+                    continue
+                if kind != "invoke":
+                    await _fermer_admission(websocket)
+                    return
+                if "mains_libres" in message and on_options is not None:
+                    on_options(
+                        {
+                            "type": "options",
+                            "mains_libres": message.get("mains_libres") is True,
+                        }
+                    )
                 primitive = message.get("primitive")
                 if not isinstance(primitive, str) or not is_permitted(primitive):
                     await websocket.send_json(

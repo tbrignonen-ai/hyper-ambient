@@ -6,7 +6,7 @@ import numpy as np
 from test_hostagent_env_local import serve_hostagent
 from src.ears.faster_whisper_asr import FasterWhisperASR
 
-HOTWORDS = "MOTHER Codex Camunda Claude"
+HOTWORDS = "Hyper Ambient"
 
 
 class _Info:

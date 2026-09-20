@@ -42,7 +42,7 @@ def _adresse_de_test(websocket) -> str:
     return "127.0.0.1"
 
 
-def _create_app(*, secret=SECRET, on_frames=None, journal=None):
+def _create_app(*, secret=SECRET, on_frames=None, journal=None, on_options=None):
     from src.hostagent.transport import create_transport_app
 
     return create_transport_app(
@@ -50,6 +50,7 @@ def _create_app(*, secret=SECRET, on_frames=None, journal=None):
         on_frames=on_frames if on_frames is not None else (lambda frames: None),
         journal=journal,
         peer_address_of=_adresse_de_test,
+        on_options=on_options,
     )
 
 
@@ -306,3 +307,30 @@ def test_un_on_frames_asynchrone_peut_rendre_des_trames():
     assert rendu["type"] == "invoke"
     assert rendu["primitive"] == "audio.render"
     assert len(rendu["frames"]) == 1
+
+
+def test_un_message_options_n_est_pas_une_fermeture():
+    """Presence envoie {type:options, mains_libres} après hello ; la session reste ouverte."""
+    from fastapi.testclient import TestClient
+
+    recues = []
+
+    def on_options(message):
+        recues.append(dict(message))
+
+    app = _create_app(on_options=on_options)
+    with TestClient(app) as client:
+        with client.websocket_connect(VOIE) as ws:
+            ws.send_json({"type": "hello", "secret": SECRET, "mains_libres": True})
+            assert ws.receive_json() == {"type": "ready"}
+            ws.send_json({"type": "options", "mains_libres": False})
+            ws.send_json(
+                {
+                    "type": "invoke",
+                    "primitive": "audio.capture",
+                    "frames": [_trame()],
+                }
+            )
+
+    assert recues[0].get("mains_libres") is True
+    assert recues[1] == {"type": "options", "mains_libres": False}

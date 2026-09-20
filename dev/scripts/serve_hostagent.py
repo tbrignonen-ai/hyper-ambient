@@ -31,20 +31,35 @@ from src.hostagent.transport import create_transport_app
 from src.hostagent.warmup import prechauffer
 from src.presence.etat import Presence
 from src.mouth.secours import LIMITE_ENONCE_S, est_silence, phrase_de_secours
+from src.mouth.reveil import phrase_de_reveil, reveil_court_suffit
 from src.mouth.output_gain import appliquer_gain_doux
 from src.brain.tool_loop import run_tool_loop
-from src.brain.tools import ToolRegistry
+from src.brain.tools import MAX_TOOL_CONTENT_CHARS, ToolRegistry
 from src.brain.tools_calculator import register_calculator
 from src.brain.tools_codex import register_ask_codex
 from src.brain.tools_cli import register_ask_claude
 from src.brain.tools_muse import register_ask_muse
 from src.brain.tools_web import register_web_search
+from src.brain.harnais import OUTILS_HARNAIS, harnais_demande
+from src.brain.mandat import (
+    DELAI_RAPPEL_S,
+    OUTIL_PAR_HARNAIS,
+    PleinMandats,
+    RegistreMandats,
+    confier,
+    extraire_harnais,
+    extraire_sujet,
+    phrase_accuse,
+    phrase_arrivee,
+    phrase_rappel,
+)
+from src.ears.jev_reflexe import FenetreConversation, nom_du_produit_prononce
 from src.gate.permission import Gate
 
-# Six messages, soit trois echanges. Assez pour qu'un « oui, vas-y » ait un
-# antecedent ; assez court pour que le contexte du modele local ne gonfle pas
-# la latence a chaque tour.
-MEMOIRE_MESSAGES = 6
+# Douze messages, soit six echanges. Assez pour conserver le fil d'une courte
+# conversation vocale, sans laisser le contexte du modele local croitre sans
+# borne d'un tour a l'autre.
+MEMOIRE_MESSAGES = 12
 
 HOST = "0.0.0.0"
 PORT = 8001
@@ -128,6 +143,10 @@ _CLES_OUTILS = frozenset(
         "TYPESAFE_API_KEY",
     }
 )
+# EN 0.1 : UI / prompt / nombres. Pas un secret, pas une clé modèle.
+# Presence pose HA_LANG sur Windows ; le host-agent (conteneur) doit le
+# relire depuis .env.local, sinon le cerveau et Magpie restent en FR.
+_CLES_LANGUE = frozenset({"HA_LANG", "HYPER_AMBIENT_LANG"})
 # Carte figée 19 sept : cerveau / oreille / voix. Aucun secret. Écrase
 # l'ancienne carte (router / Qwen3 / Supertonic) au boot, sauf CARTE_FIGEE=0
 # ou une variable *_FORCE déjà utile.
@@ -147,6 +166,7 @@ _CLES_CARTE = frozenset(
         "MOUTH_VOICE_NAME",
         "MOUTH_LANGUAGE",
         "MOUTH_DEVICE",
+        "MOUTH_OUTPUT_GAIN_DB",
     }
 )
 _CARTE_FIGEE = _ROOT / "dev" / "scripts" / "carte_figee.env"
@@ -199,7 +219,7 @@ def charger_env_local(
         chemin = _ROOT / ".env.local"
     injectees: list[str] = []
     for cle, val in parser_env_local(Path(chemin)).items():
-        if cle not in _CLES_OUTILS or _est_cle_modele(cle):
+        if (cle not in _CLES_OUTILS and cle not in _CLES_LANGUE) or _est_cle_modele(cle):
             continue
         if _valeur_utile(environ.get(cle, "")):
             continue
@@ -248,6 +268,101 @@ def _appliquer_env_boot(environ: dict[str, str] | None = None) -> tuple[list[str
     return outils, carte
 
 
+@contextlib.contextmanager
+def _poser_environ(environ: dict[str, str]):
+    """Pose `environ` dans os.environ le temps d'un rapport, puis restaure."""
+    snapshot = dict(os.environ)
+    os.environ.update({k: str(v) for k, v in environ.items()})
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(snapshot)
+
+
+def rapport_branchements(
+    environ: dict[str, str] | None = None,
+    env_local: Path | None = None,
+    carte: Path | None = None,
+) -> dict:
+    """Sans poids GPU : carte, langue, hotwords, C11, C12, C4, JeV."""
+    from src.i18n import langue, system_prompt, t
+
+    if environ is None:
+        outils, cles_carte = _appliquer_env_boot()
+        ctx = contextlib.nullcontext()
+    else:
+        outils = charger_env_local(chemin=env_local, environ=environ)
+        cles_carte = charger_carte_figee(chemin=carte, environ=environ)
+        ctx = _poser_environ(environ)
+
+    with ctx:
+        registre = construire_registre(client=object())
+        try:
+            actifs = sorted(verifier_registre(registre))
+        except RuntimeError:
+            actifs = sorted(
+                schema["function"]["name"] for schema in registre.schemas()
+            )
+        model = os.getenv("MODEL", "")
+        return {
+            "env_injectees": outils,
+            "carte": cles_carte,
+            "brain_service": os.getenv("BRAIN_SERVICE", ""),
+            "model_basename": Path(model).name if model else "",
+            "ears_backend": os.getenv("EARS_BACKEND", ""),
+            "ears_model": os.getenv("EARS_MODEL", ""),
+            "ears_hotwords": os.getenv("EARS_HOTWORDS", ""),
+            "mouth_backend": os.getenv("MOUTH_BACKEND", ""),
+            "mouth_voice": os.getenv("MOUTH_VOICE_NAME", ""),
+            "mouth_device": os.getenv("MOUTH_DEVICE", ""),
+            "lang": langue(),
+            "annonce_calculer": t("tools.calculer"),
+            "identite": "Hyper Ambient" in system_prompt(),
+            "outils": actifs,
+            "jev": True,
+        }
+
+
+def formatter_rapport(rapport: dict) -> str:
+    """Texte de dry-run. Clés seulement, aucune valeur de secret."""
+    return "\n".join(
+        [
+            f"CARTE : {', '.join(sorted(rapport.get('carte') or []))}",
+            f"BRAIN : {rapport.get('brain_service', '')} {rapport.get('model_basename', '')}".strip(),
+            (
+                f"EARS  : {rapport.get('ears_backend', '')} / {rapport.get('ears_model', '')}"
+                f" hotwords={rapport.get('ears_hotwords', '')}"
+            ),
+            (
+                f"MOUTH : {rapport.get('mouth_backend', '')} "
+                f"{rapport.get('mouth_voice', '')} {rapport.get('mouth_device', '')}"
+            ),
+            f"LANG  : {rapport.get('lang', 'fr')}",
+            f"C11   : {'Hyper Ambient' if rapport.get('identite') else 'ABSENT'}",
+            f"OUTILS: {', '.join(rapport.get('outils') or [])}",
+            "JEV   : on",
+            f"ANNONCE calculer: {rapport.get('annonce_calculer', '')}",
+        ]
+    )
+
+
+def dry_run(
+    environ: dict[str, str] | None = None,
+    env_local: Path | None = None,
+    carte: Path | None = None,
+) -> int:
+    print(
+        formatter_rapport(
+            rapport_branchements(
+                environ=environ, env_local=env_local, carte=carte
+            )
+        ),
+        flush=True,
+    )
+    return 0
+
+
 def jev_ignore_tour(evaluation) -> bool:
     """True seulement si JeV a tranché : la phrase n'est pas adressée à MOTHER.
 
@@ -260,6 +375,13 @@ def jev_ignore_tour(evaluation) -> bool:
     if signals is None:
         return False
     return not bool(signals.addressed_to_mother)
+
+
+def jev_doit_ignorer(evaluation, *, mains_libres: bool) -> bool:
+    """JeV ne filtre que si Presence a armé mains libres pour la session."""
+    if not mains_libres:
+        return False
+    return jev_ignore_tour(evaluation)
 
 
 def construire_registre(client=None) -> ToolRegistry:
@@ -489,6 +611,10 @@ class HostPipeline:
         # repondre. On garde les derniers echanges, pas toute la session :
         # le contexte du modele local est petit et la latence croit avec.
         self._historique: list[dict] = []
+        # Resultats d'outils du dernier tour qui en a execute. `_historique`
+        # ne retient que le texte parle : sans ce buffer, « contre-analyse
+        # Claude du resultat Codex » n'a plus le texte Codex au tour suivant.
+        self._dernier_outils: list[dict] = []
         self.brain = None
         self.tts = None
         # Le registre est vide tant que `load` ne l'a pas garni : un tour joue
@@ -497,9 +623,147 @@ class HostPipeline:
         self.porte: Gate | None = None
         self._client_outils = None
         self._jev = None
+        self._mains_libres = False
+        self._fenetre = FenetreConversation()
         self._websocket = None
+        self._tache_maintien_jev = None
+        self._tache_indicateur_conversation = None
+        self._conversation_ouverte_emise = False
         self._lock = asyncio.Lock()
         self.output_gain_db = float(os.getenv("MOUTH_OUTPUT_GAIN_DB", "0"))
+        self._mandats = RegistreMandats()
+        self._dernier_parole_a = time.monotonic()
+        self._tache_mandats = None
+        self._badge_prets = -1
+
+    def on_options(self, message) -> None:
+        """Presence : flag ``mains_libres`` sur hello ou ``{"type":"options"}``."""
+        if not isinstance(message, dict) or "mains_libres" not in message:
+            return
+        self._mains_libres = message.get("mains_libres") is True
+        if not self._mains_libres:
+            # Couper le mode referme la conversation : la prochaine
+            # activation repart d'une page blanche.
+            self._fenetre.fermer()
+        print(
+            f"JEV   : mains_libres={'on' if self._mains_libres else 'off'}",
+            flush=True,
+        )
+        if self._mains_libres:
+            self._demarrer_maintien_jev()
+            self._demarrer_indicateur_conversation()
+        else:
+            self._arreter_maintien_jev()
+            self._arreter_indicateur_conversation()
+
+    def _demarrer_maintien_jev(self) -> None:
+        tache = self._tache_maintien_jev
+        if tache is not None and not tache.done():
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._tache_maintien_jev = asyncio.create_task(self._boucle_prechauffage_jev())
+
+    def _arreter_maintien_jev(self) -> None:
+        tache = self._tache_maintien_jev
+        self._tache_maintien_jev = None
+        if tache is None or tache.done():
+            return
+        tache.cancel()
+        print("JEV   : maintien arrete", flush=True)
+
+    async def _boucle_prechauffage_jev(self) -> None:
+        jev = getattr(self, "_jev", None)
+        if jev is None:
+            return
+        debut = time.monotonic()
+        try:
+            ok = await jev.prechauffer()
+            if ok:
+                print(
+                    f"JEV   : prechauffage ok en {int((time.monotonic() - debut) * 1000)} ms",
+                    flush=True,
+                )
+            await self._signaler_jev_pret()
+            await jev.maintenir()
+        except asyncio.CancelledError:
+            raise
+
+    async def _signaler_jev_pret(self) -> None:
+        websocket = self._websocket
+        if websocket is None:
+            return
+        try:
+            await websocket.send_json({"type": "jev_pret"})
+        except Exception:
+            return
+
+    def _restant_conversation_s(self) -> float:
+        if not self._fenetre.engagee():
+            return 0.0
+        jusqu_a = getattr(self._fenetre, "_jusqu_a", None)
+        if jusqu_a is None:
+            return 0.0
+        return max(0.0, float(jusqu_a) - time.monotonic())
+
+    def _payload_conversation(self) -> dict:
+        ouverte = bool(self._mains_libres and self._fenetre.engagee())
+        return {
+            "type": "conversation",
+            "ouverte": ouverte,
+            "restant_s": self._restant_conversation_s() if ouverte else 0.0,
+        }
+
+    async def _signaler_conversation(self) -> None:
+        websocket = self._websocket
+        if websocket is None:
+            return
+        payload = self._payload_conversation()
+        try:
+            await websocket.send_json(payload)
+        except Exception:
+            return
+        self._conversation_ouverte_emise = bool(payload["ouverte"])
+
+    def _demarrer_indicateur_conversation(self) -> None:
+        tache = self._tache_indicateur_conversation
+        if tache is not None and not tache.done():
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._tache_indicateur_conversation = asyncio.create_task(
+            self._boucle_indicateur_conversation()
+        )
+
+    def _arreter_indicateur_conversation(self) -> None:
+        tache = self._tache_indicateur_conversation
+        self._tache_indicateur_conversation = None
+        if tache is not None and not tache.done():
+            tache.cancel()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._signaler_conversation())
+
+    async def _boucle_indicateur_conversation(self) -> None:
+        await self._signaler_conversation()
+        try:
+            while self._mains_libres:
+                await asyncio.sleep(1.0)
+                ouverte = self._fenetre.engagee()
+                if ouverte or self._conversation_ouverte_emise:
+                    await self._signaler_conversation()
+        except asyncio.CancelledError:
+            raise
+
+    async def _ouvrir_conversation(self) -> None:
+        self._fenetre.engager()
+        await self._signaler_conversation()
 
     def peer_address_of(self, websocket) -> str:
         """Mémorise le socket pour le retour audio, et tranche la localité.
@@ -548,6 +812,13 @@ class HostPipeline:
                 + " depuis carte_figee.env",
                 flush=True,
             )
+        from src.i18n import langue
+
+        print(
+            f"LANG  : {langue()} (prompt/nombres ; carte ASR/TTS="
+            f"{os.getenv('EARS_LANGUAGE', 'fr')}/{os.getenv('MOUTH_LANGUAGE', 'fr')})",
+            flush=True,
+        )
         voix = os.getenv("MOUTH_VOICE", VOIX_PIPER)
 
         gain_lineaire = 10.0 ** (self.output_gain_db / 20.0)
@@ -593,6 +864,7 @@ class HostPipeline:
                 "OUTILS: aucun backend configure — tour de parole sans outil",
                 flush=True,
             )
+        self._assurer_veille_mandats()
 
         from src.ears.jev_reflexe import JevReflexe
 
@@ -680,34 +952,215 @@ class HostPipeline:
             raise SystemExit(1)
 
     async def close(self) -> None:
+        tache = self._tache_mandats
+        self._tache_mandats = None
+        if tache is not None and not tache.done():
+            tache.cancel()
         if self.brain is not None:
             await self.brain.close()
         if self._client_outils is not None:
             await self._client_outils.aclose()
             self._client_outils = None
 
+    def _historique_pour_modele(self) -> list[dict]:
+        """Parole retenue + derniers resultats d'outils, hors amorces TTS.
+
+        Le buffer ne compte pas dans MEMOIRE_MESSAGES : un resultat Codex de
+        1200 caracteres ne doit pas evincer les six echanges parles.
+        """
+        historique = list(self._historique)
+        for outil in self._dernier_outils:
+            nom = outil.get("name") or "outil"
+            contenu = (outil.get("content") or "").strip()
+            if not contenu:
+                continue
+            historique.append(
+                {"role": "user", "content": f"[résultat outil {nom}] {contenu}"}
+            )
+        return historique
+
+    def _registre_pour_tour(self, prompt: str):
+        """Registre expose au modele pour CE tour.
+
+        Les harnais (Codex, Claude, Muse) ne sont plus jamais dans le registre
+        du tour : un appel synchrone bloquait 39 secondes. La demande explicite
+        pose un mandat hors tour, l'accuse part tout de suite.
+        """
+        if self.registre is None or not len(self.registre):
+            return self.registre
+        if self._client_outils is None and harnais_demande(prompt):
+            return self.registre
+        presents = [nom for nom in OUTILS_HARNAIS if nom in self.registre]
+        if not presents:
+            return self.registre
+        from src.brain.tools import ToolRegistry
+
+        restreint = ToolRegistry()
+        for nom, spec in self.registre._tools.items():
+            if nom not in OUTILS_HARNAIS:
+                restreint.register(spec)
+        print(
+            "OUTILS: harnais retires (%s) — mandat hors tour"
+            % ", ".join(presents),
+            flush=True,
+        )
+        return restreint
+
     def _flux_brain(self, prompt: str):
         """Le flux du tour : sous boucle d'outils si le registre est garni.
 
         Le registre vide rend **exactement** l'appel d'avant, sans `tools` dans
         la charge utile. Un registre garni passe par la boucle : le routeur
-        retire les schemas sur un REFLEXE, et la boucle n'execute qu'un outil
-        par tour. Brancher Codex ne doit rien changer a « Bonjour. ».
+        retire les schemas sur un REFLEXE. Deux outils par tour, un seul par
+        aller-retour modele (MAX_TOOL_CALLS_PER_ITERATION=1). Brancher Codex
+        ne doit rien changer a « Bonjour. ».
         """
-        historique = list(self._historique)
-        if self.registre is not None and len(self.registre):
+        historique = self._historique_pour_modele()
+        # Le resultat est utile au seul tour qui suit son appel. On fabrique
+        # d'abord sa copie dans `historique`, puis on vide le buffer avant la
+        # requete : il ne sera plus reinjecte au tour suivant, sauf si ce tour
+        # produit lui-meme un nouveau resultat d'outil.
+        self._dernier_outils = []
+        registre = self._registre_pour_tour(prompt)
+        if registre is not None and len(registre):
             return run_tool_loop(
                 self.brain,
                 prompt,
-                self.registre,
+                registre,
                 self.porte,
                 history=historique,
-                max_tool_calls=1,
+                max_tool_calls=2,
             )
         return self.brain.query_streaming(prompt, history=historique)
 
+    def _peut_confier(self, prompt: str) -> bool:
+        harnais = extraire_harnais(prompt)
+        nom = OUTIL_PAR_HARNAIS.get(harnais)
+        return bool(self.registre is not None and nom and nom in self.registre)
+
+    def _appel_pour(self, harnais: str):
+        nom = OUTIL_PAR_HARNAIS.get(harnais)
+        spec = self.registre.get(nom) if self.registre is not None and nom else None
+        handler = spec.handler if spec is not None else None
+
+        async def appel(question: str) -> str:
+            if handler is None:
+                raise RuntimeError("pont absent")
+            return await handler(question)
+
+        return appel
+
+    async def _confier_depuis_voix(self, prompt: str) -> str:
+        harnais = extraire_harnais(prompt)
+        sujet = extraire_sujet(prompt)
+        try:
+            await confier(
+                self._mandats,
+                harnais,
+                prompt,
+                sujet,
+                self._appel_pour(harnais),
+            )
+        except PleinMandats as exc:
+            print(f"MANDAT: refuse — {exc.phrase}", flush=True)
+            return exc.phrase
+        print(f"MANDAT: {harnais} — {sujet!r}", flush=True)
+        return phrase_accuse(harnais, sujet)
+
+    def _assurer_veille_mandats(self) -> None:
+        tache = self._tache_mandats
+        if tache is not None and not tache.done():
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._tache_mandats = asyncio.create_task(self._boucle_mandats())
+
+    async def _boucle_mandats(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(0.5)
+                websocket = self._websocket
+                if websocket is None:
+                    continue
+                await self._signaler_badge_mandat(websocket)
+                if self._lock.locked():
+                    continue
+                leftover = [np.zeros(0, dtype=np.float32)]
+                await self.annoncer_mandats_prets(websocket, leftover)
+        except asyncio.CancelledError:
+            raise
+
+    async def _signaler_badge_mandat(self, websocket) -> None:
+        """Badge passif seulement : jamais d'elevation de fenetre."""
+        n = len(self._mandats.prets())
+        if n == self._badge_prets:
+            return
+        self._badge_prets = n
+        if websocket is None:
+            return
+        from src.i18n import t
+
+        try:
+            await websocket.send_json(
+                {
+                    "type": "mandat_badge",
+                    "prets": n,
+                    "libelle": t("mandat.badge", n=n),
+                }
+            )
+        except Exception:
+            return
+
+    async def annoncer_mandats_prets(self, websocket, leftover=None) -> None:
+        """Annonce d'arrivee ou rappel, seulement si la parole est libre.
+
+        Jamais pendant une lecture audio, jamais au milieu d'un tour.
+        Le mandat pret attend. Pas d'elevation de fenetre.
+        """
+        if self._lock.locked():
+            return
+        async with self._lock:
+            await self._annoncer_mandats_prets_verrouille(websocket, leftover)
+
+    async def _annoncer_mandats_prets_verrouille(self, websocket, leftover) -> None:
+        if leftover is None:
+            leftover = [np.zeros(0, dtype=np.float32)]
+        if self.tts is None:
+            return
+        await self._signaler_badge_mandat(websocket)
+        maintenant = time.monotonic()
+        for mandat in list(self._mandats.prets()):
+            phrase = phrase_arrivee(mandat)
+            print(f"MANDAT: arrivee {mandat.harnais} — {phrase!r}", flush=True)
+            await self._dire_maintenant(websocket, phrase, leftover)
+            # L'annonce arrive apres la fin du tour de parole precedent. Elle
+            # est donc elle-meme un tour complet : sans ce marqueur, ses audio
+            # reste sur la socket et est lu comme le debut du tour suivant.
+            await self._envoyer(websocket, [])
+            self._mandats.marquer_annonce(mandat.identifiant)
+            await self._signaler_badge_mandat(websocket)
+        silence_s = maintenant - self._dernier_parole_a
+        for mandat in list(self._mandats.en_cours()):
+            if mandat.rappel_fait:
+                continue
+            if maintenant - mandat.depose_a < DELAI_RAPPEL_S:
+                continue
+            if silence_s < DELAI_RAPPEL_S:
+                continue
+            phrase = phrase_rappel(mandat.harnais)
+            print(f"MANDAT: rappel {mandat.harnais}", flush=True)
+            await self._dire_maintenant(websocket, phrase, leftover)
+            # Meme contrat de transport que l'annonce d'arrivee : aucun audio
+            # hors d'un tour termine explicitement.
+            await self._envoyer(websocket, [])
+            mandat.rappel_fait = True
+
     async def _envoyer(self, websocket, trames: list[AudioFrame]) -> None:
         """Envoie des paquets d'une seconde, ou un marqueur vide de fin de tour."""
+        if trames:
+            self._dernier_parole_a = time.monotonic()
         if websocket is None:
             return
         if not trames:
@@ -810,6 +1263,8 @@ class HostPipeline:
     async def _tour(self, frames, websocket) -> None:
         async with self._lock:
             await self._enchainer(frames, websocket)
+        leftover = [np.zeros(0, dtype=np.float32)]
+        await self.annoncer_mandats_prets(websocket, leftover)
 
     async def _enchainer(self, frames, websocket) -> None:
         leftover = [np.zeros(0, dtype=np.float32)]
@@ -857,6 +1312,10 @@ class HostPipeline:
                     reply="",
                     brain_injoignable=False,
                     duree_audio_s=0.0,
+                    # Ecoute continue : le micro est ouvert en permanence, donc
+                    # un segment sans parole n'est pas une demande restee sans
+                    # reponse. Annoncer le silence ferait parler en boucle.
+                    mains_libres=self._mains_libres,
                 )
                 if phrase:
                     await self._dire_secours(
@@ -942,9 +1401,25 @@ class HostPipeline:
                 return
 
             jev = getattr(self, "_jev", None)
-            if jev is not None:
+            if jev is not None and self._mains_libres and self._fenetre.engagee():
+                # Conversation en cours : elle a ete adressee il y a peu, donc
+                # ce qui suit lui est destine. « bonjour » seul score 0.31 chez
+                # JeV, sous une phrase de television — aucun seuil ne le
+                # rattrape, seule une memoire courte le peut.
+                print("JEV   : conversation en cours — evaluation sautee", flush=True)
+                await self._ouvrir_conversation()
+                jev = None
+            if jev is not None and self._mains_libres and nom_du_produit_prononce(prompt):
+                # Elle est nommee : l'intention est certaine et verifiee en
+                # local. Mesure du 2026-09-20 : JeV note « Hyper Ambient »
+                # seul a 0.39, sous tout seuil utilisable. On evite l'appel
+                # distant, son cout et ses ~250 ms.
+                print("JEV   : nommee — evaluation distante inutile", flush=True)
+                await self._ouvrir_conversation()
+                jev = None
+            if jev is not None and self._mains_libres:
                 evaluation = await jev.evaluate(prompt)
-                if jev_ignore_tour(evaluation):
+                if jev_doit_ignorer(evaluation, mains_libres=True):
                     print(
                         "JEV   : pas adressée à MOTHER — tour ignoré",
                         flush=True,
@@ -953,6 +1428,8 @@ class HostPipeline:
                     await presence.vider()
                     await self._envoyer(websocket, [])
                     return
+                # JeV a tranche « adressee » : la conversation commence.
+                await self._ouvrir_conversation()
                 harness = getattr(
                     getattr(evaluation, "signals", None), "named_harness", None
                 )
@@ -961,6 +1438,52 @@ class HostPipeline:
                         "JEV   : harnais nommé (observation, aucun envoi)",
                         flush=True,
                     )
+                from src.i18n import langue as langue_session
+
+                if reveil_court_suffit(prompt, langue=langue_session()):
+                    print(
+                        "JEV   : interpellation sans demande — reveil court",
+                        flush=True,
+                    )
+                    phrase = phrase_de_reveil(langue=langue_session())
+                    presence.emettre("parole")
+                    await presence.vider()
+                    await self._dire_secours(
+                        websocket,
+                        leftover,
+                        phrase=phrase,
+                        transcript=prompt,
+                        t_tour=t_tour,
+                        ears_ms=ears_ms,
+                        brain_ms=0.0,
+                    )
+                    presence.emettre("repos")
+                    await presence.vider()
+                    return
+
+            if (
+                harnais_demande(prompt)
+                and self._client_outils is not None
+                and self._peut_confier(prompt)
+            ):
+                phrase = await self._confier_depuis_voix(prompt)
+                self._historique.append({"role": "user", "content": prompt})
+                self._historique.append({"role": "assistant", "content": phrase})
+                del self._historique[:-MEMOIRE_MESSAGES]
+                presence.emettre("parole")
+                await presence.vider()
+                await self._dire_secours(
+                    websocket,
+                    leftover,
+                    phrase=phrase,
+                    transcript=prompt,
+                    t_tour=t_tour,
+                    ears_ms=ears_ms,
+                    brain_ms=0.0,
+                )
+                presence.emettre("repos")
+                await presence.vider()
+                return
 
             ttft_ms = None
             amorces: list[str] = []
@@ -969,6 +1492,7 @@ class HostPipeline:
             brain_ms = 0.0
             mouth_ms = 0.0
             t_derniere_trame = None
+            outils_ce_tour: list[dict] = []
 
             # Départ commun : le flux BRAIN alimente MOUTH en recouvrement.
             t_brain_mouth = time.monotonic()
@@ -1016,6 +1540,17 @@ class HostPipeline:
                             # prochain mot du modèle reprend là où l'appel
                             # l'avait coupé.
                             recoudre = True
+                            contenu = (chunk.get("content") or "").strip()
+                            if contenu:
+                                if len(contenu) > MAX_TOOL_CONTENT_CHARS:
+                                    keep = MAX_TOOL_CONTENT_CHARS - 4
+                                    contenu = contenu[:keep].rstrip() + " […]"
+                                outils_ce_tour.append(
+                                    {
+                                        "name": chunk.get("tool") or "outil",
+                                        "content": contenu,
+                                    }
+                                )
                         continue
                     if not chunk.get("delta"):
                         continue
@@ -1118,6 +1653,8 @@ class HostPipeline:
                 self._historique.append({"role": "user", "content": prompt})
                 self._historique.append({"role": "assistant", "content": text})
                 del self._historique[:-MEMOIRE_MESSAGES]
+            if outils_ce_tour:
+                self._dernier_outils = outils_ce_tour
 
             if not text:
                 print(f"BRAIN : rien produit — {brain_error}", flush=True)
@@ -1182,7 +1719,10 @@ class HostPipeline:
                 return
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--dry-run" in argv:
+        raise SystemExit(dry_run())
     injectees, cles_carte = _appliquer_env_boot()
     if injectees:
         print(
@@ -1204,6 +1744,7 @@ def main() -> None:
         secret=secret,
         on_frames=pipeline.on_frames,
         peer_address_of=pipeline.peer_address_of,
+        on_options=pipeline.on_options,
     )
     # FastAPI 0.141 a retire add_event_handler : les evenements startup/shutdown
     # passent desormais par un gestionnaire de contexte lifespan. On charge les

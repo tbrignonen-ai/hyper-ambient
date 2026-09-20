@@ -44,7 +44,13 @@ class SlowTransport(FakeTransport):
 
 def _answers(**overrides):
     answers = {
-        "addressed_to_mother": {"type": "noul", "noul": 0.91},
+        "assistant_name_spoken": {"type": "noul", "noul": 0.02},
+        "direct_interpellation": {"type": "noul", "noul": 0.03},
+        "request_or_command": {"type": "noul", "noul": 0.03},
+        "third_party_conversation": {"type": "noul", "noul": 0.10},
+        "read_broadcast_recited": {"type": "noul", "noul": 0.10},
+        "reported_or_quoted_speech": {"type": "noul", "noul": 0.10},
+        "unaddressed_self_talk": {"type": "noul", "noul": 0.10},
         "real_interruption": {"type": "noul", "noul": 0.92},
         "phrase_finished": {"type": "noul", "noul": 0.88},
         "transcription_uncertain": {"type": "noul", "noul": 0.10},
@@ -71,7 +77,7 @@ def _answers(**overrides):
     return answers
 
 
-def test_un_seul_post_porte_exactement_les_treize_questions_et_le_bearer():
+def test_un_seul_post_porte_exactement_les_dix_neuf_questions_et_le_bearer():
     transport = FakeTransport(FakeResponse(payload={"answers": _answers()}))
     client = JevReflexe(api_key="cle-de-test", transport=transport)
 
@@ -84,7 +90,7 @@ def test_un_seul_post_porte_exactement_les_treize_questions_et_le_bearer():
     assert call["headers"] == {"Authorization": "Bearer cle-de-test", "Content-Type": "application/json"}
     assert call["json"]["model"] == "jev-latest"
     assert tuple(call["json"]["questions"]) == tuple(QUESTIONS)
-    assert len(call["json"]["questions"]) == 13
+    assert len(call["json"]["questions"]) == 19
     assert call["json"]["state"]["transcription"] == "MOTHER, attends une seconde."
     assert result.signals.real_interruption is True
     assert result.signals.expected_response_length == "few_sentences"
@@ -145,3 +151,23 @@ def test_budget_mural_de_600_ms_replie_meme_si_le_transport_ignore_son_timeout()
     client = JevReflexe(api_key="cle-de-test", transport=transport)
 
     assert asyncio.run(client.evaluate("bonjour")) is None
+
+
+def test_typesafe_model_est_lu_a_l_appel_pas_a_l_import(monkeypatch):
+    """Sans TYPESAFE_MODEL, jev-latest. Un changement d'env apres construction compte."""
+    from src.ears.jev_reflexe import JEV_MODEL
+
+    monkeypatch.delenv("TYPESAFE_MODEL", raising=False)
+    transport = FakeTransport(FakeResponse(payload={"answers": _answers()}))
+    client = JevReflexe(api_key="cle-de-test", transport=transport)
+
+    asyncio.run(client.evaluate("bonjour"))
+    assert transport.calls[0]["json"]["model"] == JEV_MODEL == "jev-latest"
+
+    monkeypatch.setenv("TYPESAFE_MODEL", "jev-autre")
+    asyncio.run(client.evaluate("encore"))
+    assert transport.calls[1]["json"]["model"] == "jev-autre"
+
+    monkeypatch.setenv("TYPESAFE_MODEL", "  ")
+    asyncio.run(client.evaluate("vide"))
+    assert transport.calls[2]["json"]["model"] == "jev-latest"

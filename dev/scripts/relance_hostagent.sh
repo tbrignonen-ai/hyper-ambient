@@ -33,11 +33,15 @@ CLI_BRIDGE_URL="${CLI_BRIDGE_URL:-http://host.docker.internal:8766/ask}"
 CLI_BRIDGE_TOKEN="$(lire_env_local CLI_BRIDGE_TOKEN)"
 MUSE_BRIDGE_URL="$(lire_env_local MUSE_BRIDGE_URL)"
 TYPESAFE_API_KEY="$(lire_env_local TYPESAFE_API_KEY)"
+TYPESAFE_MODEL="$(lire_env_local TYPESAFE_MODEL)"
+HA_LANG="$(lire_env_local HA_LANG)"
+HYPER_AMBIENT_LANG="$(lire_env_local HYPER_AMBIENT_LANG)"
 export BRAIN_API_KEY SEARXNG_URL TAVILY_API_KEY
 export BRAVE_API_KEY EXA_API_KEY JINA_API_KEY SERPER_API_KEY
 export CODEX_BRIDGE_URL CODEX_BRIDGE_TOKEN
 export CLI_BRIDGE_URL CLI_BRIDGE_TOKEN MUSE_BRIDGE_URL
-export TYPESAFE_API_KEY
+export TYPESAFE_API_KEY TYPESAFE_MODEL
+export HA_LANG HYPER_AMBIENT_LANG
 
 export HF_HOME=/workspace/models/hf-cache
 export HF_HUB_OFFLINE=1
@@ -60,6 +64,7 @@ export MOUTH_LANGUAGE="${MOUTH_LANGUAGE_FORCE:-$(lire_carte MOUTH_LANGUAGE)}"
 export MOUTH_DEVICE="${MOUTH_DEVICE_FORCE:-$(lire_carte MOUTH_DEVICE)}"
 
 echo "carte figee: brain=$BRAIN_SERVICE model=$(basename "$MODEL") ears=$EARS_BACKEND/$EARS_MODEL mouth=$MOUTH_BACKEND/$MOUTH_VOICE_NAME/$MOUTH_DEVICE"
+echo "langue: ${HA_LANG:-${HYPER_AMBIENT_LANG:-fr}}"
 echo "cle brain de ${#BRAIN_API_KEY} caracteres"
 echo "config outils: searxng=$([ -n "$SEARXNG_URL" ] && echo oui || echo non) tavily=$([ -n "$TAVILY_API_KEY" ] && echo oui || echo non) codex=$([ -n "$CODEX_BRIDGE_TOKEN" ] && echo oui || echo non) claude=$([ -n "$CLI_BRIDGE_TOKEN" ] && echo oui || echo non) muse=$([ -n "$MUSE_BRIDGE_URL" ] && echo oui || echo non)"
 

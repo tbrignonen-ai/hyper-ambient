@@ -19,7 +19,7 @@ _FR: dict[str, str] = {
     "ui.welcome_body": (
         "Une présence vocale discrète, disponible quand vous la sollicitez. "
         "La lumière respire avec elle. "
-        "Trois réglages suffisent : comment parler, quel raccourci, comment masquer."
+        "Quatre réglages suffisent : mains libres, comment parler, quel raccourci, comment masquer."
     ),
     "ui.ptt_title": "Appuyez pour parler",
     "ui.ptt_body": (
@@ -45,7 +45,15 @@ _FR: dict[str, str] = {
     "ui.hearing": "Je vous entends — relâchez pour envoyer",
     "ui.speak": "Parler",
     "ui.speaking": "Parler…",
+    "ui.stop": "Stop",
+    "ui.interrupted": "Interrompue.",
+    "ui.interrupted_listening": "Interrompue — je t'écoute.",
+    "ui.listening_toggle": "Écoute…",
+    "ui.tap_to_send": "Appuie pour envoyer",
+    "ui.listening_tap_send": "Écoute… Réappuie pour envoyer.",
+    "ui.sending": "Envoi…",
     "ui.hide_config": "Masquer la configuration",
+    "ui.settings": "Réglages",
     "ui.understood": "Compris",
     "ui.reply": "Réponse",
     "ui.shortcut": "Espace",
@@ -62,6 +70,176 @@ _FR: dict[str, str] = {
         "Pendant un appel distant, l'éclair s'allume et le statut le dit en texte."
     ),
     "ui.channel_not_ready": "Canal pas encore prêt.",
+    "ui.hands_free_connecting": "Connexion…",
+    "ui.hands_free_connected": "Mains libres prêtes.",
+    "ui.channel_ready": "Canal prêt. Maintenez Parler ou {raccourci}.",
+    "ui.channel_ready_hands_free": (
+        "Canal prêt. Appuyez sur Parler ou {raccourci} — réappuyez pour envoyer."
+    ),
+    "ui.connecting": "Connexion…",
+    "ui.listening": "Écoute… relâchez pour envoyer.",
+    "ui.no_frames": "Aucune trame capturée (parole trop courte).",
+    "ui.frames_sent": "{n} trames envoyées, attente de la réponse…",
+    "ui.first_sound": "premier son : {ms:.0f} ms",
+    "ui.replying": "Réponse en cours.",
+    "ui.feedback": "Un retour",
+    "ui.feedback_url": "https://github.com/tbrignonen-ai/hyper-ambient/issues/new",
+    "ui.contrast": "Contraste élevé",
+    "ui.language": "Langue",
+    "ui.hands_free": (
+        "Mains libres : un appui sur Parler démarre l'écoute, un second envoie. "
+        "Pas besoin de maintenir. Ce n'est pas un micro ouvert en continu. "
+        "Avec une clé JeV, Hyper Ambient n'intervient que si on s'adresse à elle. "
+        "Sans clé, le bouton Parler reste le repli. "
+        "Ce n'est pas un mode pour personnes sourdes : l'oreille et la voix "
+        "restent le canal, avec tout le texte à l'écran (malvoyants, clavier, focus)."
+    ),
+    "ui.hands_free_title": "Mains libres",
+    "ui.hands_free_on": "Mains libres : ON — appuyez Parler",
+    "ui.hands_free_off": "Mains libres : OFF",
+    "ui.hands_free_enable": "Activer",
+    "ui.hands_free_later": "Plus tard",
+    "ui.hands_free_hint": (
+        "Pas un micro ouvert. Appuyez Parler ou {raccourci} pour écouter, "
+        "réappuyez pour envoyer ; JeV n'ignore que les apartés."
+    ),
+    "ui.conversation_open": "En conversation — {n} s",
+    "ui.conversation_invite": "Dis mon nom pour me parler",
+    "mandat.accuse": "Je demande à {harnais} de {sujet}. Je te préviens.",
+    "mandat.rappel": "{harnais} prend du temps, je te préviens dès que c'est prêt.",
+    "mandat.fini": "{harnais} a fini.",
+    "mandat.offre": "Tu veux le détail, ou que je te l'ouvre ?",
+    "mandat.echoue": "{harnais} n'a pas répondu. J'arrête d'attendre.",
+    "mandat.plein": "J'ai déjà trois mandats en cours. Je ne peux pas en prendre un de plus.",
+    "mandat.sans_resume": (
+        "{harnais} a répondu mais je n'ai pas de résumé. "
+        "Tu veux le détail, ou que je te l'ouvre ?"
+    ),
+    "mandat.badge": "{n} résultat prêt",
+    "reglages.titre": "Réglages",
+    "reglages.enregistrer": "Enregistrer",
+    "reglages.tout_verifier": "Tout vérifier",
+    "reglages.verifier": "Vérifier",
+    "reglages.je_verifie": "Je vérifie…",
+    "reglages.enregistre": "Réglages enregistrés.",
+    "reglages.echec_sonde": "La vérification n'a pas abouti.",
+    "reglages.brain_titre": "Modèle distant",
+    "reglages.brain_aide": (
+        "Un modèle distant est fortement recommandé. "
+        "C'est lui qui prend les demandes difficiles. "
+        "Il est recommandé de choisir un modèle dont on peut désactiver "
+        "le raisonnement. Un modèle qui réfléchit longuement avant de "
+        "répondre est pénible à l'oral : on attend dans le silence. "
+        "On peut aussi passer par l'abonnement déjà connecté de Codex "
+        "ou de Claude Code, sans aucune clé API."
+    ),
+    "reglages.outil_codex_titre": "Harnais Codex",
+    "reglages.outil_codex_aide": (
+        "Le programme Codex déjà installé sur cette machine. "
+        "C'est ton abonnement ChatGPT Plus, pas une clé."
+    ),
+    "reglages.outil_claude_titre": "Harnais Claude Code",
+    "reglages.outil_claude_aide": (
+        "Le programme Claude Code déjà installé sur cette machine. "
+        "C'est ton abonnement Claude Pro, pas une clé."
+    ),
+    "reglages.codex_titre": "Pont Codex",
+    "reglages.codex_aide": (
+        "Elle peut lui confier du travail dans l'outil de code déjà installé."
+    ),
+    "reglages.claude_titre": "Pont Claude Code",
+    "reglages.claude_aide": (
+        "Elle peut lui confier une analyse dans Claude Code déjà installé."
+    ),
+    "reglages.jev_titre": "JeV (TypeSafe AI)",
+    "reglages.jev_aide": (
+        "C'est ce qui lui permet de savoir quand on s'adresse à elle, "
+        "et donc ce qui rend les mains libres possibles."
+    ),
+    "reglages.champ.BRAIN_API_ENDPOINT": "Adresse du modèle",
+    "reglages.champ.BRAIN_MODEL": "Nom du modèle (BRAIN_MODEL)",
+    "reglages.champ.BRAIN_MODEL_exemple": (
+        "Exemple : gpt-4.1, claude-sonnet-4 — le nom exact attendu par le fournisseur."
+    ),
+    "reglages.champ.BRAIN_API_KEY": "Clé du modèle",
+    "reglages.champ.CODEX_BRIDGE_URL": "Adresse du pont Codex",
+    "reglages.champ.CODEX_BRIDGE_TOKEN": "Jeton Codex",
+    "reglages.champ.CLI_BRIDGE_URL": "Adresse du pont Claude",
+    "reglages.champ.CLI_BRIDGE_TOKEN": "Jeton Claude",
+    "reglages.champ.TYPESAFE_MODEL": "Nom du modèle (TYPESAFE_MODEL)",
+    "reglages.champ.TYPESAFE_MODEL_exemple": (
+        "Exemple : jev-latest — le nom exact attendu par TypeSafe AI."
+    ),
+    "reglages.champ.TYPESAFE_API_KEY": "Clé JeV",
+    "reglages.posee": "déjà posée : {suffixe}",
+    "reglages.a11y": (
+        "Tab parcourt les champs. Entrée active un bouton. "
+        "Échap ferme les réglages sans quitter l'application."
+    ),
+    "reglages.confidentialite": (
+        "Hyper Ambient ne collecte aucune donnée. "
+        "Tout ce qui sort va vers les services que vous avez choisis."
+    ),
+    "reglages.categorie.machine": "Sur votre machine",
+    "reglages.categorie.outils": "Vos outils, vos abonnements",
+    "reglages.categorie.distants": "Services distants",
+    "reglages.donnees.modele_local": (
+        "Données locales. Rien ne quitte cette machine."
+    ),
+    "reglages.donnees.outil_codex": (
+        "Données locales. Communique avec le pont local Codex, "
+        "qui utilise votre propre abonnement."
+    ),
+    "reglages.donnees.outil_claude": (
+        "Données locales. Communique avec le pont local Claude Code, "
+        "qui utilise votre propre abonnement."
+    ),
+    "reglages.donnees.codex": (
+        "Données locales. Communique avec le pont local Codex, "
+        "qui utilise votre propre abonnement."
+    ),
+    "reglages.donnees.claude": (
+        "Données locales. Communique avec le pont local Claude Code, "
+        "qui utilise votre propre abonnement."
+    ),
+    "reglages.donnees.brain_distant": (
+        "Données envoyées au modèle distant que vous avez choisi."
+    ),
+    "reglages.donnees.jev": "Données envoyées à TypeSafe AI. Optionnel.",
+    "reglages.donnees.recherche": (
+        "Données envoyées au moteur dont vous avez posé la clé."
+    ),
+    "reglages.donnees.cles": "Données locales. Fichier sur cette machine.",
+    "reglages.verifier_aide": (
+        "Vérifier appelle réellement le service, avec un délai de cinq secondes."
+    ),
+    "reglages.echec_manuel": (
+        "Si un test échoue, les réglages restent modifiables à la main "
+        "dans le fichier .env.local."
+    ),
+    "reglages.detecter_abonnements": "Détecter mes abonnements",
+    "reglages.modele_local_titre": "Modèle local",
+    "reglages.modele_local_aide": (
+        "Le modèle qui tourne ici. Rien de ce bloc ne quitte cette machine."
+    ),
+    "reglages.recherche_titre": "Recherche web",
+    "reglages.recherche_aide": (
+        "Optionnel. Si vous avez posé une clé, la requête part vers ce moteur."
+    ),
+    "reglages.cles_titre": "Clés et réglages",
+    "reglages.cles_aide": (
+        "Elles restent dans votre fichier local, sur cette machine."
+    ),
+    "sondes.outil_absent": (
+        "L'outil {nom} n'est pas installé. Dans PowerShell : {commande}"
+    ),
+    "sondes.outil_present": (
+        "L'outil {nom} est installé. "
+        "La connexion de l'abonnement n'a pas été vérifiée. "
+        "Pour vous connecter, dans PowerShell : {commande}"
+    ),
+    "sondes.outil_inconnu": "Cet outil n'est pas un harnais connu.",
+    "sondes.outil_echec": "L'outil {nom} n'a pas pu être vérifié.",
 }
 
 _EN: dict[str, str] = {
@@ -75,7 +253,7 @@ _EN: dict[str, str] = {
     "ui.welcome_body": (
         "A quiet voice on this computer, there when you call it. "
         "The light breathes with it. "
-        "Three settings: how to talk, which shortcut, how to hide."
+        "Four settings: hands-free, how to talk, which shortcut, how to hide."
     ),
     "ui.ptt_title": "Press to talk",
     "ui.ptt_body": (
@@ -101,7 +279,15 @@ _EN: dict[str, str] = {
     "ui.hearing": "I can hear you — release to send",
     "ui.speak": "Talk",
     "ui.speaking": "Talk…",
+    "ui.stop": "Stop",
+    "ui.interrupted": "Interrupted.",
+    "ui.interrupted_listening": "Interrupted — listening.",
+    "ui.listening_toggle": "Listening…",
+    "ui.tap_to_send": "Press to send",
+    "ui.listening_tap_send": "Listening… Press again to send.",
+    "ui.sending": "Sending…",
     "ui.hide_config": "Hide settings",
+    "ui.settings": "Settings",
     "ui.understood": "Heard",
     "ui.reply": "Reply",
     "ui.shortcut": "Space",
@@ -118,22 +304,319 @@ _EN: dict[str, str] = {
         "During a remote call the lightning bolt lights up and the status says so in text."
     ),
     "ui.channel_not_ready": "Channel not ready yet.",
+    "ui.hands_free_connecting": "Connecting…",
+    "ui.hands_free_connected": "Hands-free ready.",
+    "ui.channel_ready": "Channel ready. Hold Talk or {raccourci}.",
+    "ui.channel_ready_hands_free": (
+        "Channel ready. Press Talk or {raccourci} — press again to send."
+    ),
+    "ui.connecting": "Connecting…",
+    "ui.listening": "Listening… release to send.",
+    "ui.no_frames": "No frames captured (speech too short).",
+    "ui.frames_sent": "{n} frames sent, waiting for a reply…",
+    "ui.first_sound": "first sound: {ms:.0f} ms",
+    "ui.replying": "Reply in progress.",
+    "ui.feedback": "Send feedback",
+    "ui.feedback_url": "https://github.com/tbrignonen-ai/hyper-ambient/issues/new",
+    "ui.contrast": "High contrast",
+    "ui.language": "Language",
+    "ui.hands_free": (
+        "Hands-free: press Talk to start listening, press again to send. "
+        "No need to hold. This is not a continuously open mic. "
+        "With a JeV key, Hyper Ambient only answers when addressed. "
+        "Without a key, the Talk button is the fallback. "
+        "This is not a mode for deaf users: hearing and speech stay the channel, "
+        "with all text on screen (low vision, keyboard, focus)."
+    ),
+    "ui.hands_free_title": "Hands-free",
+    "ui.hands_free_on": "Hands-free: ON — tap Talk",
+    "ui.hands_free_off": "Hands-free: OFF",
+    "ui.hands_free_enable": "Enable",
+    "ui.hands_free_later": "Later",
+    "ui.hands_free_hint": (
+        "Not an open mic. Press Talk or {raccourci} to listen, "
+        "press again to send; JeV only ignores side talk."
+    ),
+    "ui.conversation_open": "In conversation — {n} s",
+    "ui.conversation_invite": "Say my name to talk to me",
+    "mandat.accuse": "I'll ask {harnais} to {sujet}. I'll let you know.",
+    "mandat.rappel": "{harnais} is taking a while — I'll let you know as soon as it's ready.",
+    "mandat.fini": "{harnais} is done.",
+    "mandat.offre": "Want the detail, or shall I open it?",
+    "mandat.echoue": "{harnais} didn't answer. I'll stop waiting.",
+    "mandat.plein": "I already have three mandates in progress. I can't take another.",
+    "mandat.sans_resume": (
+        "{harnais} answered but I don't have a summary. "
+        "Want the detail, or shall I open it?"
+    ),
+    "mandat.badge": "{n} result ready",
+    "reglages.titre": "Settings",
+    "reglages.enregistrer": "Save",
+    "reglages.tout_verifier": "Check all",
+    "reglages.verifier": "Check",
+    "reglages.je_verifie": "Checking…",
+    "reglages.enregistre": "Settings saved.",
+    "reglages.echec_sonde": "The check did not complete.",
+    "reglages.brain_titre": "Remote model",
+    "reglages.brain_aide": (
+        "A remote model is strongly recommended. "
+        "It is the one that takes the hard requests. "
+        "Pick a model whose reasoning can be turned off. "
+        "A model that thinks at length before answering is painful "
+        "spoken aloud: you wait in silence. "
+        "You can also go through the already-connected Codex or "
+        "Claude Code subscription, with no API key."
+    ),
+    "reglages.outil_codex_titre": "Codex harness",
+    "reglages.outil_codex_aide": (
+        "The Codex program already installed on this machine. "
+        "That is your ChatGPT Plus subscription, not a key."
+    ),
+    "reglages.outil_claude_titre": "Claude Code harness",
+    "reglages.outil_claude_aide": (
+        "The Claude Code program already installed on this machine. "
+        "That is your Claude Pro subscription, not a key."
+    ),
+    "reglages.codex_titre": "Codex bridge",
+    "reglages.codex_aide": (
+        "She can hand work to the coding tool already installed."
+    ),
+    "reglages.claude_titre": "Claude Code bridge",
+    "reglages.claude_aide": (
+        "She can hand an analysis to Claude Code already installed."
+    ),
+    "reglages.jev_titre": "JeV — TypeSafe AI",
+    "reglages.jev_aide": (
+        "This is how she knows she is being addressed, "
+        "and what makes hands-free possible."
+    ),
+    "reglages.champ.BRAIN_API_ENDPOINT": "Model address",
+    "reglages.champ.BRAIN_MODEL": "Model name (BRAIN_MODEL)",
+    "reglages.champ.BRAIN_MODEL_exemple": (
+        "Example: gpt-4.1, claude-sonnet-4 — the exact name the provider expects."
+    ),
+    "reglages.champ.BRAIN_API_KEY": "Model key",
+    "reglages.champ.CODEX_BRIDGE_URL": "Codex bridge address",
+    "reglages.champ.CODEX_BRIDGE_TOKEN": "Codex token",
+    "reglages.champ.CLI_BRIDGE_URL": "Claude bridge address",
+    "reglages.champ.CLI_BRIDGE_TOKEN": "Claude token",
+    "reglages.champ.TYPESAFE_MODEL": "Model name (TYPESAFE_MODEL)",
+    "reglages.champ.TYPESAFE_MODEL_exemple": (
+        "Example: jev-latest — the exact name TypeSafe AI expects."
+    ),
+    "reglages.champ.TYPESAFE_API_KEY": "JeV key",
+    "reglages.posee": "already set: {suffixe}",
+    "reglages.a11y": (
+        "Tab moves through the fields. Enter activates a button. "
+        "Escape closes settings without quitting the app."
+    ),
+    "reglages.confidentialite": (
+        "Hyper Ambient collects no data. "
+        "Anything that leaves goes to the services you chose."
+    ),
+    "reglages.categorie.machine": "On your machine",
+    "reglages.categorie.outils": "Your tools, your subscriptions",
+    "reglages.categorie.distants": "Remote services",
+    "reglages.donnees.modele_local": (
+        "Data stays local. Nothing leaves this machine."
+    ),
+    "reglages.donnees.outil_codex": (
+        "Data stays local. Talks to the local Codex bridge, "
+        "which uses your own subscription."
+    ),
+    "reglages.donnees.outil_claude": (
+        "Data stays local. Talks to the local Claude Code bridge, "
+        "which uses your own subscription."
+    ),
+    "reglages.donnees.codex": (
+        "Data stays local. Talks to the local Codex bridge, "
+        "which uses your own subscription."
+    ),
+    "reglages.donnees.claude": (
+        "Data stays local. Talks to the local Claude Code bridge, "
+        "which uses your own subscription."
+    ),
+    "reglages.donnees.brain_distant": (
+        "Data is sent to the remote model you chose."
+    ),
+    "reglages.donnees.jev": "Data is sent to TypeSafe AI. Optional.",
+    "reglages.donnees.recherche": (
+        "Data is sent to the search engine whose key you set."
+    ),
+    "reglages.donnees.cles": "Data stays local. File on this machine.",
+    "reglages.verifier_aide": (
+        "Check actually calls the service, with a five-second timeout."
+    ),
+    "reglages.echec_manuel": (
+        "If a check fails, settings can still be edited by hand "
+        "in the .env.local file."
+    ),
+    "reglages.detecter_abonnements": "Detect my subscriptions",
+    "reglages.modele_local_titre": "Local model",
+    "reglages.modele_local_aide": (
+        "The model that runs here. Nothing in this block leaves this machine."
+    ),
+    "reglages.recherche_titre": "Web search",
+    "reglages.recherche_aide": (
+        "Optional. If you set a key, the query goes to that search engine."
+    ),
+    "reglages.cles_titre": "Keys and settings",
+    "reglages.cles_aide": (
+        "They stay in your local file, on this machine."
+    ),
+    "sondes.outil_absent": (
+        "The {nom} tool is not installed. In PowerShell: {commande}"
+    ),
+    "sondes.outil_present": (
+        "The {nom} tool is installed. "
+        "The subscription connection was not checked. "
+        "To sign in, in PowerShell: {commande}"
+    ),
+    "sondes.outil_inconnu": "This tool is not a known harness.",
+    "sondes.outil_echec": "The {nom} tool could not be checked.",
+}
+
+_ES: dict[str, str] = {
+    "ui.conversation_open": "En conversación — {n} s",
+    "ui.conversation_invite": "Di mi nombre para hablarme",
 }
 
 _TABLES = {"fr": _FR, "en": _EN}
 
 QUESTIONS_EN: dict[str, dict[str, Any]] = {
-    "addressed_to_mother": {
+    "assistant_name_spoken": {
         "type": "noul",
-        "instructions": "Is the person speaking to MOTHER in `transcription`?",
+        "instructions": (
+            "Is the Hyper Ambient assistant's name spoken or clearly "
+            "transcribed in `transcription`?"
+        ),
         "criteria": {
-            "true": "MOTHER is explicitly addressed or clearly the addressee.",
-            "false": "Side conversation, dictated text, or unclear addressee.",
+            "true": (
+                "Count Hyper Ambient and close ASR deformations: "
+                "“hyper ambiant”, “hyper ambiance”, “hyper ambient”, "
+                "“super ambiante”, “HA”, “MOTHER”. The name alone is enough."
+            ),
+            "false": (
+                "None of these names or variants is spoken. Do not infer a "
+                "name from an isolated word such as “ambiance” or “super”."
+            ),
+        },
+    },
+    "direct_interpellation": {
+        "type": "noul",
+        "instructions": (
+            "Does the person directly address an interlocutor in "
+            "`transcription`?"
+        ),
+        "criteria": {
+            "true": (
+                "Greeting or direct call: “hello”, “hi”, “hey”, “he”, "
+                "“hi there”, “hello?”, “listen”, “tell me”, or vocative. "
+                "Count a greeting alone: without contrary context, it "
+                "addresses someone. Also count a formulation directly in "
+                "the second person."
+            ),
+            "false": (
+                "No address: narration, descriptive sentence, thinking out "
+                "loud, or speech identifiably exchanged between other people."
+            ),
+        },
+    },
+    "request_or_command": {
+        "type": "noul",
+        "instructions": (
+            "Does the person make a request, a question or an order to an "
+            "interlocutor in `transcription`?"
+        ),
+        "criteria": {
+            "true": (
+                "Question expecting an answer (“can you hear me?”, "
+                "“can you…?”), request, or imperative (“search”, “stop”, "
+                "“wait”, “give me”)."
+            ),
+            "false": (
+                "Mere statement, narration, reading, unfinished sentence, or "
+                "a reported question that does not ask the present "
+                "interlocutor for an answer."
+            ),
+        },
+    },
+    "third_party_conversation": {
+        "type": "noul",
+        "instructions": (
+            "Are the words clearly meant for another person present or a "
+            "third party, rather than the assistant?"
+        ),
+        "criteria": {
+            "true": (
+                "Identifiable conversation between humans, instruction to a "
+                "colleague or relative, or message meant for a third party: "
+                "e.g. “I'll send you the document after lunch”, “so we were "
+                "saying module two”."
+            ),
+            "false": (
+                "No identifiable third party; a request or greeting could be "
+                "for the assistant. The name Hyper Ambient/MOTHER/HA is never "
+                "a third party."
+            ),
+        },
+    },
+    "read_broadcast_recited": {
+        "type": "noul",
+        "instructions": (
+            "Is `transcription` read, broadcast or recited content, rather "
+            "than spontaneous speech addressed to the assistant?"
+        ),
+        "criteria": {
+            "true": (
+                "Television, radio, film, advertisement, credits, narration, "
+                "reading aloud, dictation, song lyrics or recited text: e.g. "
+                "“and now, tonight's film” or “Directed by…”."
+            ),
+            "false": (
+                "Spontaneous speech to an interlocutor, even if it contains a "
+                "greeting, a question or an order."
+            ),
+        },
+    },
+    "reported_or_quoted_speech": {
+        "type": "noul",
+        "instructions": (
+            "Does `transcription` report, quote or imitate speech instead of "
+            "addressing it to the assistant now?"
+        ),
+        "criteria": {
+            "true": (
+                "Reported or quoted speech, e.g. “he asked: can you hear me?”, "
+                "“she said hello”, or repeating an example."
+            ),
+            "false": (
+                "The person themselves now speaks the greeting, question, "
+                "request or order to get an answer."
+            ),
+        },
+    },
+    "unaddressed_self_talk": {
+        "type": "noul",
+        "instructions": (
+            "Is the person speaking without addressing any interlocutor?"
+        ),
+        "criteria": {
+            "true": (
+                "Thinking out loud, personal comment, monologue or "
+                "observation with no call, request or addressee."
+            ),
+            "false": (
+                "They address someone, make a request/question/order, speak "
+                "to a third party, or read/broadcast content."
+            ),
         },
     },
     "real_interruption": {
         "type": "noul",
-        "instructions": "Is `transcription` a real interruption of MOTHER speaking?",
+        "instructions": (
+            "Is `transcription` a real interruption of the assistant speaking?"
+        ),
         "criteria": {
             "true": "Order to stop, wait, change, or answer now.",
             "false": "Mere backchannel such as “mm-hm”, noise, or speech that does not interrupt.",
@@ -250,10 +733,14 @@ def langue() -> str:
 
 
 def t(key: str, **kwargs: Any) -> str:
-    table = _TABLES.get(langue(), _FR)
-    valeur = table.get(key)
-    if valeur is None:
-        valeur = _FR.get(key, key)
+    brut = (os.getenv("HA_LANG") or os.getenv("HYPER_AMBIENT_LANG") or "fr").strip().lower()
+    if brut.startswith("es") and key in _ES:
+        valeur = _ES[key]
+    else:
+        table = _TABLES.get(langue(), _FR)
+        valeur = table.get(key)
+        if valeur is None:
+            valeur = _FR.get(key, key)
     if kwargs:
         return valeur.format(**kwargs)
     return valeur
@@ -277,7 +764,15 @@ def ui() -> dict[str, str]:
         "hearing": t("ui.hearing"),
         "speak": t("ui.speak"),
         "speaking": t("ui.speaking"),
+        "stop": t("ui.stop"),
+        "interrupted": t("ui.interrupted"),
+        "interrupted_listening": t("ui.interrupted_listening"),
+        "listening_toggle": t("ui.listening_toggle"),
+        "tap_to_send": t("ui.tap_to_send"),
+        "listening_tap_send": t("ui.listening_tap_send"),
+        "sending": t("ui.sending"),
         "hide_config": t("ui.hide_config"),
+        "settings": t("ui.settings"),
         "understood": t("ui.understood"),
         "reply": t("ui.reply"),
         "shortcut": t("ui.shortcut"),
@@ -289,6 +784,29 @@ def ui() -> dict[str, str]:
         "start_and_hide": t("ui.start_and_hide"),
         "shortcut_kept": t("ui.shortcut_kept"),
         "channel_not_ready": t("ui.channel_not_ready"),
+        "hands_free_connecting": t("ui.hands_free_connecting"),
+        "hands_free_connected": t("ui.hands_free_connected"),
+        "channel_ready": t("ui.channel_ready"),
+        "channel_ready_hands_free": t("ui.channel_ready_hands_free"),
+        "connecting": t("ui.connecting"),
+        "listening": t("ui.listening"),
+        "no_frames": t("ui.no_frames"),
+        "frames_sent": t("ui.frames_sent"),
+        "first_sound": t("ui.first_sound"),
+        "replying": t("ui.replying"),
+        "feedback": t("ui.feedback"),
+        "feedback_url": t("ui.feedback_url"),
+        "contrast": t("ui.contrast"),
+        "language": t("ui.language"),
+        "hands_free": t("ui.hands_free"),
+        "hands_free_title": t("ui.hands_free_title"),
+        "hands_free_on": t("ui.hands_free_on"),
+        "hands_free_off": t("ui.hands_free_off"),
+        "hands_free_enable": t("ui.hands_free_enable"),
+        "hands_free_later": t("ui.hands_free_later"),
+        "hands_free_hint": t("ui.hands_free_hint"),
+        "conversation_open": t("ui.conversation_open"),
+        "conversation_invite": t("ui.conversation_invite"),
     }
 
 

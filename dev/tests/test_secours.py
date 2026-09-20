@@ -261,3 +261,35 @@ def test_un_signal_vide_est_du_silence():
     import numpy as np
 
     assert est_silence(np.zeros(0, dtype=np.float32)) is True
+
+
+def test_silence_ne_parle_pas_en_ecoute_continue():
+    """En mains libres, un segment sans parole doit rester silencieux.
+
+    En appuyer-pour-parler, « Je n'ai rien entendu » est juste : l'utilisateur
+    a appuye, il attend une reaction. En ecoute continue il n'a rien demande —
+    le micro est ouvert en permanence et chaque segment sous le seuil
+    declencherait la phrase. Elle parlerait en boucle.
+
+    Les autres causes restent annoncees : si BRAIN est injoignable apres une
+    vraie transcription, l'utilisateur a bien pose une question et merite une
+    reponse.
+    """
+    from src.mouth.secours import phrase_de_secours
+
+    commun = dict(reply="", brain_injoignable=False, duree_audio_s=1.0)
+
+    # Appuyer-pour-parler : inchange, elle annonce le silence.
+    assert phrase_de_secours(transcript="", **commun)
+
+    # Ecoute continue : muette sur le silence.
+    assert phrase_de_secours(transcript="", mains_libres=True, **commun) is None
+
+    # Mais une panne de BRAIN apres une vraie phrase reste annoncee.
+    assert phrase_de_secours(
+        transcript="quelle heure est-il",
+        reply="",
+        brain_injoignable=True,
+        duree_audio_s=1.0,
+        mains_libres=True,
+    )

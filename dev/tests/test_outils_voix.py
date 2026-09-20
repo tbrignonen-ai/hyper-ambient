@@ -604,3 +604,154 @@ async def test_bonjour_vocal_ne_declare_pas_d_outils_au_reflexe(monkeypatch):
     assert rapport is not None
     assert rapport["reply"] == "Bonjour."
     assert pipeline.tts.hors_flux == []
+
+
+# --- 4. Memoire des resultats d'outils + deux outils par tour -----------------
+
+
+class _ASRTexte:
+    def __init__(self, texte: str) -> None:
+        self.texte = texte
+
+    async def transcribe(self, audio):
+        return {"text": self.texte, "latency_ms": 1.0}
+
+
+async def _jouer_tour_texte(pipeline, chunks, texte: str):
+    pipeline.asr = _ASRTexte(texte)
+    pipeline.tts = _MOUTHDouble()
+    pipeline.brain = _BrainDouble(chunks)
+    socket = _SocketDouble()
+    await pipeline._enchainer(_trames_de_parole(), socket)
+    return socket
+
+
+CHUNKS_AVEC_CONTENU_OUTIL = [
+    {"channel": "tool", "tool": "ask_codex", "phase": "call", "delta": ""},
+    {
+        "channel": "tool",
+        "tool": "ask_codex",
+        "phase": "result",
+        "delta": "",
+        "content": "Il y a neuf fichiers dans src/brain.",
+    },
+    {"delta": "Il y a neuf fichiers", "stop_reason": None, "ttft_ms": 12.0},
+    {"delta": " dans src/brain.", "stop_reason": None, "ttft_ms": None},
+    {"delta": "", "stop_reason": "stop", "ttft_ms": None},
+]
+
+
+@pytest.mark.asyncio
+async def test_le_resultat_outil_est_retenu_hors_annonce():
+    """Le tour suivant a besoin du texte Codex, pas de l'amorce TTS."""
+    pipeline = serve_hostagent.HostPipeline()
+    await _jouer_tour(pipeline, CHUNKS_AVEC_CONTENU_OUTIL)
+    attendue = serve_hostagent.annonce_outil("ask_codex")
+    assert pipeline._dernier_outils
+    assert pipeline._dernier_outils[0]["name"] == "ask_codex"
+    assert "neuf fichiers" in pipeline._dernier_outils[0]["content"]
+    assert all(attendue not in m["content"] for m in pipeline._historique)
+    assert all(attendue not in o["content"] for o in pipeline._dernier_outils)
+    assert len(pipeline._historique) <= serve_hostagent.MEMOIRE_MESSAGES
+
+
+@pytest.mark.asyncio
+async def test_le_tour_suivant_injecte_le_resultat_outil_dans_l_historique():
+    """Sans ça, le modèle dit « pas de texte Codex » au tour d'après."""
+    pipeline = serve_hostagent.HostPipeline()
+    await _jouer_tour(pipeline, CHUNKS_AVEC_CONTENU_OUTIL)
+    await _jouer_tour_texte(
+        pipeline,
+        [
+            {"delta": "Claude a lu Codex.", "stop_reason": None, "ttft_ms": 8.0},
+            {"delta": "", "stop_reason": "stop", "ttft_ms": None},
+        ],
+        "Demande a Claude de contre-analyser Codex.",
+    )
+    assert pipeline.brain.appels, "le second tour n'a pas appelé le modèle"
+    history = pipeline.brain.appels[0].get("history") or []
+    injectes = [
+        m["content"]
+        for m in history
+        if "[résultat outil ask_codex]" in m.get("content", "")
+    ]
+    assert injectes, f"résultat outil absent de l'historique: {history!r}"
+    assert "neuf fichiers" in injectes[0]
+
+
+@pytest.mark.asyncio
+async def test_le_resultat_outil_expire_apres_le_tour_de_suivi():
+    """Le resultat aide la reprise immediate, jamais les tours ulterieurs."""
+    pipeline = serve_hostagent.HostPipeline()
+    await _jouer_tour(pipeline, CHUNKS_AVEC_CONTENU_OUTIL)
+    await _jouer_tour_texte(
+        pipeline,
+        [
+            {"delta": "Je poursuis.", "stop_reason": None, "ttft_ms": 8.0},
+            {"delta": "", "stop_reason": "stop", "ttft_ms": None},
+        ],
+        "Continue.",
+    )
+    await _jouer_tour_texte(
+        pipeline,
+        [
+            {"delta": "Nouveau sujet.", "stop_reason": None, "ttft_ms": 8.0},
+            {"delta": "", "stop_reason": "stop", "ttft_ms": None},
+        ],
+        "Et maintenant ?",
+    )
+
+    history = pipeline.brain.appels[0].get("history") or []
+    assert not any("[résultat outil ask_codex]" in m.get("content", "") for m in history)
+    assert pipeline._dernier_outils == []
+
+
+@pytest.mark.asyncio
+async def test_un_resultat_outil_trop_long_est_tronque():
+    trop = "X" * 4000
+    pipeline = serve_hostagent.HostPipeline()
+    await _jouer_tour(
+        pipeline,
+        [
+            {"channel": "tool", "tool": "ask_codex", "phase": "call", "delta": ""},
+            {
+                "channel": "tool",
+                "tool": "ask_codex",
+                "phase": "result",
+                "delta": "",
+                "content": trop,
+            },
+            {"delta": "Voila.", "stop_reason": "stop", "ttft_ms": 1.0},
+        ],
+    )
+    from src.brain.tools import MAX_TOOL_CONTENT_CHARS
+
+    assert len(pipeline._dernier_outils[0]["content"]) <= MAX_TOOL_CONTENT_CHARS
+
+
+@pytest.mark.asyncio
+async def test_un_tour_autorise_deux_outils(monkeypatch):
+    """Codex puis Claude dans le même tour : max_tool_calls=2, un appel par itération."""
+    captured = {}
+
+    async def spy(*args, **kwargs):
+        captured["max_tool_calls"] = kwargs.get("max_tool_calls")
+        if False:
+            yield {}
+
+    monkeypatch.setattr(serve_hostagent, "run_tool_loop", spy)
+    pipeline = serve_hostagent.HostPipeline()
+    pipeline.registre = serve_hostagent.construire_registre(client=None)
+    pipeline.porte = serve_hostagent.construire_porte()
+    await _jouer_tour(
+        pipeline,
+        [
+            {"delta": "Bonsoir.", "stop_reason": None, "ttft_ms": 9.0},
+            {"delta": "", "stop_reason": "stop", "ttft_ms": None},
+        ],
+    )
+    assert captured.get("max_tool_calls") == 2
+    from src.brain.tool_loop import MAX_TOOL_CALLS_PER_ITERATION
+
+    assert MAX_TOOL_CALLS_PER_ITERATION == 1
+    assert serve_hostagent.MEMOIRE_MESSAGES == 12

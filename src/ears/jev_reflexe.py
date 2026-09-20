@@ -5,7 +5,7 @@ comportement actuel lorsque :meth:`JevReflexe.evaluate` rend ``None``.  Cela
 arrive sans cle, au moindre echec HTTP ou si le budget de 600 ms est depasse.
 
 Un meme ``JevReflexe`` conserve son ``httpx.AsyncClient`` : httpx reutilise
-alors la connexion HTTPS (keep-alive) entre les tours.  Les treize jugements
+alors la connexion HTTPS (keep-alive) entre les tours.  Les dix-neuf jugements
 sont volontairement regroupes dans une seule requete System One.
 """
 from __future__ import annotations
@@ -14,6 +14,8 @@ import asyncio
 from dataclasses import dataclass
 import logging
 import os
+import time
+import re
 from typing import Any, Mapping, Optional
 
 
@@ -21,23 +23,165 @@ logger = logging.getLogger(__name__)
 
 JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone"
 JEV_MODEL = "jev-latest"
+
+
+def modele_jev() -> str:
+    """Nom du modèle JeV : ``TYPESAFE_MODEL`` à l'appel, sinon ``jev-latest``.
+
+    Lu à chaque appel, pas à l'import : un changement depuis les réglages
+    (ou un monkeypatch de test) prend effet sans recréer le client.
+    Une valeur vide ou blanche retombe sur le défaut.
+    """
+    valeur = (os.getenv("TYPESAFE_MODEL") or "").strip()
+    return valeur or JEV_MODEL
+
 MAX_TIMEOUT_MS = 600
+PRECHAUFFAGE_TIMEOUT_S = 10.0
+# 60 s tient encore (351 ms) ; 90 s expire (601 ms). 40 s reste sous la
+# duree de vie mesuree de la connexion chaude (2026-09-20).
+INTERVALLE_MAINTIEN_S = 40.0
 
 
 # Les identifiants sont stables : ils constituent le contrat avec le futur
 # branchement EARS, tandis que les instructions restent explicites pour JeV.
 QUESTIONS: dict[str, dict[str, Any]] = {
-    "addressed_to_mother": {
+    "assistant_name_spoken": {
         "type": "noul",
-        "instructions": "La personne parle-t-elle a MOTHER dans `transcription` ?",
+        "instructions": (
+            "Le nom de l'assistante Hyper Ambient est-il prononce ou "
+            "manifestement transcrit dans `transcription` ?"
+        ),
         "criteria": {
-            "true": "MOTHER est explicitement interpellee ou clairement destinataire.",
-            "false": "Conversation autour, texte dicte, ou destinataire incertain.",
+            "true": (
+                "Compter Hyper Ambient et deformations ASR proches : "
+                "« hyper ambiant », « hyper ambiance », « hyper ambient », "
+                "« super ambiante », « HA », « MOTHER ». Le nom seul suffit."
+            ),
+            "false": (
+                "Aucun de ces noms ou variantes n'est prononce. Ne pas deduire "
+                "un nom a partir d'un mot isole comme « ambiance » ou « super »."
+            ),
+        },
+    },
+    "direct_interpellation": {
+        "type": "noul",
+        "instructions": (
+            "La personne interpelle-t-elle directement un interlocuteur dans "
+            "`transcription` ?"
+        ),
+        "criteria": {
+            "true": (
+                "Salutation ou appel direct : « bonjour », « salut », « hey », "
+                "« he », « coucou », « allo », « ecoute », « dis-moi », ou "
+                "vocatif. Compter une salutation seule : sans contexte contraire, "
+                "elle interpelle quelqu'un. Compter aussi une formulation "
+                "directement a la deuxieme personne."
+            ),
+            "false": (
+                "Pas d'interpellation : narration, phrase descriptive, reflexion "
+                "a voix haute, ou paroles echangees de maniere identifiable entre "
+                "d'autres personnes."
+            ),
+        },
+    },
+    "request_or_command": {
+        "type": "noul",
+        "instructions": (
+            "La personne formule-t-elle a un interlocuteur une demande, une "
+            "question ou un ordre dans `transcription` ?"
+        ),
+        "criteria": {
+            "true": (
+                "Question attendant une reponse (« est-ce que tu m'entends ? », "
+                "« tu peux… ? »), demande, ou imperatif (« cherche », « arrete », "
+                "« attends », « donne-moi »)."
+            ),
+            "false": (
+                "Simple affirmation, narration, lecture, phrase inachevee, ou "
+                "question rapportee qui ne demande pas de reponse a l'interlocuteur "
+                "present."
+            ),
+        },
+    },
+    "third_party_conversation": {
+        "type": "noul",
+        "instructions": (
+            "Les paroles sont-elles clairement destinees a une autre personne "
+            "presente ou a un tiers, plutot qu'a l'assistante ?"
+        ),
+        "criteria": {
+            "true": (
+                "Conversation identifiable entre humains, consigne a un "
+                "collegue/proche, ou message destine a un tiers : par exemple "
+                "« je t'envoie le document apres le dejeuner », « bon alors on "
+                "disait le module deux »."
+            ),
+            "false": (
+                "Aucun tiers identifiable ; une demande ou salutation pourrait "
+                "etre pour l'assistante. Le nom Hyper Ambient/MOTHER/HA n'est "
+                "jamais un tiers."
+            ),
+        },
+    },
+    "read_broadcast_recited": {
+        "type": "noul",
+        "instructions": (
+            "`transcription` est-elle du contenu lu, diffuse ou recite, plutot "
+            "qu'une parole spontanee adressee a l'assistante ?"
+        ),
+        "criteria": {
+            "true": (
+                "Television, radio, film, publicite, generique/credits, "
+                "narration, lecture a voix haute, dictee, paroles de chanson ou "
+                "texte recite : par exemple « et maintenant place au film de la "
+                "soiree » ou « Realise par… »."
+            ),
+            "false": (
+                "Parole spontanee a un interlocuteur, meme si elle contient une "
+                "salutation, une question ou un ordre."
+            ),
+        },
+    },
+    "reported_or_quoted_speech": {
+        "type": "noul",
+        "instructions": (
+            "`transcription` rapporte-t-elle, cite-t-elle ou imite-t-elle des "
+            "paroles au lieu de les adresser maintenant a l'assistante ?"
+        ),
+        "criteria": {
+            "true": (
+                "Paroles rapportees ou citees, par exemple « il a demande : tu "
+                "m'entends ? », « elle a dit bonjour », ou une repetition "
+                "d'exemple."
+            ),
+            "false": (
+                "La personne prononce elle-meme, maintenant, la salutation, la "
+                "question, la demande ou l'ordre pour obtenir une reponse."
+            ),
+        },
+    },
+    "unaddressed_self_talk": {
+        "type": "noul",
+        "instructions": (
+            "La personne parle-t-elle sans s'adresser a aucun interlocuteur ?"
+        ),
+        "criteria": {
+            "true": (
+                "Reflexion a voix haute, commentaire personnel, monologue ou "
+                "constat sans appel, demande ni destinataire."
+            ),
+            "false": (
+                "Elle interpelle quelqu'un, formule une demande/question/ordre, "
+                "parle a un tiers, ou lit/diffuse du contenu."
+            ),
         },
     },
     "real_interruption": {
         "type": "noul",
-        "instructions": "`transcription` est-elle une interruption reelle de la parole de MOTHER ?",
+        "instructions": (
+            "`transcription` est-elle une interruption reelle de la parole "
+            "de l'assistante ?"
+        ),
         "criteria": {
             "true": "Ordre de stopper, attendre, changer ou repondre maintenant.",
             "false": "Simple acquiescement comme « mmh », bruit ou parole sans interruption.",
@@ -155,6 +299,106 @@ def _questions_pour_appel() -> dict[str, dict[str, Any]]:
     return questions_jev()
 
 
+# Seuils de addressed_v2. Mesure 2026-09-20 : 0 faux negatif / 24 adressees,
+# 0 faux positif / 22 non adressees. Voir nights/2026-09-20-OUT-JEV-QUESTIONS-V2.md.
+SEUIL_NOM_PRONONCE = 0.50  # assistant_name_spoken >= : invocation a lui seul
+SEUIL_INTERPELLATION = 0.55  # direct_interpellation >=
+SEUIL_DEMANDE = 0.50  # request_or_command >=
+SEUIL_TIERS = 0.55  # veto si third_party_conversation >=
+SEUIL_LU_DIFFUSE = 0.65  # veto si read_broadcast_recited >=
+SEUIL_PAROLE_RAPPORTEE = 0.50  # veto si reported_or_quoted_speech >=
+SEUIL_MONOLOGUE = 0.70  # veto si unaddressed_self_talk >=
+
+
+def addressed_v2(a: Mapping[str, Mapping[str, Any]]) -> bool:
+    """Nom explicite, ou interpellation/demande sans veto fort.
+
+    Conserve volontairement les salutations seules : le produit prefere
+    repondre a un « bonjour » plutot que l'ignorer.
+    """
+
+    def s(name: str) -> float:
+        return float(a[name]["noul"])
+
+    return s("assistant_name_spoken") >= SEUIL_NOM_PRONONCE or (
+        (s("direct_interpellation") >= SEUIL_INTERPELLATION or s("request_or_command") >= SEUIL_DEMANDE)
+        and s("third_party_conversation") < SEUIL_TIERS
+        and s("read_broadcast_recited") < SEUIL_LU_DIFFUSE
+        and s("reported_or_quoted_speech") < SEUIL_PAROLE_RAPPORTEE
+        and s("unaddressed_self_talk") < SEUIL_MONOLOGUE
+    )
+
+
+# Le produit s'appelle hyper-ambient ; « MOTHER » reste son ancien nom, encore
+# employe a l'oral. Whisper transcrit indifferemment « ambient » et « ambiant ».
+_NOMS = (
+    # Whisper deforme le nom sur les segments courts. Mesures reelles du
+    # 2026-09-20 : « Hyper ambient » rendu « l'ambiance », et
+    # « Hyper ambiant » rendu « Super ambiante ». On accepte donc la
+    # famille de formes, pas la seule orthographe exacte — mais on exige
+    # les DEUX morceaux accoles, pour ne pas se declencher sur un
+    # « super » ou une « ambiance » employes seuls.
+    r"\b(?:hyper|super|hypere)[\s\'\-]*ambi[ae]n[ct]e?\b",
+    r"\bmother\b",
+)
+_MOTIF_NOM = re.compile("|".join(_NOMS), re.IGNORECASE)
+
+
+# Duree pendant laquelle elle reste engagee apres avoir ete adressee. Assez
+# longue pour enchainer une question apres « Oui ? », assez courte pour ne pas
+# transformer la piece en micro ouvert si l'utilisateur s'eloigne.
+DUREE_FENETRE_S = 30.0
+
+
+class FenetreConversation:
+    """Une fois nommee, elle reste engagee un moment.
+
+    Mesure du 2026-09-20 contre l'API JeV : « bonjour » (0.31) et « salut »
+    (0.25) scorent SOUS une phrase de television en fond (0.26). Aucun seuil ne
+    peut donc separer une salutation qui lui est adressee du bruit ambiant, et
+    JeV n'a pas tort — un « bonjour » lance dans une piece ne designe
+    linguistiquement personne.
+
+    La sortie n'est pas un meilleur seuil mais une memoire courte : on la nomme
+    une fois, et ce qui suit lui est adresse. C'est ainsi qu'on parle a
+    quelqu'un. Effet de bord utile : pendant la fenetre, aucun appel distant
+    n'est necessaire.
+    """
+
+    def __init__(self, duree_s: float = DUREE_FENETRE_S) -> None:
+        self.duree_s = float(duree_s)
+        self._jusqu_a: Optional[float] = None
+
+    def engager(self, maintenant: Optional[float] = None) -> None:
+        """Ouvre ou prolonge la fenetre. Chaque tour adresse la repousse."""
+        instant = time.monotonic() if maintenant is None else maintenant
+        self._jusqu_a = instant + self.duree_s
+
+    def engagee(self, maintenant: Optional[float] = None) -> bool:
+        if self._jusqu_a is None:
+            return False
+        instant = time.monotonic() if maintenant is None else maintenant
+        return instant <= self._jusqu_a
+
+    def fermer(self) -> None:
+        """Referme immediatement — a appeler quand le mains libres s'eteint."""
+        self._jusqu_a = None
+
+
+def nom_du_produit_prononce(transcription: str) -> bool:
+    """True si l'assistante est nommee dans la transcription.
+
+    Dire son nom, c'est s'adresser a elle : l'intention est certaine et se
+    verifie en local. Mesure du 2026-09-20 : JeV note « Hyper Ambient » seul a
+    0.39, sous tout seuil utilisable — le modele distant juge mal les enonces
+    d'un seul mot. On tranche donc ici, sans payer d'appel ni en subir la
+    latence.
+    """
+    if not transcription or not transcription.strip():
+        return False
+    return bool(_MOTIF_NOM.search(transcription))
+
+
 def _env_float(name: str, default: float, *, low: float, high: float) -> float:
     """Lit un seuil sans transformer une mauvaise configuration en panne."""
     try:
@@ -181,7 +425,13 @@ class JevThresholds:
     """
 
     timeout_ms: int = MAX_TIMEOUT_MS
-    noul_true: float = 0.75
+    # Calibre par la mesure le 2026-09-20 sur 32 phrases (16 adressees,
+    # 16 captees autour du micro) : 0.60 est le seuil le plus bas qui ne
+    # produit aucun faux positif. A 0.75, neuf phrases adressees sur seize
+    # etaient ignorees, dont « tu m'entends ? ». A 0.55, une phrase de
+    # television en fond passait — un declenchement parasite coute plus cher
+    # qu'une ignorance ponctuelle. Voir nights/2026-09-20-OUT-CALIBRAGE-JEV.md
+    noul_true: float = 0.60
     choice_confidence: float = 0.60
     score_confidence: float = 0.60
 
@@ -196,7 +446,7 @@ class JevThresholds:
     def from_env(cls) -> "JevThresholds":
         return cls(
             timeout_ms=_env_int("JEV_TIMEOUT_MS", MAX_TIMEOUT_MS, low=1, high=MAX_TIMEOUT_MS),
-            noul_true=_env_float("JEV_NOUL_TRUE_THRESHOLD", 0.75, low=0.0, high=1.0),
+            noul_true=_env_float("JEV_NOUL_TRUE_THRESHOLD", 0.60, low=0.0, high=1.0),
             choice_confidence=_env_float("JEV_CHOICE_CONFIDENCE_THRESHOLD", 0.60, low=0.0, high=1.0),
             score_confidence=_env_float("JEV_SCORE_CONFIDENCE_THRESHOLD", 0.60, low=0.0, high=1.0),
         )
@@ -294,7 +544,7 @@ class JevReflexe:
                     self.endpoint,
                     json={
                         "state": state,
-                        "model": JEV_MODEL,
+                        "model": modele_jev(),
                         "questions": _questions_pour_appel(),
                     },
                     headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -321,6 +571,41 @@ class JevReflexe:
             logger.debug("JeV a retourne une reponse incomplete")
             return None
         return JevEvaluation(answers=answers, signals=_signals(answers, self.thresholds))
+
+    async def prechauffer(self) -> bool:
+        """Paie la poignee TLS hors du budget du tour. Ne leve jamais."""
+        if not self._key_at_execution():
+            return False
+        transport = await self._get_transport()
+        if transport is None:
+            return False
+        try:
+            await transport.post(
+                self.endpoint,
+                json={},
+                headers={
+                    "Authorization": f"Bearer {self._key_at_execution()}",
+                    "Content-Type": "application/json",
+                },
+                timeout=PRECHAUFFAGE_TIMEOUT_S,
+            )
+        except Exception:
+            logger.debug("JeV prechauffage : connexion non etablie")
+            return False
+        return True
+
+    async def maintenir(self, intervalle_s: float = INTERVALLE_MAINTIEN_S) -> None:
+        """Ping de maintien jusqu'a annulation.
+
+        ``INTERVALLE_MAINTIEN_S`` (40 s) : 60 s tient encore, 90 s expire
+        (mesure 2026-09-20).
+        """
+        try:
+            while True:
+                await asyncio.sleep(intervalle_s)
+                await self.prechauffer()
+        except asyncio.CancelledError:
+            raise
 
     async def aclose(self) -> None:
         """Ferme uniquement le client cree par cette instance."""
@@ -388,7 +673,7 @@ def _choice(
 def _signals(answers: Mapping[str, Mapping[str, Any]], thresholds: JevThresholds) -> JevSignals:
     """Transforme les sorties typees en suggestions, jamais en actions."""
     return JevSignals(
-        addressed_to_mother=_noul(answers, "addressed_to_mother", thresholds.noul_true),
+        addressed_to_mother=addressed_v2(answers),
         real_interruption=_noul(answers, "real_interruption", thresholds.noul_true),
         phrase_finished=_noul(answers, "phrase_finished", thresholds.noul_true),
         transcription_uncertain=_noul(answers, "transcription_uncertain", thresholds.noul_true),

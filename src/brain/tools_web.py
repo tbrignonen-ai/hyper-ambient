@@ -405,20 +405,76 @@ class WebSearch:
 
     async def __call__(self, query: str) -> str:
         last_text = _NO_KEY
+        # Un fournisseur JOIGNABLE qui ne trouve rien en dit plus long que les
+        # fournisseurs sans cle qui le suivent dans la cascade. Sans cette
+        # memoire, une recherche SearXNG aboutie mais vide finissait par le
+        # texte du dernier fournisseur — « pas d'acces a internet » — soit un
+        # aveu de panne pour une recherche qui avait pourtant fonctionne.
+        vide_constate = False
+        echec_reseau = False
         for provider in self.providers:
             available, text = await provider.search(query)
             if available:
                 return text
+            if text == _EMPTY:
+                vide_constate = True
+            elif text == _FAILED:
+                echec_reseau = True
             last_text = text
             logger.info("web_search: repli apres %s", provider.__class__.__name__)
+        if vide_constate:
+            return _EMPTY
         # Une erreur reseau est plus utile qu'un "pas de cle" si tout a echoue.
-        return _FAILED if last_text == _FAILED else _EMPTY if last_text == _EMPTY else last_text
+        if echec_reseau:
+            return _FAILED
+        return last_text
+
+
+def _premier_texte(valeurs: Any) -> str:
+    """Premiere chaine non vide d'une liste SearXNG `answers`."""
+    if not isinstance(valeurs, list):
+        return ""
+    for valeur in valeurs:
+        if isinstance(valeur, str) and valeur.strip():
+            return valeur.strip()
+        # Certaines versions emettent {"answer": "..."} plutot qu'une chaine.
+        if isinstance(valeur, dict):
+            texte = valeur.get("answer") or valeur.get("content")
+            if isinstance(texte, str) and texte.strip():
+                return texte.strip()
+    return ""
+
+
+def _texte_infobox(infoboxes: Any) -> str:
+    """Contenu redige de la premiere infobox exploitable."""
+    if not isinstance(infoboxes, list):
+        return ""
+    for boite in infoboxes:
+        if not isinstance(boite, dict):
+            continue
+        contenu = boite.get("content")
+        if isinstance(contenu, str) and contenu.strip():
+            titre = boite.get("infobox")
+            titre = titre.strip() if isinstance(titre, str) else ""
+            return f"{titre} : {contenu.strip()}" if titre else contenu.strip()
+    return ""
 
 
 def _speakable(payload: Dict[str, Any], max_results: int) -> str:
     """Met la reponse Tavily en une forme lisible a voix haute."""
     raw_answer = payload.get("answer")
     answer = raw_answer.strip() if isinstance(raw_answer, str) else ""
+
+    # SearXNG ne met pas ses reponses directes dans `results` : il remplit
+    # `answers` (reponses courtes) et `infoboxes` (fiches redigees). Mesure du
+    # 2026-09-20 : « Marseille » rend `results: []` et une infobox Wikipedia
+    # complete. Les ignorer, c'est jeter la meilleure reponse disponible et
+    # faire dire a l'assistante qu'elle n'a pas acces a internet.
+    if not answer:
+        answer = _premier_texte(payload.get("answers"))
+    if not answer:
+        answer = _texte_infobox(payload.get("infoboxes"))
+
     raw_results = payload.get("results")
     results = raw_results if isinstance(raw_results, list) else []
 

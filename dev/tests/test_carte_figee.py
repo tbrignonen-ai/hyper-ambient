@@ -40,7 +40,7 @@ def test_carte_figee_ecrase_l_ancienne_carte(tmp_path):
     assert env["EARS_LANGUAGE"] == "fr"
     assert env["EARS_DEVICE"] == "cuda"
     assert env["EARS_COMPUTE_TYPE"] == "int8_float16"
-    assert env["EARS_HOTWORDS"] == "MOTHER Codex Camunda Claude"
+    assert env["EARS_HOTWORDS"] == "Hyper Ambient"
     assert env["MOUTH_BACKEND"] == "magpie"
     assert env["MOUTH_VOICE_NAME"] == "Sofia"
     assert env["MOUTH_DEVICE"] == "cuda"

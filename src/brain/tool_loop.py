@@ -229,6 +229,14 @@ async def run_tool_loop(
         for call in to_run:
             yield {"channel": "tool", "tool": call.name, "phase": "call", "delta": ""}
             result, phase = await _execute(call, registry, gate)
-            yield {"channel": "tool", "tool": call.name, "phase": phase, "delta": ""}
+            # `content` hors delta : MOUTH ne parle que les deltas non vides.
+            # Le tour vocal le recopie dans `_dernier_outils` pour le tour suivant.
+            yield {
+                "channel": "tool",
+                "tool": call.name,
+                "phase": phase,
+                "delta": "",
+                "content": result.content,
+            }
             messages.append(result.to_message())
             executed += 1

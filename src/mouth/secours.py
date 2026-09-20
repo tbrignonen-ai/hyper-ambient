@@ -40,12 +40,26 @@ _PHRASES: dict[str, dict[str, str]] = {
 def phrase_de_secours(
     *,
     transcript: str,
+    # Ces trois-la restent OBLIGATOIRES a dessein. Leur donner une valeur par
+    # defaut rendrait un appel incomplet silencieusement valide : un appelant
+    # qui oublie `reply` obtiendrait `reply=""`, donc la phrase « Je n'ai rien
+    # a dire » prononcee a tort. C'est exactement l'accident que ce module
+    # existe pour empecher — voir l'avertissement en tete de fichier.
     reply: str,
     brain_injoignable: bool,
     duree_audio_s: float,
     langue: str = "fr",
+    mains_libres: bool = False,
 ) -> str | None:
-    """Rend la phrase à prononcer quand le tour a mal tourné, ou None si tout va bien."""
+    """Rend la phrase à prononcer quand le tour a mal tourné, ou None si tout va bien.
+
+    ``mains_libres`` change une seule chose : en écoute continue, un segment
+    sans parole ne dit rien. L'utilisateur n'a rien demandé — le micro est
+    ouvert en permanence, et annoncer le silence ferait parler en boucle. En
+    appuyer-pour-parler il a appuyé, donc il attend une réaction : la phrase
+    reste. Les autres causes s'annoncent dans les deux modes, parce qu'elles
+    suivent toujours une vraie demande.
+    """
     voix = _PHRASES.get(langue, _PHRASES["fr"])
 
     # La durée l'emporte sur le silence, qui l'emporte sur BRAIN.
@@ -56,7 +70,7 @@ def phrase_de_secours(
     if duree_audio_s > LIMITE_ENONCE_S:
         return voix["trop_long"]
     if not transcript.strip():
-        return voix["silence"]
+        return None if mains_libres else voix["silence"]
     if brain_injoignable:
         return voix["injoignable"]
     if not reply.strip():
