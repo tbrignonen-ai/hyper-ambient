@@ -1,7 +1,7 @@
 ---
 date: 2026-09-19
 type: annexe-technique-bc02
-statut: brouillon-a-arbitrer (trous comblés par Claude 19/09 ~20h)
+statut: brouillon — carte figée intégrée, trous comblés par Claude les 19 et 20/09
 perimetre: Windows, français, local-first, démonstration clé-en-main
 ---
 
@@ -11,29 +11,37 @@ perimetre: Windows, français, local-first, démonstration clé-en-main
 
 ## [À PROUVER] restants — arbitrage Claude / Thomas
 
-1. La carte finale des composants IA (oreille, cerveau, voix) et leurs paramètres de lancement : **[CARTE EN COURS]**. [S01]
-2. L'écoute réseau effective des ponts exclusivement en localhost, ainsi que la non-conservation de l'audio : **[À PROUVER]** ; ce ne sont pas des garanties établies par cette annexe. [S02]
+1. Carte des composants IA : **figée le 19 septembre** (Granite 4.2 3B Q4_K_M, Whisper large-v3 int8, Magpie TTS voix Sofia) ; les réglages de lancement ne sont pas encore inscrits dans la configuration de référence — **[À PROUVER]** jusqu'à ce que la carte soit rendue persistante. [S01]
+2. Écoute réseau et conservation de l'audio — **vérifié le 20/09, avec une réserve** : le host-agent est lancé avec `HOST = "0.0.0.0"` (`dev/scripts/serve_hostagent.py:49`), donc il **n'écoute pas uniquement en localhost** ; il n'est joignable de l'extérieur que si le port est publié et le pare-feu ouvert, et un secret est exigé. Correctif recommandé avant diffusion publique : lier à `127.0.0.1` par défaut. En revanche, **l'audio entrant n'est écrit nulle part** : aucune écriture de fichier audio dans le chemin d'exécution (seuls les bancs d'essai de `dev/scripts/` produisent des fichiers `.wav`). [S02]
 3. La preuve C1 d'un tour vocal complet appelant un pont externe, et la preuve C2 d'alerte/reprise avec captures et OUT : **PROUVÉ pour C2** (`2026-09-19-C2-ALERTE.md`, 7 tests verts, captures avant/pendant/après) ; **C1 : chargement des clés prouvé (37 tests), tour vocal complet vers un pont externe encore [À PROUVER]**, les lanes C1/C2 étant encore séparées de la lane documentaire X1. [S01]
 4. Suites de tests, exécution du 19/09 ~20h : conteneur **1105 passés, 11 ignorés, 2 échecs** (tests Presence natifs Windows, qui passent sous Windows : 32/32 avec santé et premier tour). À **relancer la veille de la soutenance**. [S03]
-5. Les retours utilisateurs automatisés, leur fréquence de lecture, et la conservation effective des enregistrements de feedback : **[À PROUVER]**. [S02]
-6. Les mesures d'accessibilité en situation (contraste, lecteur d'écran, navigation clavier intégrale) restent **[À PROUVER]** ; le délai avant premier son est **mesuré** au test live du 19/09 dans le profil figé : ~1,1 s (phrase courte), oreille 0,45–0,7 s, 1er jeton 25–70 ms (`2026-09-19-CARTE-FIGEE.md`). [S02]
+5. Retours utilisateurs : **hors périmètre de la version 0.1** — aucun mécanisme de collecte automatisée n'est implémenté, et rien n'est donc conservé. Le retour est aujourd'hui humain et tracé dans les notes de séance (`nights/`), notamment les dégustations à l'aveugle du 19 septembre. À présenter comme une évolution, pas comme un acquis. [S02]
+6. Accessibilité — **contrastes mesurés le 20/09** sur les couleurs de l'interface Presence (`native/presence/app.py`) : texte principal sur fond 12,9:1, texte secondaire 6,1:1, texte sur bouton clair 14,3:1 — tous au-dessus du seuil AA (4,5:1), les deux premiers au niveau AAA (7:1). Le focus clavier est rendu visible (`_rendre_focus_visible`, liaisons `<FocusIn>`/`<FocusOut>`) et les commandes sont atteignables au clavier (`takefocus=1`). Restent **[À PROUVER]** : essai avec un lecteur d'écran et parcours complet avec un utilisateur ; le délai avant premier son est **mesuré** au test live du 19/09 dans le profil figé : ~1,1 s (phrase courte), oreille 0,45–0,7 s, 1er jeton 25–70 ms (`2026-09-19-CARTE-FIGEE.md`). [S02]
 
 ## 1. Résumé exécutif et périmètre
 
-Hyper-Ambient est présenté ici comme un assistant vocal pour une petite équipe technique : il reçoit une sollicitation, traite localement la conversation courante et peut, à la demande, consulter des outils ou agents externes. Le périmètre fixé pour la session est français, Windows, application clé-en-main et public tech/IA ; Mac et EN/ES appartiennent à la feuille de route. [S04]
+Hyper-Ambient est présenté ici comme un assistant vocal pour une petite équipe technique : il reçoit une sollicitation, traite localement la conversation courante et peut, à la demande, consulter des outils ou agents externes. Le périmètre fixé est français, Windows, application clé-en-main, public tech/IA. **L'anglais est livré dès la version 0.1** (bascule par `HA_LANG=en`, le français restant le défaut) ; Mac et espagnol appartiennent à la feuille de route. [S04][S29]
 
 L'architecture est **local-first** : une interface Windows et un host-agent manipulent le micro, le rendu sonore et l'affichage, tandis que le service conteneurisé porte l'orchestration vocale. Le composant de raisonnement local est accessible sur le port `:8090`; le host-agent utilise `:8001`. [S05][S06]
 
 Le mot « automatisation » ne signifie pas qu'une action externe est libre. L'automatisation démontrable est l'orchestration BPMN d'un contrôle de santé vers une note Markdown, plus un registre d'outils filtré par configuration et une porte d'autorisation (`GATE_MODE`). MOTHER reste un composant logiciel ; Camunda/BPMN est l'élément low-code de l'ensemble. [S07][S08][S09]
 
-### Carte des composants IA
+### Carte des composants IA — **figée le 19 septembre 2026**
 
-| Fonction | État de désignation | Rôle dans l'annexe |
-|---|---|---|
-| EARS / oreille | **[CARTE EN COURS]** | Convertit la voix en texte avant le tour de décision. [S05] |
-| BRAIN / cerveau local | **[CARTE EN COURS]** | Répond localement via le service `:8090`; le modèle n'est pas figé ici. [S06] |
-| MOUTH / voix | **[CARTE EN COURS]** | Transforme la réponse texte en sortie sonore. [S05] |
-| Composant IA distant | **[CARTE EN COURS]** | N'est sollicité que par une action/outillage prévu ; il ne remplace pas la réponse locale courante. [S10] |
+Les modèles ont été choisis **à l'aveugle par l'utilisateur final** : voix égalisées au même volume et présentées sous des lettres, questions improvisées pour les cerveaux, transcriptions comparées sur ses propres enregistrements. Le protocole et les résultats sont en annexe (`2026-09-19-PROTOCOLE-DEGUSTATION.md`, `2026-09-19-CARTE-FIGEE.md`).
+
+| Fonction | Modèle retenu | Exécution | Rôle |
+|---|---|---|---|
+| EARS / oreille | **Whisper large-v3** (faster-whisper, int8) | GPU, français | Convertit la voix en texte avant le tour de décision. Mesuré 0,45 à 0,7 s par phrase. [S05] |
+| BRAIN / cerveau local | **Granite 4.2 3B**, quantifié Q4_K_M | llama-server sur `:8090`, GPU | Répond localement. Premier mot en 25 à 70 ms. Licence Apache-2.0. [S06] |
+| MOUTH / voix | **Magpie TTS 357M**, voix « Sofia » | GPU | Transforme la réponse en voix. Premier son à environ 1,1 s. [S05] |
+| Composant IA distant | Optionnel, par clé d'API | Hors machine | Sollicité seulement par un outil prévu ; ne remplace pas la réponse locale. [S10] |
+
+L'ensemble tient dans **7,3 Go de mémoire graphique sur 12** au repos, ce qui laisse la machine utilisable pendant la démonstration. Replis documentés si un modèle venait à manquer : NeoHorse-1-9B pour le cerveau, Parakeet-TDT-0.6B pour l'oreille, Supertonic F5 pour la voix (celle-ci sans GPU).
+
+### Internationalisation — anglais livré en 0.1
+
+Le produit bascule en anglais par la variable `HA_LANG=en` (ou `HYPER_AMBIENT_LANG`), toute autre valeur ramenant au français. La bascule couvre l'invite système du cerveau, les libellés de l'interface et de l'accueil, la normalisation des nombres et heures, et les questions envoyées au classifieur d'entrée. Preuve : 13 tests dédiés verts, et les tests français inchangés (`2026-09-19-C8-EN-OUT.md`). [S29]
 
 ## 2. Architecture C4 — niveaux 1 et 2
 
@@ -43,7 +51,7 @@ Le mot « automatisation » ne signifie pas qu'une action externe est libre. L'a
 flowchart LR
     U[Utilisateur\nPTT / clavier / voix] --> P[Presence UI Windows]
     P <--> H[Host-agent / chaîne vocale]
-    H <--> L[LLM local :8090\n[CARTE EN COURS]]
+    H <--> L[LLM local :8090\nGranite 4.2 3B]
     H -->|demande explicite, outil autorisé| C[Bridge Codex :8765]
     H -->|demande explicite, outil autorisé| A[Bridge Claude :8766]
     H -->|recherche| S[SearXNG]
@@ -68,11 +76,11 @@ flowchart TB
   end
   subgraph Runtime[Runtime Hyper-Ambient]
     HA[Host-agent :8001\nWebSocket audio/événements]
-    E[EARS\n[CARTE EN COURS]]
-    R[BRAIN\n[CARTE EN COURS]]
-    M[MOUTH\n[CARTE EN COURS]]
+    E[EARS\nWhisper large-v3]
+    R[BRAIN\nGranite 4.2 3B]
+    M[MOUTH\nMagpie Sofia]
     G[GATE\nmode + audit]
-    Local[Service local :8090\n[CARTE EN COURS]]
+    Local[Service local :8090\nGranite 4.2 3B]
   end
   subgraph Automatisation[Orchestration]
     Cam[Camunda REST v2]
@@ -105,12 +113,31 @@ La présence d'un service local `:8090`, du host-agent `:8001`, de SearXNG, des 
 | Camunda + worker | Orchestre les jobs `health-check` et `vault-note` via REST v2. [S09] | Le worker écrit une note Markdown, pas une commande système. [S13] |
 | Coffre de notes | Conserve les notes de coordination et de santé en Markdown. [S13][S21] | La stratégie de rétention et les droits d'accès restent à formaliser. **[À PROUVER]** [S02] |
 
+
+## 2.4 Outillage de flotte — accountability en circuit fermé
+
+**Problème constaté (19 septembre).** Dans une orga à plusieurs agents (organisateur, Cursor, Codex, Claude), la fin réelle des tâches était peu visible : des lanes « fantômes », pas de signal net entre le lancement et la preuve, et des relances humaines pour savoir si une tâche tournait encore.
+
+**Dispositif mis en place le 20 septembre.** Chaque lane est ouverte et fermée dans un registre commun, avec deux artefacts obligatoires : un **OUT** (note datée dans `nights/`) et un **EXIT** (code de sortie du travail exécuté). Aucune tâche n'est lancée sans carte ni sans OUT.
+
+| Élément | Rôle | Preuve |
+|---|---|---|
+| `dev/scripts/account.py` | Ouvre, jalonne et ferme une lane (`open` / `pulse` / `close` / `board`) | Script versionné dans le dépôt |
+| `nights/ACCOUNTABILITY-LEDGER.jsonl` | Journal append-only des événements | 16 événements au 20/09 10h40 (11 ouvertures, 2 jalons, 3 clôtures) |
+| `nights/ACCOUNTABILITY-BOARD.md` | Tableau lisible « en cours / terminé », régénéré | Horodaté 2026-09-20T10:37 |
+| `nights/2026-09-20-DEMO-ACC-OUT.md` + `-EXIT.txt` | Démonstration du circuit complet sur une lane réelle | OUT et EXIT produits |
+
+**Règle de notification figée par le commanditaire** : une tâche *simple* est gérée par l'organisateur et ses ponts ; une tâche *complexe* notifie d'abord la supervision, qui en informe l'organisateur. Le registre porte ce champ pour chaque lane.
+
+**Portée pour le dossier.** C'est la trace d'automatisation la plus directe du projet côté conduite de projet : un processus semi-automatisé, journalisé, avec preuve de fin de tâche — et non une simple liste de tâches. Hors périmètre de cette version : interface graphique, notation de qualité, remplacement du tableau Obsidian (complément, pas doublon). Source : `nights/2026-09-20-MAKINGOF-ACCOUNTABILITY.md`. [S28]
+
+
 ## 3. Interopérabilité et synchronisation
 
 | Système A → B | Sens / déclencheur | Protocole et format | Authentification / contrôle | Preuve |
 |---|---|---|---|---|
 | Presence ↔ host-agent | PTT, trames audio, états et rapport | WebSocket ; primitives audio/événements | Secret de transport configuré côté host-agent ; exposition hors machine déconseillée par le code. | [S15][S22] |
-| host-agent → service local | Réponse locale d'un tour | HTTP, endpoint local `:8090` | Santé contrôlable avant démo ; modèle **[CARTE EN COURS]**. | [S06][S17] |
+| host-agent → service local | Réponse locale d'un tour | HTTP, endpoint local `:8090` | Santé contrôlable avant démo ; modèle **Granite 4.2 3B Q4_K_M**, alias `mother-local`. | [S06][S17] |
 | host-agent → pont Codex | Outil `ask_codex` inscrit si jeton et client disponibles | `POST /ask`, JSON | Bearer ; refus sans jeton consigné. | [S05][S20] |
 | host-agent → pont Claude | Outil `ask_claude` inscrit si jeton et client disponibles | `POST /ask`, JSON | Bearer ; refus sans jeton consigné. | [S05][S20] |
 | host-agent → SearXNG | Outil de recherche si URL configurée | HTTP JSON | Pas de clé pour l'instance locale selon le code ; repli tiers conditionnel. | [S05] |
@@ -130,9 +157,9 @@ sequenceDiagram
   participant U as Utilisateur
   participant P as Presence
   participant H as Host-agent
-  participant E as EARS [CARTE EN COURS]
-  participant B as BRAIN local [CARTE EN COURS]
-  participant M as MOUTH [CARTE EN COURS]
+  participant E as EARS Whisper large-v3
+  participant B as BRAIN local Granite 4.2 3B
+  participant M as MOUTH Magpie Sofia
   U->>P: maintient puis relâche PTT
   P->>H: trames audio / événement
   H->>E: transcription
@@ -214,7 +241,7 @@ La porte GATE est le point d'autorisation : les modes documentés incluent `plan
 | Risque | Vraisemblance / impact à évaluer | Mesure existante | Mesure de clôture / référence |
 |---|---|---|---|
 | Jeton de pont divulgué | Moyen / élevé — grille à formaliser | Jetons lus depuis l'environnement ; ponts testés avec Bearer et refus sans jeton. [S05][S20] | Ne jamais imprimer le jeton, rotation et moindre privilège ; pratiques d'hygiène ANSSI. [S24] |
-| Exposition réseau du host-agent | Moyen / élevé — **[À PROUVER]** | Le code avertit de ne pas exposer le service hors de la machine quand un secret de développement est utilisé. [S22] | Confirmer écoute locale, pare-feu et secret de production. **[À PROUVER]** [S02] |
+| Exposition réseau du host-agent | Moyen / élevé — **confirmé : écoute `0.0.0.0`** (`serve_hostagent.py:49`) | Le code avertit de ne pas exposer le service hors de la machine quand un secret de développement est utilisé, et l'adresse du client est ramenée à `127.0.0.1` quand elle est inconnue. [S22] | **Action avant diffusion** : lier à `127.0.0.1` par défaut, vérifier le pare-feu et utiliser un secret de production. [S02] |
 | Injection de prompt via contenu web/agent | Moyen / élevé | GATE centralise la décision d'outil et le registre limite les outils configurés. [S05][S16] | Traiter le contenu externe comme non fiable ; validation humaine avant action ; risque OWASP « prompt injection ». [S25] |
 | Exfiltration via appel distant | Moyen / élevé | Presence affiche un état d'appel distant ; l'utilisateur est la source de la décision de déléguer. [S11][S10] | Notice, minimisation des données envoyées et consentement/justification adaptés au contexte. [S23] |
 | Note de santé erronée ou incomplète | Faible à moyen / moyen | Écriture suivie d'une relecture dans le worker. [S13] | Contrôle de contenu et gestion des droits du coffre. **[À PROUVER]** [S02] |
@@ -233,8 +260,8 @@ L'inventaire du dépôt comporte notamment des tests pour audio, transports host
 | T2 | Consultation d'un agent par demande utilisateur | Log du registre, trace d'outil, rendu Presence | Cible C1 ; **[À PROUVER]** [S01] |
 | T3 | Onboarding en trois étapes | Capture/walkthrough et fichier de configuration local | Fonctions présentes ; parcours live **[À PROUVER]** [S11] |
 | T4 | Suites automatisées | Commande et sortie collée dans un OUT daté | 1105 passés / 2 échecs conteneur (natifs Windows, verts sous Windows) — 19/09. [S03] |
-| T5 | Outils avec/sans jeton | Tests de registre et sondes 401/200 consignées | Preuves de sonde disponibles ; résultat actuel **[À PROUVER]** [S20][S03] |
-| T6 | Clavier, texte et contraste | Parcours Tab/Entrée et lecture du statut | Texte/commandes prévus ; mesure **[À PROUVER]** [S11][S02] |
+| T5 | Outils avec/sans jeton | Tests de registre et sondes 401/200 consignées | Chargement des clés prouvé hors process live : 37 tests verts et registre passant de 0 à 5 outils (`2026-09-19-C1-OUTILS.md`) ; sonde live **[À PROUVER]** [S20][S03] |
+| T6 | Clavier, texte et contraste | Parcours Tab/Entrée et lecture du statut | Contrastes mesurés 12,9 / 6,1 / 14,3:1 (≥ AA) le 20/09 ; focus visible au clavier. Lecteur d'écran **[À PROUVER]** [S11][S02] |
 | T7 | Délai jusqu'au premier son | Mesure horodatée dans le profil final | ~1,1 s phrase courte, 3,2–4,8 s phrase longue (19/09). [S02] |
 
 Les tests nommés `test_outils_voix.py`, `test_codex_bridge.py`, `test_clibridge.py`, `test_gate_more_edges.py`, `test_presence_onboarding.py` et les suites MOUTH/TURN sont des points d'entrée directs pour T4/T5/T6. [S03] Avant soutenance, ne joindre que les sorties réellement obtenues dans un OUT ; les mesures historiques ne doivent pas être substituées à la carte finale ni à une exécution récente. [S01][S03]
@@ -248,7 +275,7 @@ La procédure SKU10 prescrit un contrôle avant démonstration : conteneur, sant
 | Host-agent ne répond pas au PTT | Relance contrôlée du routeur/host-agent. [S17] | Retour du service ; validation live à refaire. |
 | Voix muette ou coupée | Même reprise, puis passage en texte si le problème persiste. [S17] | Continuité de présentation, sans prétendre corriger la cause en direct. |
 | Erreur d'autorisation liée à `.env.local` | Ne pas modifier l'environnement pendant la démo ; relancer selon la procédure. [S17] | Réduit le risque de corruption/manipulation de secret live. |
-| Pont agent indisponible | Annoncer l'indisponibilité et poursuivre localement. [S17] | C2 doit rendre cet état visible. **[À PROUVER]** [S01] |
+| Pont agent indisponible | Annoncer l'indisponibilité et poursuivre localement. [S17] | **Prouvé** : lane C2 du 19/09 — alerte visible puis reprise, 7 tests verts et trois captures de l'application (`2026-09-19-C2-ALERTE.md`). [S01] |
 | Rien ne repart | Démarrer le conteneur existant sans recréation, puis refaire les préchecks. [S17] | Escalade opérateur si échec persistant. |
 
 La démonstration attendue C2 — composant coupé, alerte visuelle et vocale, note de coffre, relance, retour vert — est une cible indiquée dans le brief Cursor ; ne pas la décrire comme réalisée tant que son OUT et ses captures ne sont pas disponibles. [S26][S01]
@@ -257,7 +284,7 @@ La démonstration attendue C2 — composant coupé, alerte visuelle et vocale, n
 
 La sobriété est d'abord un choix d'architecture : traitement local par défaut, consultation distante volontaire, et carte de composants IA tenue ouverte tant que les contraintes de machine et de qualité ne sont pas arbitrées. [S04][S10][S01] Le risque de GPU partagé est explicitement signalé à 12 Go pendant la dégustation ; aucun chargement de modèle ou relance du service local ne doit être déclenché sans feu vert de l'arbitrage. [S01]
 
-L'accessibilité est intégrée au design de Presence : Tab parcourt les commandes, Entrée active un bouton, la touche de parole peut être maintenue, et transcription/réponse/appel distant restent affichés. [S11] Cela fournit une alternative texte à la voix ; la vérification avec les utilisateurs et outils d'assistance reste **[À PROUVER]**. [S02]
+L'accessibilité est intégrée au design de Presence : Tab parcourt les commandes, Entrée active un bouton, la touche de parole peut être maintenue, et transcription/réponse/appel distant restent affichés. [S11] Cela fournit une alternative texte à la voix. Les contrastes ont été mesurés le 20/09 (12,9 / 6,1 / 14,3:1, tous au-dessus du seuil AA) ; la vérification avec un lecteur d'écran et de vrais utilisateurs reste **[À PROUVER]**. [S02]
 
 La qualité continue repose sur trois traces complémentaires : tests automatisés versionnés, notes `nights/` datées, et historique Git. La présence de ces trois mécanismes est démontrable dans le dépôt ; leur cadence de revue doit être assignée par Thomas. [S03][S21][S27]
 
@@ -299,7 +326,7 @@ La documentation technique d'architecture prévoit aussi des ADR, dont la sépar
 |---|---|
 | Presence | Interface Windows PTT qui affiche aussi les états et textes de conversation. [S11] |
 | Host-agent | Service qui raccorde transport, EARS, BRAIN et MOUTH sur `:8001`. [S05] |
-| EARS / BRAIN / MOUTH | Respectivement oreille, raisonnement et voix ; leurs modèles sont **[CARTE EN COURS]**. [S05][S01] |
+| EARS / BRAIN / MOUTH | Respectivement oreille, raisonnement et voix ; leurs modèles sont respectivement Whisper large-v3, Granite 4.2 3B et Magpie TTS (voix Sofia), figés le 19/09. [S05][S01] |
 | GATE | Porte d'autorisation et journalisation des décisions de capacités. [S16] |
 | `danger=read` | Catégorie d'outil en lecture ; elle est employée pour `ask_codex`/`ask_claude` dans les tests et le registre. [S05][S03] |
 | BPMN | Notation du processus Camunda `night_health_vault_note`. [S14] |
@@ -340,5 +367,8 @@ Les captures existantes de Presence sont signalées dans les suggestions BGB. Po
 | S24 | [ANSSI — Guide d'hygiène informatique](https://messervices.cyber.gouv.fr/guides/guide-dhygiene-informatique) (consulté le 2026-09-19) ; `nights/2026-09-19-CLAUDE-POUR-GROK.md:31` |
 | S25 | [OWASP GenAI — LLM Top 10](https://genai.owasp.org/llm-top-10/) (consulté le 2026-09-19) |
 | S26 | `nights/2026-09-19-BRIEF-CURSOR.md:26-27, 53-72`; `nights/2026-09-19-CLAUDE-PLAN-TECH.md:26-27` |
+| S28 | `nights/2026-09-20-MAKINGOF-ACCOUNTABILITY.md` ; `dev/scripts/account.py` ; `nights/ACCOUNTABILITY-LEDGER.jsonl` (16 événements au 2026-09-20 10:40) |
+| S29 | `nights/2026-09-19-C8-EN-OUT.md` ; `src/i18n/__init__.py` ; `dev/tests/test_c8_i18n.py` (13 tests verts) |
+| S30 | `nights/2026-09-19-CARTE-FIGEE.md` ; `nights/2026-09-19-PROTOCOLE-DEGUSTATION.md` ; test live du 2026-09-19 ~20h |
 | S27 | `git log --oneline -25` exécuté le 2026-09-19 |
 

@@ -1,0 +1,20 @@
+[     0s] connexion...
+[    10s] flux ouvert, lecture
+[    10s] vivant : 1 evenements, 0 deltas de raisonnement, 0 car. de contenu
+[    30s] vivant : 499 evenements, 498 deltas de raisonnement, 0 car. de contenu
+[    50s] vivant : 1051 evenements, 1050 deltas de raisonnement, 0 car. de contenu
+[    70s] vivant : 1570 evenements, 1569 deltas de raisonnement, 0 car. de contenu
+[    90s] vivant : 2048 evenements, 2047 deltas de raisonnement, 0 car. de contenu
+[   110s] vivant : 2539 evenements, 2538 deltas de raisonnement, 0 car. de contenu
+[   130s] vivant : 3054 evenements, 3053 deltas de raisonnement, 0 car. de contenu
+[   150s] vivant : 3532 evenements, 3531 deltas de raisonnement, 0 car. de contenu
+[   170s] vivant : 4045 evenements, 4044 deltas de raisonnement, 0 car. de contenu
+[   190s] vivant : 4559 evenements, 4558 deltas de raisonnement, 0 car. de contenu
+[   210s] vivant : 5074 evenements, 5073 deltas de raisonnement, 0 car. de contenu
+[   230s] vivant : 5593 evenements, 5592 deltas de raisonnement, 0 car. de contenu
+[   251s] vivant : 6143 evenements, 6142 deltas de raisonnement, 0 car. de contenu
+[   271s] vivant : 6636 evenements, 6325 deltas de raisonnement, 4082 car. de contenu
+[   291s] vivant : 7128 evenements, 6325 deltas de raisonnement, 10467 car. de contenu
+[   294s] DONE recu
+[   294s] fin : 7214 evenements, 6325 raisonnement, 11426 car. de contenu
+[   294s] ecrit dans nights\2026-09-20-OUT-STEPFUN-CONTRAT-HARNAIS.md

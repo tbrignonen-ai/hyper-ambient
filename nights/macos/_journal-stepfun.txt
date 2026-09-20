@@ -1,0 +1,27 @@
+[     0s] connexion...
+[    41s] flux ouvert, lecture
+[    41s] vivant : 1 evenements, 0 deltas de raisonnement, 0 car. de contenu
+[    61s] vivant : 572 evenements, 571 deltas de raisonnement, 0 car. de contenu
+[    81s] vivant : 1144 evenements, 1143 deltas de raisonnement, 0 car. de contenu
+[   101s] vivant : 1811 evenements, 1810 deltas de raisonnement, 0 car. de contenu
+[   121s] vivant : 2344 evenements, 2343 deltas de raisonnement, 0 car. de contenu
+[   141s] vivant : 2919 evenements, 2918 deltas de raisonnement, 0 car. de contenu
+[   161s] vivant : 3410 evenements, 3409 deltas de raisonnement, 0 car. de contenu
+[   181s] vivant : 4002 evenements, 4001 deltas de raisonnement, 0 car. de contenu
+[   201s] vivant : 4562 evenements, 4561 deltas de raisonnement, 0 car. de contenu
+[   221s] vivant : 5151 evenements, 5150 deltas de raisonnement, 0 car. de contenu
+[   242s] vivant : 5713 evenements, 5712 deltas de raisonnement, 0 car. de contenu
+[   262s] vivant : 6322 evenements, 6321 deltas de raisonnement, 0 car. de contenu
+[   282s] vivant : 6887 evenements, 6886 deltas de raisonnement, 0 car. de contenu
+[   302s] vivant : 7458 evenements, 7457 deltas de raisonnement, 0 car. de contenu
+[   322s] vivant : 8018 evenements, 8017 deltas de raisonnement, 0 car. de contenu
+[   342s] vivant : 8613 evenements, 8612 deltas de raisonnement, 0 car. de contenu
+[   362s] vivant : 9220 evenements, 9219 deltas de raisonnement, 0 car. de contenu
+[   382s] vivant : 9833 evenements, 9832 deltas de raisonnement, 0 car. de contenu
+[   402s] vivant : 10351 evenements, 10336 deltas de raisonnement, 120 car. de contenu
+[   422s] vivant : 10822 evenements, 10336 deltas de raisonnement, 5257 car. de contenu
+[   442s] vivant : 11380 evenements, 10336 deltas de raisonnement, 11687 car. de contenu
+[   463s] vivant : 11971 evenements, 10336 deltas de raisonnement, 17573 car. de contenu
+[   481s] DONE recu
+[   481s] fin : 12467 evenements, 10336 raisonnement, 22542 car. de contenu
+[   481s] ecrit dans nights\macos\2026-09-20-STEPFUN-PORTAGE-MACOS-SUITE.md

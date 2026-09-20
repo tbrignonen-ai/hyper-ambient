@@ -75,3 +75,8 @@ nights/**/.carte-secrete*.json
 nights/**/.carte-reel*.json
 nights/degustation-19/oreille/enregistrements/
 Capture d'écran*.png
+
+# Sauvegardes de configuration locale (contiennent des cles)
+.env.local.sauvegarde*
+.env.*.sauvegarde*
+*.sauvegarde-*

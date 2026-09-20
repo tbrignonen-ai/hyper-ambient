@@ -1,0 +1,16 @@
+[     0s] connexion...
+[     9s] flux ouvert, lecture
+[     9s] vivant : 1 evenements, 0 deltas de raisonnement, 0 car. de contenu
+[    29s] vivant : 542 evenements, 541 deltas de raisonnement, 0 car. de contenu
+[    49s] vivant : 1087 evenements, 1086 deltas de raisonnement, 0 car. de contenu
+[    69s] vivant : 1666 evenements, 1665 deltas de raisonnement, 0 car. de contenu
+[    89s] vivant : 2175 evenements, 2174 deltas de raisonnement, 0 car. de contenu
+[   109s] vivant : 2709 evenements, 2708 deltas de raisonnement, 0 car. de contenu
+[   129s] vivant : 3294 evenements, 3293 deltas de raisonnement, 0 car. de contenu
+[   149s] vivant : 3880 evenements, 3879 deltas de raisonnement, 0 car. de contenu
+[   169s] vivant : 4424 evenements, 4011 deltas de raisonnement, 3477 car. de contenu
+[   189s] vivant : 4990 evenements, 4011 deltas de raisonnement, 8933 car. de contenu
+[   209s] vivant : 5515 evenements, 4011 deltas de raisonnement, 13339 car. de contenu
+[   223s] DONE recu
+[   223s] fin : 5908 evenements, 4011 raisonnement, 16356 car. de contenu
+[   223s] ecrit dans nights\macos\2026-09-20-STEPFUN-PORTAGE-MACOS-4-5.md

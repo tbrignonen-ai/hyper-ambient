@@ -1,0 +1,12 @@
+[     0s] connexion...
+[    12s] flux ouvert, lecture
+[    12s] vivant : 1 evenements, 0 deltas de raisonnement, 0 car. de contenu
+[    32s] vivant : 560 evenements, 559 deltas de raisonnement, 0 car. de contenu
+[    52s] vivant : 1163 evenements, 1162 deltas de raisonnement, 0 car. de contenu
+[    72s] vivant : 1719 evenements, 1718 deltas de raisonnement, 0 car. de contenu
+[    92s] vivant : 2236 evenements, 2235 deltas de raisonnement, 0 car. de contenu
+[   112s] vivant : 2780 evenements, 2779 deltas de raisonnement, 0 car. de contenu
+[   133s] vivant : 3378 evenements, 2981 deltas de raisonnement, 3412 car. de contenu
+[   140s] DONE recu
+[   140s] fin : 3584 evenements, 2981 raisonnement, 5384 car. de contenu
+[   140s] ecrit dans nights\searxng\2026-09-20-SEARXNG-RESILIENCE.md
