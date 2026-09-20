@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import json
 import os
+import webbrowser
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping
+
+URL_FEEDBACK = "https://github.com/tbrignonen-ai/hyper-ambient/issues/new"
 
 
 RACCOURCIS = {
@@ -13,7 +16,7 @@ RACCOURCIS = {
     "ctrl-space": "Ctrl + Espace",
 }
 
-ETAPES_WIZARD = ("bienvenue", "ptt", "masquage")
+ETAPES_WIZARD = ("bienvenue", "mains_libres", "ptt", "masquage")
 
 LIBELLE_ECLAIR_ETEINT = "Modèle local"
 LIBELLE_ECLAIR_ALLUME = "Appel distant"
@@ -46,6 +49,8 @@ RAPPEL_A11Y = (
 
 COULEUR_ECLAIR_ETEINT = "#1c303c"
 CONTOUR_ECLAIR_ETEINT = "#4a6474"
+COULEUR_ECLAIR_ETEINT_A11Y = "#8aa8b8"
+CONTOUR_ECLAIR_ETEINT_A11Y = "#c8dce4"
 COULEUR_ECLAIR_ALLUME = "#ffcc3d"
 CONTOUR_ECLAIR_ALLUME = "#ffe9a0"
 COULEUR_ECLAIR_PULSE = "#fff4b0"
@@ -56,6 +61,9 @@ CONTOUR_ECLAIR_PULSE = "#ffffff"
 class ConfigurationPresence:
     onboarding_termine: bool = False
     raccourci_ptt: str = "space"
+    langue: str = "fr"
+    contraste: bool = False
+    mains_libres: bool = False
 
 
 def chemin_configuration() -> Path:
@@ -71,9 +79,17 @@ def normaliser_configuration(brut: Mapping[str, Any] | None) -> ConfigurationPre
     raccourci = str(brut.get("raccourci_ptt") or "space")
     if raccourci not in RACCOURCIS:
         raccourci = "space"
+    langue = str(brut.get("langue") or "fr").strip().lower().replace("_", "-")
+    if langue.startswith("en"):
+        langue = "en"
+    else:
+        langue = "fr"
     return ConfigurationPresence(
         onboarding_termine=brut.get("onboarding_termine") is True,
         raccourci_ptt=raccourci,
+        langue=langue,
+        contraste=brut.get("contraste") is True,
+        mains_libres=brut.get("mains_libres") is True,
     )
 
 
@@ -109,15 +125,62 @@ def sequences_tk(raccourci: str) -> tuple[str, str]:
     return "<KeyPress-space>", "<KeyRelease-space>"
 
 
+def sequences_relache_extra(raccourci: str) -> tuple[str, ...]:
+    """Ctrl+Espace : Space relâché sans Ctrl doit aussi déverrouiller le latch."""
+    if raccourci == "ctrl-space":
+        return ("<KeyRelease-space>",)
+    return ()
+
+
 def terminer_onboarding(
     configuration: ConfigurationPresence,
     raccourci_ptt: str | None = None,
+    mains_libres: bool | None = None,
 ) -> ConfigurationPresence:
     """Clôt le wizard en conservant le raccourci déjà choisi, sauf remplacement."""
     choix = configuration.raccourci_ptt if raccourci_ptt is None else raccourci_ptt
+    actif = configuration.mains_libres if mains_libres is None else mains_libres
     return normaliser_configuration(
-        {"onboarding_termine": True, "raccourci_ptt": choix}
+        {
+            "onboarding_termine": True,
+            "raccourci_ptt": choix,
+            "langue": configuration.langue,
+            "contraste": configuration.contraste,
+            "mains_libres": actif is True,
+        }
     )
+
+
+def message_options(mains_libres: bool) -> dict[str, Any]:
+    """Contrat WS Presence → host-agent : JeV seulement si mains libres."""
+    return {"type": "options", "mains_libres": bool(mains_libres)}
+
+
+def appliquer_langue_presence(
+    configuration: ConfigurationPresence,
+    environ: dict[str, str] | None = None,
+) -> str:
+    """HA_LANG / HYPER_AMBIENT_LANG primer ; sinon langue persistée dans presence.json."""
+    env = os.environ if environ is None else environ
+    if str(env.get("HA_LANG") or "").strip() or str(env.get("HYPER_AMBIENT_LANG") or "").strip():
+        from src.i18n import langue
+
+        return langue()
+    env["HA_LANG"] = configuration.langue if configuration.langue in {"fr", "en"} else "fr"
+    from src.i18n import langue
+
+    return langue()
+
+
+def url_nouvelle_issue() -> str:
+    return URL_FEEDBACK
+
+
+def ouvrir_feedback(ouvrir: Any | None = None) -> bool:
+    """Ouvre une issue GitHub. ``ouvrir`` injectable (tests, pas de navigateur)."""
+    cible = url_nouvelle_issue()
+    action = webbrowser.open if ouvrir is None else ouvrir
+    return bool(action(cible))
 
 
 def eclair_allume(etat: str) -> bool:
@@ -149,8 +212,12 @@ def statut_pour_etat(etat: str) -> str | None:
     return None
 
 
-def couleurs_eclair(allume: bool, pulsation: float = 0.0) -> tuple[str, str]:
+def couleurs_eclair(
+    allume: bool, pulsation: float = 0.0, a11y: bool = False
+) -> tuple[str, str]:
     if not allume:
+        if a11y:
+            return COULEUR_ECLAIR_ETEINT_A11Y, CONTOUR_ECLAIR_ETEINT_A11Y
         return COULEUR_ECLAIR_ETEINT, CONTOUR_ECLAIR_ETEINT
     if pulsation >= 0.62:
         return COULEUR_ECLAIR_PULSE, CONTOUR_ECLAIR_PULSE

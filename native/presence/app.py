@@ -15,10 +15,12 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import queue
 import sys
 import threading
 import time
+import ctypes
 import tkinter as tk
 from pathlib import Path
 from typing import Any, Callable
@@ -33,12 +35,18 @@ import overlay as visuel
 import sante as etat_sante
 from onboarding import (
     ETAPES_WIZARD,
+    URL_FEEDBACK,
     ConfigurationPresence,
+    appliquer_langue_presence,
     charger_configuration,
     eclair_allume,
     enregistrer_configuration,
     libelle_eclair,
+    message_options,
+    normaliser_configuration,
+    ouvrir_feedback,
     raccourcis_lisibles,
+    sequences_relache_extra,
     sequences_tk,
     statut_pour_etat,
     terminer_onboarding,
@@ -59,11 +67,140 @@ URL_DEFAUT = "ws://127.0.0.1:8001/hostagent"
 moteur: Any | None = None
 
 
+def assurer_stdio(journal: Path | None = None) -> Path | None:
+    """pythonw laisse stdout/stderr à None et ferme les fd C 1/2.
+
+    C13 : WS ouvert, 0 AUDIO_RECV. ``python -u`` (flux valides) marche.
+    On rattache Python *et* les descripteurs C avant d'importer sounddevice.
+    """
+    if sys.stdout is not None and sys.stderr is not None:
+        try:
+            sys.stdout.fileno()
+            sys.stderr.fileno()
+            return None
+        except (OSError, AttributeError):
+            pass
+    if journal is None:
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        racine = (
+            Path(base) / "hyper-ambient" if base else Path.home() / ".hyper-ambient"
+        )
+        journal = racine / "presence.log"
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    flux = open(journal, "a", encoding="utf-8", buffering=1)
+    try:
+        os.dup2(flux.fileno(), 1)
+        os.dup2(flux.fileno(), 2)
+    except OSError:
+        pass
+    sys.stdout = flux
+    sys.stderr = flux
+    return journal
+
+
+def journaliser(*args: object) -> None:
+    """pythonw n'a pas de stdout : print() tuait le fil session (C13)."""
+    flux = getattr(sys, "stdout", None)
+    if flux is None:
+        return
+    try:
+        print(*args, file=flux, flush=True)
+    except OSError:
+        return
+
+
 def _trace_c10(evenement: str, **champs: Any) -> None:
     """Trace minimale C10 : PTT, WS, premier audio. Horloge monotone."""
     extra = " ".join(f"{cle}={valeur}" for cle, valeur in champs.items())
     suffixe = f" {extra}" if extra else ""
-    print(f"C10 t={time.monotonic():.3f} {evenement}{suffixe}", flush=True)
+    journaliser(f"C10 t={time.monotonic():.3f} {evenement}{suffixe}")
+
+
+def action_appui_parler(*, mains_libres: bool, ecoute_active: bool) -> str:
+    """Hold PTT, ou toggle press-to-start / press-to-send."""
+    if not mains_libres:
+        return "hold"
+    return "send" if ecoute_active else "start"
+
+
+def relache_termine_lecoute(mains_libres: bool) -> bool:
+    """False en mains libres : relâcher ne doit pas envoyer le tour."""
+    return not mains_libres
+
+
+def est_repetition_clavier(touche_enfoncee: bool, event: object | None) -> bool:
+    """True seulement pour l'auto-repeat clavier, pas pour un clic souris."""
+    if not touche_enfoncee:
+        return False
+    if event is None:
+        return True
+    keysym = str(getattr(event, "keysym", "") or "")
+    return bool(keysym) and keysym not in {"??", "None"}
+
+
+def libelle_bouton_parler(
+    *,
+    mains_libres: bool,
+    ecoute_active: bool,
+    touche_enfoncee: bool,
+    textes: dict[str, str],
+) -> str:
+    """ON : Écoute… pendant l'appui, Appuie pour envoyer après relâche."""
+    if mains_libres:
+        if ecoute_active and touche_enfoncee:
+            return textes["listening_toggle"]
+        if ecoute_active:
+            return textes["tap_to_send"]
+        return textes["speak"]
+    return textes["speaking"] if touche_enfoncee else textes["speak"]
+
+
+def echap_coupe_la_voix(en_lecture: bool) -> bool:
+    """Échap : Stop si Magpie parle, sinon quitter (comportement actuel)."""
+    return bool(en_lecture)
+
+
+DELAI_JEV_PRET_MS = 3000
+
+
+def relayer_jev_pret(
+    message: Any, deposer: Callable[[dict[str, Any]], None]
+) -> bool:
+    """Relaye ``{"type":"jev_pret"}`` vers l'UI. True si le message est consommé."""
+    if isinstance(message, dict) and message.get("type") == "jev_pret":
+        deposer({"type": "jev_pret"})
+        return True
+    return False
+
+
+def relayer_conversation(
+    message: Any, deposer: Callable[[dict[str, Any]], None]
+) -> bool:
+    """Relaye ``{"type":"conversation", ...}`` vers l'UI. True si consommé."""
+    if not isinstance(message, dict) or message.get("type") != "conversation":
+        return False
+    ouverte = message.get("ouverte") is True
+    try:
+        restant_s = float(message.get("restant_s") or 0.0)
+    except (TypeError, ValueError):
+        restant_s = 0.0
+    deposer({"type": "conversation", "ouverte": ouverte, "restant_s": restant_s})
+    return True
+
+
+def libelle_indicateur_conversation(
+    *,
+    mains_libres: bool,
+    ouverte: bool,
+    restant_s: float,
+    textes: dict[str, str],
+) -> str:
+    """État 1 vide ; 2 invitation ; 3 décompte. Rien si mains libres éteint."""
+    if not mains_libres:
+        return ""
+    if ouverte:
+        return textes["conversation_open"].format(n=max(0, int(restant_s)))
+    return textes["conversation_invite"]
 
 
 def consommer_reponse(
@@ -74,13 +211,13 @@ def consommer_reponse(
     arreter: threading.Event,
     interrompre: threading.Event | None = None,
     sur_interruption: Callable[[], None] | None = None,
+    couper: threading.Event | None = None,
 ) -> bool:
     """Lit la socket jusqu'au marqueur vide, restitue, et relaye l'état.
 
-    ``interrompre`` est le bouton Parler : s'il est enfoncé pendant la
-    réponse, la voix se tait tout de suite (tampon de la carte jeté), la
-    capture démarre par ``sur_interruption``, et la socket est vidée sans
-    rien jouer jusqu'au marqueur. Renvoie True si la réponse a été coupée.
+    ``couper`` est le bouton Stop : la voix se tait, statut Interrompue,
+    pas d'écoute. ``interrompre`` est Parler pendant la réponse : barge-in
+    (tampon jeté + ``sur_interruption``). Renvoie True seulement en barge-in.
 
     Le serveur envoie, dans l'ordre : des paquets audio, puis un rapport,
     puis un marqueur de fin vide. Sortir dès qu'un message n'a pas de
@@ -90,13 +227,50 @@ def consommer_reponse(
     """
     premier_son = None
     interrompu = False
-    while not arreter.is_set():
-        # Recv bloquant, comme talk.py : un timeout ici n'aide pas, et close()
-        # depuis l'arrêt de la fenêtre débloque avec ConnectionClosed.
+    barge_in = False
+
+    def _trancher_interruption() -> bool:
+        nonlocal interrompu, barge_in
+        if interrompu:
+            return True
+        stop_demande = couper is not None and couper.is_set()
+        barge_demande = interrompre is not None and interrompre.is_set()
+        if not (stop_demande or barge_demande):
+            return False
+        interrompu = True
+        barge_in = barge_demande and not stop_demande
         try:
-            brut = ws.recv()
+            sortie.abort()
+        except Exception as exc:
+            journaliser(f"interruption : {exc}")
+        if barge_in and sur_interruption is not None:
+            sur_interruption()
+        deposer(
+            {
+                "type": "statut",
+                "texte": (
+                    ui_presence()["interrupted_listening"]
+                    if barge_in
+                    else ui_presence()["interrupted"]
+                ),
+            }
+        )
+        return True
+
+    while not arreter.is_set():
+        # Petit timeout : barge-in vocal et Stop ne doivent pas attendre
+        # le prochain paquet TTS. Fallback bloquant si recv n'accepte pas
+        # timeout (tests, vieux client). close() débloque encore.
+        try:
+            try:
+                brut = ws.recv(timeout=0.05)
+            except TypeError:
+                brut = ws.recv()
+        except TimeoutError:
+            _trancher_interruption()
+            continue
         except Exception:
-            return
+            return barge_in
         try:
             message = json.loads(brut)
         except json.JSONDecodeError:
@@ -125,21 +299,16 @@ def consommer_reponse(
                 }
             )
             continue
+        if relayer_jev_pret(message, deposer):
+            continue
+        if relayer_conversation(message, deposer):
+            continue
         recues = message.get("frames")
         if recues is None:
             continue
         if not recues:
             break
-        if interrompre is not None and interrompre.is_set() and not interrompu:
-            interrompu = True
-            try:
-                sortie.abort()
-            except Exception as exc:
-                print(f"interruption : {exc}", flush=True)
-            if sur_interruption is not None:
-                sur_interruption()
-            deposer({"type": "statut", "texte": "Interrompue — je t'écoute."})
-        if interrompu:
+        if _trancher_interruption():
             continue
         a_jouer: list[float] = []
         for brute in recues:
@@ -157,25 +326,92 @@ def consommer_reponse(
         except Exception as exc:
             # Restituer ne doit pas abandonner la socket : le marqueur vide
             # arriverait au tour suivant, qui resterait muet.
-            print(f"restitution : {exc}", flush=True)
+            journaliser(f"restitution : {exc}")
 
-    if premier_son is None and not arreter.is_set():
+    if premier_son is None and not arreter.is_set() and not interrompu:
         deposer({"type": "statut", "texte": "Aucune trame de réponse — rien à restituer."})
     elif premier_son is not None:
-        time.sleep(0.25)
+        if not interrompu:
+            time.sleep(0.25)
         moteur._reposer(sortie)
         deposer({"type": "etat", "etat": "repos", "niveau": None})
-    return interrompu
+    return barge_in
+
+
+def ligne_pouls_ml(capture, *, n_segments: int, en_lecture: bool, couper: bool) -> str:
+    """Pouls ML : tranche entendue / pas fermée / pas revenue."""
+    inst: dict[str, Any] = {}
+    getter = getattr(capture, "instantane", None)
+    if callable(getter):
+        try:
+            inst = dict(getter() or {})
+        except Exception:
+            inst = {}
+    suspendue = bool(inst.get("suspendue", getattr(capture, "_suspendu", False)))
+    return (
+        "ML : vivante, %d segment(s) envoye(s), lecture=%s, suspendue=%s, "
+        "seuil=%.0f, rms=%.0f, accumulation=%s, couper=%s"
+        % (
+            n_segments,
+            "oui" if en_lecture else "non",
+            "oui" if suspendue else "non",
+            float(inst.get("seuil") or 0.0),
+            float(inst.get("rms") or 0.0),
+            "oui" if inst.get("accumulation") else "non",
+            "oui" if couper else "non",
+        )
+    )
+
+
+class _OuEvenements:
+    """True si l'un des événements est levé. ``is_set`` seulement (pas wait)."""
+
+    def __init__(self, *evenements: threading.Event | None) -> None:
+        self._evenements = evenements
+
+    def is_set(self) -> bool:
+        return any(evt is not None and evt.is_set() for evt in self._evenements)
+
+
+def evenement_interruption_lecture(tenu: threading.Event, capture) -> object:
+    """Parler (tenu) ou barge-in vocal, même chemin dans consommer_reponse."""
+    vocal = getattr(capture, "barge_in", None)
+    if vocal is None:
+        return tenu
+    return _OuEvenements(tenu, vocal)
+
+
+def apres_barge_in(capture) -> None:
+    """Voix coupée : conserver l'audio vocal, sinon reprendre propre."""
+    vocal = getattr(capture, "barge_in", None)
+    if vocal is not None and vocal.is_set():
+        regime = getattr(capture, "regime_lecture", None)
+        if callable(regime):
+            regime(False)
+        return
+    reprendre = getattr(capture, "reprendre", None)
+    if callable(reprendre):
+        reprendre()
+
+
+def _abort_sortie(sortie) -> None:
+    if sortie is None:
+        return
+    try:
+        sortie.abort()
+    except Exception as exc:
+        journaliser(f"interruption : {exc}")
 
 
 class Bulle:
     """La présence ronde : même dessin vivant que l'overlay, dans l'app."""
 
-    def __init__(self, toile: tk.Canvas, taille: int) -> None:
+    def __init__(self, toile: tk.Canvas, taille: int, contraste: bool = False) -> None:
         self.toile = toile
         self.taille = taille
+        self.contraste = contraste
         self.etat = "repos"
-        self.palette_affichee = dict(visuel.PALETTES["repos"])
+        self.palette_affichee = visuel.palette_pour("repos", contraste)
         self.niveau_cible = 0.0
         self.niveau_lisse = 0.0
         self.angle = 0.0
@@ -207,7 +443,7 @@ class Bulle:
         return souffle
 
     def dessiner(self) -> None:
-        cible = visuel.PALETTES[self.etat]
+        cible = visuel.palette_pour(self.etat, self.contraste)
         self.palette_affichee = visuel.melanger_palettes(
             self.palette_affichee, cible, visuel.LISSAGE_TRANSITION
         )
@@ -271,8 +507,8 @@ class BadgeEclair:
 class SessionVocale(threading.Thread):
     """Réseau + micro + haut-parleur, hors du fil tkinter.
 
-    ``tenu`` est l'état du bouton (ou de la barre d'espace), posé par
-    l'interface. On capture tant qu'il est levé, on envoie à la descente.
+    ``tenu`` est l'écoute armée par l'interface (hold PTT, ou toggle
+    mains libres jusqu'au second appui). On capture tant qu'il est levé.
     """
 
     def __init__(
@@ -283,6 +519,7 @@ class SessionVocale(threading.Thread):
         device: str | None,
         sortie: str | None,
         raccourci_label: str,
+        mains_libres: bool = False,
     ) -> None:
         super().__init__(name="session-vocale", daemon=True)
         self.file_ui = file_ui
@@ -290,10 +527,52 @@ class SessionVocale(threading.Thread):
         self.device = device
         self.nom_sortie = sortie
         self.raccourci_label = raccourci_label
+        self.mains_libres = bool(mains_libres)
         self.arreter = threading.Event()
         self.tenu = threading.Event()
+        self.couper = threading.Event()
+        self.en_lecture = threading.Event()
         self.canal_pret = threading.Event()
+        self._options_a_envoyer = threading.Event()
+        self._attendre_jev = False
         self.ws = None
+        self.sortie = None
+        self._capture_continue = None
+
+    def demander_envoi_options(self) -> None:
+        self._options_a_envoyer.set()
+
+    def _pousser_options(self, ws) -> None:
+        try:
+            ws.send(json.dumps(message_options(self.mains_libres)))
+            journaliser(f"OPTIONS mains_libres={self.mains_libres}")
+        except Exception as exc:
+            journaliser(f"options : {exc}")
+        self._options_a_envoyer.clear()
+        self._attendre_jev = bool(self.mains_libres)
+
+    def _aspirer_jev_pret(self, ws, timeout: float = 0.2) -> None:
+        """Lit un jev_pret hors tour, sans bloquer l'attente PTT."""
+        try:
+            brut = ws.recv(timeout=timeout)
+        except TimeoutError:
+            return
+        except TypeError:
+            self.tenu.wait(timeout)
+            return
+        except Exception as exc:
+            journaliser(f"jev_pret : {exc}")
+            self._attendre_jev = False
+            return
+        try:
+            message = json.loads(brut)
+        except (json.JSONDecodeError, TypeError):
+            return
+        if relayer_jev_pret(message, self.deposer):
+            self._attendre_jev = False
+            return
+        if relayer_conversation(message, self.deposer):
+            return
 
     def deposer(self, message: dict[str, Any]) -> None:
         if not self.arreter.is_set():
@@ -302,6 +581,7 @@ class SessionVocale(threading.Thread):
     def demander_arret(self) -> None:
         self.arreter.set()
         self.tenu.clear()
+        self.couper.set()
         ws = self.ws
         if ws is not None:
             try:
@@ -320,6 +600,7 @@ class SessionVocale(threading.Thread):
 
     def _servir(self) -> None:
         global moteur
+        assurer_stdio()
         try:
             from native.hostagent import talk as moteur_charge
         except ImportError as exc:
@@ -345,9 +626,11 @@ class SessionVocale(threading.Thread):
         secret = moteur.lire_secret()
         try:
             indice = moteur.choisir_peripherique(self.device, sd)
-            capture = moteur.PushToTalkCapture(
-                stream_factory=moteur._fabrique_entree(indice, sd)
-            )
+            fabrique = moteur._fabrique_entree(indice, sd)
+            capture = moteur.PushToTalkCapture(stream_factory=fabrique)
+            from native.hostagent.windows_audio import CaptureContinue
+
+            self._capture_continue = CaptureContinue(stream_factory=fabrique)
             indice_sortie = moteur.choisir_sortie(self.nom_sortie, sd)
             sortie = moteur._ouvrir_sortie(sd, indice=indice_sortie)
         except SystemExit:
@@ -359,6 +642,7 @@ class SessionVocale(threading.Thread):
             )
             return
 
+        self.sortie = sortie
         try:
             while not self.arreter.is_set():
                 try:
@@ -380,17 +664,19 @@ class SessionVocale(threading.Thread):
                             self.arreter.wait(2.0)
                             continue
                         self.canal_pret.set()
+                        self._pousser_options(ws)
                         _trace_c10("WS_OPEN", url=self.url)
-                        self.deposer(
-                            {
-                                "type": "statut",
-                                "texte": (
-                                    "Canal prêt. Maintenez Parler ou "
-                                    f"{self.raccourci_label}."
-                                ),
-                            }
+                        u_canal = ui_presence()
+                        cle_pret = (
+                            "channel_ready_hands_free"
+                            if self.mains_libres
+                            else "channel_ready"
                         )
-                        print("CANAL_PRET", flush=True)
+                        pret = u_canal[cle_pret].format(
+                            raccourci=self.raccourci_label
+                        )
+                        self.deposer({"type": "statut", "texte": pret})
+                        journaliser("CANAL_PRET")
                         self._boucle_tours(ws, capture, sortie)
                 except Exception as exc:
                     if self.arreter.is_set():
@@ -399,13 +685,14 @@ class SessionVocale(threading.Thread):
                         texte = moteur.decrire_erreur_peripherique(exc)
                     else:
                         texte = f"Impossible de joindre {self.url} : {exc}"
-                    print(texte, flush=True)
+                    journaliser(texte)
                     self.deposer({"type": "erreur", "texte": texte})
                     self.arreter.wait(2.0)
                 finally:
                     self.canal_pret.clear()
                     self.ws = None
         finally:
+            self.sortie = None
             try:
                 sortie.stop()
             except Exception:
@@ -420,26 +707,51 @@ class SessionVocale(threading.Thread):
         # déjà depuis l'appui, il ne faut ni l'attendre ni la relancer.
         deja_en_ecoute = False
         while not self.arreter.is_set():
+            if self.mains_libres and self._capture_continue is not None:
+                deja_en_ecoute = False
+                self._boucle_tours_continus(ws, self._capture_continue, sortie)
+                continue
             if not deja_en_ecoute:
                 while not self.arreter.is_set() and not self.tenu.is_set():
-                    self.tenu.wait(0.2)
+                    if self.mains_libres and self._capture_continue is not None:
+                        break
+                    if self._options_a_envoyer.is_set():
+                        self._pousser_options(ws)
+                    if self._attendre_jev:
+                        self._aspirer_jev_pret(ws)
+                    else:
+                        self.tenu.wait(0.2)
                 if self.arreter.is_set():
                     return
+                if self.mains_libres and self._capture_continue is not None:
+                    continue
                 capture.start()
             deja_en_ecoute = False
-            self.deposer({"type": "statut", "texte": "Écoute… relâchez pour envoyer."})
+            u_tour = ui_presence()
+            self.deposer(
+                {
+                    "type": "statut",
+                    "texte": (
+                        u_tour["listening_tap_send"]
+                        if self.mains_libres
+                        else u_tour["listening"]
+                    ),
+                }
+            )
             while not self.arreter.is_set() and self.tenu.is_set():
                 time.sleep(0.03)
             trames = capture.stop()
             t_fin_parole = time.perf_counter()
             if self.arreter.is_set():
                 return
+            if self.mains_libres:
+                self.deposer({"type": "statut", "texte": u_tour["sending"]})
             if not trames:
                 _trace_c10("AUDIO_SEND", n_trames=0, n_samples=0)
                 self.deposer(
                     {
                         "type": "statut",
-                        "texte": "Aucune trame capturée (parole trop courte).",
+                        "texte": ui_presence()["no_frames"],
                     }
                 )
                 self.deposer({"type": "etat", "etat": "repos", "niveau": None})
@@ -449,24 +761,145 @@ class SessionVocale(threading.Thread):
             self.deposer(
                 {
                     "type": "statut",
-                    "texte": f"{len(trames)} trames envoyées, attente de la réponse…",
+                    "texte": ui_presence()["frames_sent"].format(n=len(trames)),
                 }
             )
-            print(f"envoi : {len(trames)} trames", flush=True)
+            journaliser(f"envoi : {len(trames)} trames")
             ws.send(
                 json.dumps(
                     {
                         "type": "invoke",
                         "primitive": "audio.capture",
                         "frames": [trame.samples.tolist() for trame in trames],
+                        "mains_libres": self.mains_libres,
                     }
                 )
             )
-            deja_en_ecoute = consommer_reponse(
-                ws, sortie, t_fin_parole, self.deposer, self.arreter,
-                interrompre=self.tenu, sur_interruption=capture.start,
-            ) is True
-            print("tour : terminé", flush=True)
+            self.couper.clear()
+            self.en_lecture.set()
+            try:
+                deja_en_ecoute = consommer_reponse(
+                    ws, sortie, t_fin_parole, self.deposer, self.arreter,
+                    interrompre=self.tenu, couper=self.couper,
+                    sur_interruption=capture.start,
+                ) is True
+            finally:
+                self.en_lecture.clear()
+                self.couper.clear()
+            journaliser("tour : terminé")
+
+    def _boucle_tours_continus(self, ws, capture, sortie) -> None:
+        """Micro ouvert en continu : tours au silence, bouton = envoi immédiat."""
+        capture.start()
+        tenu_etait = self.tenu.is_set()
+        u_tour = ui_presence()
+        self.deposer({"type": "statut", "texte": u_tour["listening_tap_send"]})
+        journaliser("ML : boucle continue demarree")
+        # Trace de vie : sans elle, « le mode meurt » est indiscernable de
+        # « la detection de voix ne declenche pas ». Mesure du 2026-09-20.
+        _dernier_pouls = time.monotonic()
+        _n_segments = 0
+        try:
+            while not self.arreter.is_set() and self.mains_libres:
+                maintenant = time.monotonic()
+                if maintenant - _dernier_pouls >= 5.0:
+                    _dernier_pouls = maintenant
+                    journaliser(
+                        ligne_pouls_ml(
+                            capture,
+                            n_segments=_n_segments,
+                            en_lecture=self.en_lecture.is_set(),
+                            couper=self.couper.is_set(),
+                        )
+                    )
+                if self._options_a_envoyer.is_set():
+                    self._pousser_options(ws)
+                if self._attendre_jev:
+                    self._aspirer_jev_pret(ws)
+                else:
+                    self._aspirer_jev_pret(ws, timeout=0.03)
+                if not self.en_lecture.is_set() and self.couper.is_set():
+                    # Stop pressé hors lecture : ne pas armer le tour suivant.
+                    self.couper.clear()
+                tenu_est = self.tenu.is_set()
+                if tenu_etait and not tenu_est:
+                    capture.forcer_fin()
+                tenu_etait = tenu_est
+                if capture.segment_pret():
+                    trames = capture.prendre_segment()
+                    _n_segments += 1
+                    journaliser("ML : segment %d detecte (%d trames)" % (_n_segments, len(trames)))
+                    self._expedier_tour_continu(ws, capture, sortie, trames)
+                    tenu_etait = self.tenu.is_set()
+                    continue
+                time.sleep(0.03)
+        finally:
+            capture.stop()
+
+    def _expedier_tour_continu(self, ws, capture, sortie, trames) -> None:
+        t_fin_parole = time.perf_counter()
+        self.deposer({"type": "statut", "texte": ui_presence()["sending"]})
+        if not trames:
+            _trace_c10("AUDIO_SEND", n_trames=0, n_samples=0)
+            self.deposer({"type": "statut", "texte": ui_presence()["no_frames"]})
+            self.deposer({"type": "etat", "etat": "repos", "niveau": None})
+            return
+        n_samples = sum(int(trame.samples.size) for trame in trames)
+        _trace_c10("AUDIO_SEND", n_trames=len(trames), n_samples=n_samples)
+        self.deposer(
+            {
+                "type": "statut",
+                "texte": ui_presence()["frames_sent"].format(n=len(trames)),
+            }
+        )
+        journaliser(f"envoi : {len(trames)} trames")
+        ws.send(
+            json.dumps(
+                {
+                    "type": "invoke",
+                    "primitive": "audio.capture",
+                    "frames": [trame.samples.tolist() for trame in trames],
+                    "mains_libres": self.mains_libres,
+                }
+            )
+        )
+        self.couper.clear()
+        if hasattr(capture, "regime_lecture"):
+            capture.regime_lecture(True, on_barge_in=lambda: _abort_sortie(sortie))
+        else:
+            capture.suspendre()
+        self.en_lecture.set()
+        barge = False
+        stop_pendant = False
+        try:
+            barge = (
+                consommer_reponse(
+                    ws,
+                    sortie,
+                    t_fin_parole,
+                    self.deposer,
+                    self.arreter,
+                    interrompre=evenement_interruption_lecture(self.tenu, capture),
+                    couper=self.couper,
+                    sur_interruption=lambda: apres_barge_in(capture),
+                )
+                is True
+            )
+            stop_pendant = self.couper.is_set()
+        finally:
+            self.en_lecture.clear()
+            stop_pendant = stop_pendant or self.couper.is_set()
+            self.couper.clear()
+            if hasattr(capture, "regime_lecture"):
+                capture.regime_lecture(False)
+        if not barge and not stop_pendant:
+            time.sleep(0.25)
+        if not self.arreter.is_set() and self.mains_libres:
+            if not barge:
+                reprendre = getattr(capture, "reprendre", None)
+                if callable(reprendre):
+                    reprendre()
+        journaliser("tour : terminé")
 
 
 class Application:
@@ -479,7 +912,11 @@ class Application:
             self.configuration = ConfigurationPresence(
                 onboarding_termine=False,
                 raccourci_ptt=self.configuration.raccourci_ptt,
+                langue=self.configuration.langue,
+                contraste=self.configuration.contraste,
+                mains_libres=self.configuration.mains_libres,
             )
+        appliquer_langue_presence(self.configuration)
         self.chemin_configuration = args.config
         self.session = SessionVocale(
             self.file_ui,
@@ -487,10 +924,13 @@ class Application:
             device=args.device,
             sortie=args.sortie,
             raccourci_label=raccourcis_lisibles()[self.configuration.raccourci_ptt],
+            mains_libres=self.configuration.mains_libres,
         )
         self.enfonce = False
+        self.ecoute_basculee = False
+        self._touche_parler_enfoncee = False
         self.dernier_delai_ms: float | None = None
-        self.texte_statut = "Connexion…"
+        self.texte_statut = ui_presence()["connecting"]
         self.session_lancee = False
         self.raccourci_en_cours = self.configuration.raccourci_ptt
         self.badge: BadgeEclair | None = None
@@ -503,20 +943,56 @@ class Application:
         self.chemin_sante = Path(args.sante) if getattr(args, "sante", None) else None
         self.sondes_actives = bool(getattr(args, "sondes", False)) and self.chemin_sante is None
         self.bandeau_alerte: tk.Label | None = None
+        self.bouton_mains_libres: tk.Button | None = None
+        self.bouton_stop: tk.Button | None = None
+        self.bouton_reglages: tk.Button | None = None
+        self.fenetre_reglages = None
         self.cadre_sante: tk.Frame | None = None
+        self.cadre_conversation: tk.Frame | None = None
+        self.pastille_conversation: tk.Canvas | None = None
+        self.ligne_conversation: tk.Label | None = None
+        self._conversation_ouverte = False
+        self._conversation_restant_s = 0.0
         self._dernier_sante_ts = 0.0
         self._sondes_stop = threading.Event()
         self._sondes_fil: threading.Thread | None = None
         self._phrase_reprise = ""
+        self._jev_repli_id: Any = None
 
         self.racine = tk.Tk()
         self.racine.title("hyper-ambient")
+        # Icone barre des taches / Alt-Tab : Hyper Ambient (Win32 + Tk).
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "HyperAmbient.Presence.v3"
+            )
+        except (AttributeError, OSError):
+            pass
+        self._icone_path = Path(__file__).resolve().parent / "assets" / "hyper-ambient.ico"
+        self._icone_photo = None
+        try:
+            if self._icone_path.is_file():
+                self.racine.iconbitmap(default=str(self._icone_path))
+                try:
+                    from tkinter import PhotoImage
+                    png32 = self._icone_path.with_name("hyper-ambient-32.png")
+                    if png32.is_file():
+                        self._icone_photo = PhotoImage(file=str(png32))
+                        self.racine.iconphoto(True, self._icone_photo)
+                except tk.TclError:
+                    pass
+        except (OSError, tk.TclError):
+            pass
+
+
         self.racine.configure(bg=FOND)
         self.racine.geometry("520x800")
         self.racine.minsize(440, 700)
         # Fenêtre normale : pas d'overrideredirect, la croix doit fermer.
         # Pas de chroma-key : le geste HA est la nappe/orbe, pas un trou.
         self.racine.protocol("WM_DELETE_WINDOW", self.fermer)
+        self.racine.after(50, self._appliquer_icone_win32)
+        self.racine.after(400, self._appliquer_icone_win32)
 
         self.toile_fond = tk.Canvas(
             self.racine,
@@ -549,7 +1025,16 @@ class Application:
         self.badge = None
         self.ligne_eclair = None
         self.bandeau_alerte = None
+        self.bouton_mains_libres = None
+        self.bouton_stop = None
+        self.bouton_reglages = None
+        self.ligne_mains_libres = None
+        self.cadre_conversation = None
+        self.pastille_conversation = None
+        self.ligne_conversation = None
         self.cadre_sante = None
+        self.ecoute_basculee = False
+        self._touche_parler_enfoncee = False
         for enfant in self.conteneur.winfo_children():
             enfant.destroy()
 
@@ -579,7 +1064,7 @@ class Application:
             bd=0,
         )
         toile_orbe.pack(pady=(0, 8))
-        self.orbe_accueil = Bulle(toile_orbe, 140)
+        self.orbe_accueil = Bulle(toile_orbe, 140, self.configuration.contraste)
         self.orbe_accueil.appliquer_etat("ecoute", niveau=0.42)
         tk.Label(
             inner,
@@ -680,7 +1165,7 @@ class Application:
         try:
             enregistrer_configuration(self.configuration, self.chemin_configuration)
         except OSError as exc:
-            print(f"configuration non enregistrée : {exc}", flush=True)
+            journaliser(f"configuration non enregistrée : {exc}")
         self._afficher_application()
 
     def _afficher_bienvenue(self) -> None:
@@ -706,12 +1191,49 @@ class Application:
             justify="left",
             wraplength=400,
         ).pack(fill=tk.X, pady=(16, 0))
-        self._bouton_principal(pied, u["continue"], self._afficher_reglage_ptt)
+        tk.Label(
+            cadre,
+            text=u["hands_free"],
+            bg=FOND_VITRE,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 10),
+            anchor="w",
+            justify="left",
+            wraplength=400,
+        ).pack(fill=tk.X, pady=(12, 0))
+        self._monter_langue_et_contraste(cadre)
+        self._bouton_principal(pied, u["continue"], self._afficher_mains_libres)
         self._bouton_secondaire(pied, u["skip"], self._achever_onboarding)
+
+    def _afficher_mains_libres(self) -> None:
+        u = ui_presence()
+        cadre, pied = self._cadre_onboarding(
+            2, u["hands_free_title"], u["hands_free"]
+        )
+        tk.Label(
+            cadre,
+            text=u["a11y"],
+            bg=FOND_VITRE,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 10),
+            anchor="w",
+            justify="left",
+            wraplength=400,
+        ).pack(fill=tk.X)
+        self._bouton_principal(
+            pied, u["hands_free_enable"], lambda: self._choisir_mains_libres(True)
+        )
+        self._bouton_secondaire(
+            pied, u["hands_free_later"], lambda: self._choisir_mains_libres(False)
+        )
+
+    def _choisir_mains_libres(self, actif: bool) -> None:
+        self._appliquer_options(mains_libres=actif)
+        self._afficher_reglage_ptt()
 
     def _afficher_reglage_ptt(self) -> None:
         u = ui_presence()
-        cadre, pied = self._cadre_onboarding(2, u["ptt_title"], u["ptt_body"])
+        cadre, pied = self._cadre_onboarding(3, u["ptt_title"], u["ptt_body"])
         tk.Label(
             cadre,
             text=u["shortcut_in_app"],
@@ -801,7 +1323,7 @@ class Application:
 
     def _afficher_masquage(self) -> None:
         u = ui_presence()
-        cadre, pied = self._cadre_onboarding(3, u["hide_title"], u["hide_body"])
+        cadre, pied = self._cadre_onboarding(4, u["hide_title"], u["hide_body"])
         tk.Label(
             cadre,
             text=u["shortcut_kept"].format(
@@ -835,6 +1357,264 @@ class Application:
             lambda: self._achever_onboarding(self.raccourci_en_cours),
         )
         self._bouton_secondaire(pied, u["start_and_hide"], commencer_et_masquer)
+
+    def _monter_langue_et_contraste(self, parent: tk.Misc) -> None:
+        u = ui_presence()
+        tk.Label(
+            parent,
+            text=u["language"],
+            bg=FOND_VITRE,
+            fg=ENCRE,
+            font=("Segoe UI", 11, "bold"),
+            anchor="w",
+        ).pack(fill=tk.X, pady=(16, 4))
+        choix = tk.StringVar(value=self.configuration.langue)
+
+        def retenir_langue(*_args: object) -> None:
+            self._appliquer_options(langue=choix.get())
+
+        choix.trace_add("write", retenir_langue)
+        for code, libelle in (("fr", "Français"), ("en", "English")):
+            radio = tk.Radiobutton(
+                parent,
+                text=libelle,
+                variable=choix,
+                value=code,
+                bg=FOND_VITRE,
+                fg=ENCRE,
+                activebackground=FOND_VITRE,
+                activeforeground=ENCRE,
+                selectcolor="#142028",
+                font=("Segoe UI", 11),
+                anchor="w",
+                takefocus=1,
+            )
+            radio.pack(fill=tk.X, pady=2)
+            self._rendre_focus_visible(radio)
+        contraste = tk.IntVar(value=1 if self.configuration.contraste else 0)
+
+        def retenir_contraste(*_args: object) -> None:
+            self._appliquer_options(contraste=bool(contraste.get()))
+
+        case = tk.Checkbutton(
+            parent,
+            text=u["contrast"],
+            variable=contraste,
+            command=retenir_contraste,
+            bg=FOND_VITRE,
+            fg=ENCRE,
+            activebackground=FOND_VITRE,
+            activeforeground=ENCRE,
+            selectcolor="#142028",
+            font=("Segoe UI", 11),
+            anchor="w",
+            takefocus=1,
+        )
+        case.pack(fill=tk.X, pady=(8, 0))
+        self._rendre_focus_visible(case)
+
+    def _appliquer_options(
+        self,
+        *,
+        langue: str | None = None,
+        contraste: bool | None = None,
+        mains_libres: bool | None = None,
+    ) -> None:
+        self.configuration = ConfigurationPresence(
+            onboarding_termine=self.configuration.onboarding_termine,
+            raccourci_ptt=self.configuration.raccourci_ptt,
+            langue=langue or self.configuration.langue,
+            contraste=self.configuration.contraste if contraste is None else contraste,
+            mains_libres=(
+                self.configuration.mains_libres
+                if mains_libres is None
+                else bool(mains_libres)
+            ),
+        )
+        if mains_libres is False:
+            self._conversation_ouverte = False
+            self._conversation_restant_s = 0.0
+        os.environ["HA_LANG"] = self.configuration.langue
+        appliquer_langue_presence(self.configuration)
+        self.session.raccourci_label = raccourcis_lisibles()[
+            self.configuration.raccourci_ptt
+        ]
+        self.session.mains_libres = self.configuration.mains_libres
+        if mains_libres is not None:
+            self.session.demander_envoi_options()
+            journaliser(
+                f"mains_libres={'ON' if self.configuration.mains_libres else 'OFF'} "
+                "sync configuration=session"
+            )
+        if self.orbe_accueil is not None:
+            self.orbe_accueil.contraste = self.configuration.contraste
+        if self.bulle is not None:
+            self.bulle.contraste = self.configuration.contraste
+        try:
+            enregistrer_configuration(self.configuration, self.chemin_configuration)
+        except OSError as exc:
+            journaliser(f"configuration non enregistrée : {exc}")
+        self._rafraichir_bouton_mains_libres()
+        self._rafraichir_ligne_mains_libres()
+        self._rafraichir_bouton_parler()
+        self._rafraichir_indicateur_conversation()
+
+    def _rafraichir_bouton_mains_libres(self) -> None:
+        bouton = self.bouton_mains_libres
+        if bouton is None:
+            return
+        u = ui_presence()
+        actif = self.configuration.mains_libres
+        bouton.configure(
+            text=u["hands_free_on"] if actif else u["hands_free_off"],
+            bg=visuel.PALETTES["ecoute"]["coeur"] if actif else FOND_VITRE,
+            fg=ENCRE_FONCEE if actif else ENCRE_SOURDE,
+            activebackground=visuel.PALETTES["ecoute"]["lueur"] if actif else "#142028",
+            activeforeground=ENCRE_FONCEE if actif else ENCRE,
+        )
+
+    def _rafraichir_ligne_mains_libres(self) -> None:
+        ligne = getattr(self, "ligne_mains_libres", None)
+        if ligne is None:
+            return
+        u = ui_presence()
+        raccourci = raccourcis_lisibles()[self.configuration.raccourci_ptt]
+        ligne.configure(text=u["hands_free_hint"].format(raccourci=raccourci))
+
+    def _rafraichir_indicateur_conversation(self) -> None:
+        cadre = getattr(self, "cadre_conversation", None)
+        ligne = getattr(self, "ligne_conversation", None)
+        pastille = getattr(self, "pastille_conversation", None)
+        if cadre is None or ligne is None:
+            return
+        mains = self._mains_libres_actif()
+        ouverte = bool(getattr(self, "_conversation_ouverte", False))
+        restant = float(getattr(self, "_conversation_restant_s", 0.0) or 0.0)
+        texte = libelle_indicateur_conversation(
+            mains_libres=mains,
+            ouverte=ouverte,
+            restant_s=restant,
+            textes=ui_presence(),
+        )
+        ligne.configure(text=texte)
+        if not mains:
+            cadre.pack_forget()
+            return
+        if not cadre.winfo_manager():
+            apres = getattr(self, "ligne_mains_libres", None)
+            options: dict[str, Any] = {"fill": tk.X, "pady": (0, 8)}
+            if apres is not None and apres.winfo_manager():
+                options["after"] = apres
+            cadre.pack(**options)
+        etat = "ecoute" if ouverte else "repos"
+        palette = visuel.palette_pour(etat, self.configuration.contraste)
+        ligne.configure(fg=palette["lueur"] if ouverte else ENCRE_SOURDE)
+        if pastille is None:
+            return
+        pastille.delete("all")
+        pastille.configure(bg=FOND)
+        pastille.create_oval(
+            1,
+            1,
+            13,
+            13,
+            fill=palette["coeur"],
+            outline=palette["lueur"],
+        )
+
+    def _rafraichir_bouton_parler(self) -> None:
+        bouton = getattr(self, "bouton", None)
+        if bouton is None:
+            return
+        u = ui_presence()
+        actif = self._mains_libres_actif()
+        texte = libelle_bouton_parler(
+            mains_libres=actif,
+            ecoute_active=self.ecoute_basculee,
+            touche_enfoncee=self._touche_parler_enfoncee,
+            textes=u,
+        )
+        if actif and self.ecoute_basculee:
+            bouton.configure(
+                relief=tk.SUNKEN if self._touche_parler_enfoncee else tk.RAISED,
+                text=texte,
+                bg=visuel.PALETTES["ecoute"]["coeur"],
+                fg="#0c141c",
+            )
+            return
+        if self.enfonce:
+            bouton.configure(
+                relief=tk.SUNKEN,
+                text=texte,
+                bg=visuel.PALETTES["ecoute"]["coeur"],
+                fg="#0c141c",
+            )
+            return
+        bouton.configure(
+            relief=tk.RAISED,
+            text=texte,
+            bg=visuel.PALETTES["repos"]["anneau"],
+            fg=ENCRE,
+        )
+
+    def _mains_libres_actif(self) -> bool:
+        actif = bool(self.configuration.mains_libres)
+        session = getattr(self, "session", None)
+        if session is not None and session.mains_libres != actif:
+            session.mains_libres = actif
+            session.demander_envoi_options()
+            journaliser(f"mains_libres sync configuration={actif}")
+        return actif
+
+    def _basculer_mains_libres(self) -> None:
+        if self.ecoute_basculee:
+            self._envoyer_ecoute_toggle()
+        nouveau = not self.configuration.mains_libres
+        self._appliquer_options(mains_libres=nouveau)
+        if nouveau and self.enfonce and not self.ecoute_basculee:
+            self._demarrer_ecoute_toggle()
+        u = ui_presence()
+        raccourci = raccourcis_lisibles()[self.configuration.raccourci_ptt]
+        if nouveau:
+            self._afficher_statut(u["hands_free_connecting"])
+            self._armer_repli_jev_pret()
+        else:
+            self._annuler_repli_jev_pret()
+            self._afficher_statut(u["hands_free_hint"].format(raccourci=raccourci))
+        self._focus_parler()
+
+    def _armer_repli_jev_pret(self) -> None:
+        self._annuler_repli_jev_pret()
+        try:
+            self._jev_repli_id = self.racine.after(
+                DELAI_JEV_PRET_MS, self._repli_jev_pret
+            )
+        except tk.TclError:
+            self._jev_repli_id = None
+
+    def _annuler_repli_jev_pret(self) -> None:
+        ident = getattr(self, "_jev_repli_id", None)
+        if ident is None:
+            return
+        try:
+            self.racine.after_cancel(ident)
+        except tk.TclError:
+            pass
+        self._jev_repli_id = None
+
+    def _repli_jev_pret(self) -> None:
+        self._jev_repli_id = None
+        self._afficher_jev_pret_si_en_connexion()
+
+    def _afficher_jev_pret_si_en_connexion(self) -> None:
+        if not self.configuration.mains_libres:
+            return
+        try:
+            if self.texte_statut != ui_presence()["hands_free_connecting"]:
+                return
+            self._afficher_statut(ui_presence()["hands_free_connected"])
+        except tk.TclError:
+            return
 
     def _afficher_application(self) -> None:
         self._vider()
@@ -870,7 +1650,7 @@ class Application:
             bd=0,
         )
         self.toile.pack(side=tk.LEFT, expand=True)
-        self.bulle = Bulle(self.toile, TAILLE_BULLE)
+        self.bulle = Bulle(self.toile, TAILLE_BULLE, self.configuration.contraste)
 
         cote_eclair = tk.Frame(
             bandeau,
@@ -903,10 +1683,11 @@ class Application:
 
         raccourci = raccourcis_lisibles()[self.configuration.raccourci_ptt]
         u = ui_presence()
-        # Les événements explicites conservent la sémantique maintenir/relâcher,
-        # y compris lorsque le bouton est atteint avec Tab.
+        rang_voix = tk.Frame(cadre, bg=FOND)
+        rang_voix.pack(pady=12, fill=tk.X)
+        # Hold PTT par défaut ; mains libres = toggle sans maintenir.
         self.bouton = tk.Button(
-            cadre,
+            rang_voix,
             text=u["speak"],
             font=("Segoe UI", 18, "bold"),
             bg=visuel.PALETTES["repos"]["anneau"],
@@ -921,12 +1702,101 @@ class Application:
             highlightthickness=2,
             highlightcolor=visuel.PALETTES["ecoute"]["lueur"],
         )
-        self.bouton.pack(pady=12, fill=tk.X)
+        self.bouton.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
         self.bouton.bind("<ButtonPress-1>", self.enfoncer)
         self.bouton.bind("<ButtonRelease-1>", self.relacher)
         self.bouton.bind("<KeyPress-Return>", self.enfoncer)
         self.bouton.bind("<KeyRelease-Return>", self.relacher)
+        self.bouton.bind("<KeyPress-space>", self.enfoncer)
+        self.bouton.bind("<KeyRelease-space>", self.relacher)
         self._rendre_focus_visible(self.bouton)
+        self.bouton.focus_set()
+        self._rafraichir_bouton_parler()
+
+        self.bouton_stop = tk.Button(
+            rang_voix,
+            text=u["stop"],
+            command=self.couper_voix,
+            font=("Segoe UI", 16, "bold"),
+            bg="#3a1c1c",
+            fg=ENCRE,
+            activebackground="#5a2828",
+            activeforeground=ENCRE,
+            relief=tk.RAISED,
+            bd=3,
+            padx=18,
+            pady=16,
+            takefocus=1,
+            highlightthickness=2,
+            highlightcolor=visuel.PALETTES["ecoute"]["lueur"],
+        )
+        self.bouton_stop.pack(side=tk.RIGHT, padx=(8, 0), fill=tk.Y)
+        self._rendre_focus_visible(self.bouton_stop)
+
+        self.bouton_mains_libres = tk.Button(
+            cadre,
+            text=u["hands_free_off"],
+            command=self._basculer_mains_libres,
+            font=("Segoe UI", 11, "bold"),
+            bg=FOND_VITRE,
+            fg=ENCRE_SOURDE,
+            activebackground="#142028",
+            activeforeground=ENCRE,
+            relief=tk.FLAT,
+            takefocus=1,
+        )
+        self.bouton_mains_libres.pack(fill=tk.X, pady=(0, 8))
+        self._rendre_focus_visible(self.bouton_mains_libres)
+        self._rafraichir_bouton_mains_libres()
+        raccourci_hint = raccourcis_lisibles()[self.configuration.raccourci_ptt]
+        self.ligne_mains_libres = tk.Label(
+            cadre,
+            text=u["hands_free_hint"].format(raccourci=raccourci_hint),
+            bg=FOND,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 9),
+            anchor="w",
+            justify="left",
+            wraplength=440,
+        )
+        self.ligne_mains_libres.pack(fill=tk.X, pady=(0, 8))
+
+        self.cadre_conversation = tk.Frame(cadre, bg=FOND)
+        self.pastille_conversation = tk.Canvas(
+            self.cadre_conversation,
+            width=14,
+            height=14,
+            bg=FOND,
+            highlightthickness=0,
+            bd=0,
+        )
+        self.pastille_conversation.pack(side=tk.LEFT, padx=(0, 8))
+        self.ligne_conversation = tk.Label(
+            self.cadre_conversation,
+            text="",
+            bg=FOND,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 10),
+            anchor="w",
+            justify="left",
+            wraplength=420,
+        )
+        self.ligne_conversation.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._rafraichir_indicateur_conversation()
+
+        self.bouton_reglages = tk.Button(
+            cadre,
+            text=u["settings"],
+            command=self.ouvrir_reglages,
+            bg=FOND_VITRE,
+            fg=ENCRE_SOURDE,
+            activebackground="#142028",
+            activeforeground=ENCRE,
+            relief=tk.FLAT,
+            takefocus=1,
+        )
+        self.bouton_reglages.pack(fill=tk.X, pady=(0, 8))
+        self._rendre_focus_visible(self.bouton_reglages)
 
         self.bouton_masquer = tk.Button(
             cadre,
@@ -941,6 +1811,24 @@ class Application:
         )
         self.bouton_masquer.pack(fill=tk.X, pady=(0, 8))
         self._rendre_focus_visible(self.bouton_masquer)
+
+        self.bouton_feedback = tk.Button(
+            cadre,
+            text=u["feedback"],
+            command=ouvrir_feedback,
+            bg=FOND_VITRE,
+            fg=ENCRE_SOURDE,
+            activebackground="#142028",
+            activeforeground=ENCRE,
+            relief=tk.FLAT,
+            takefocus=1,
+        )
+        self.bouton_feedback.pack(fill=tk.X, pady=(0, 8))
+        self._rendre_focus_visible(self.bouton_feedback)
+
+        options = tk.Frame(cadre, bg=FOND)
+        options.pack(fill=tk.X, pady=(0, 4))
+        self._monter_langue_et_contraste(options)
 
         vitre = tk.Frame(
             cadre,
@@ -998,9 +1886,15 @@ class Application:
         appui, relache = sequences_tk(self.configuration.raccourci_ptt)
         self.racine.bind_all(appui, self._espace_enfonce)
         self.racine.bind_all(relache, self._espace_relache)
-        self.racine.bind_all("<Escape>", lambda _e: self.fermer())
+        for extra in sequences_relache_extra(self.configuration.raccourci_ptt):
+            self.racine.bind_all(extra, self._espace_relache)
+        self.racine.bind_all("<Escape>", self._echap)
+        self.racine.bind_all("<Control-h>", lambda _e: self.masquer_configuration() or "break")
+        self.racine.bind_all("<Control-H>", lambda _e: self.masquer_configuration() or "break")
+        self.racine.bind_all("<F6>", self._focus_parler)
+        self.racine.bind_all("<Control-slash>", lambda _e: self._afficher_aide_clavier())
 
-        print("UI_PRETE", flush=True)
+        journaliser("UI_PRETE")
         if self.chemin_sante and self.chemin_sante.exists():
             try:
                 self.appliquer_etat_sante(etat_sante.lire_snapshot(self.chemin_sante))
@@ -1017,9 +1911,50 @@ class Application:
             self.session_lancee = True
             self.session.start()
 
+
+    def _focus_parler(self, _event: object | None = None) -> str:
+        if self.bouton is not None:
+            try:
+                self.bouton.focus_set()
+            except tk.TclError:
+                pass
+        return "break"
+
+    def _afficher_aide_clavier(self) -> None:
+        """Rappel des raccourcis clavier (a11y)."""
+        raccourci = raccourcis_lisibles()[self.configuration.raccourci_ptt]
+        self._afficher_statut(
+            "Clavier : Tab parcours · Entrée active · "
+            + raccourci
+            + " parler · Ctrl+H masquer · F6 focus Parler · Échap Stop si parole, sinon quitter"
+        )
+
+    def ouvrir_reglages(self, chemin: Path | None = None) -> object:
+        """Ouvre la fenêtre Réglages sans bloquer la fenêtre principale."""
+        try:
+            from reglages_ui import FenetreReglages, chemin_env_local
+        except ImportError:
+            from native.presence.reglages_ui import FenetreReglages, chemin_env_local
+
+        existante = getattr(self, "fenetre_reglages", None)
+        if existante is not None:
+            try:
+                if existante.fenetre.winfo_exists():
+                    existante.fenetre.lift()
+                    existante.fenetre.focus_set()
+                    return existante
+            except tk.TclError:
+                pass
+        cible = Path(chemin) if chemin is not None else chemin_env_local()
+        self.fenetre_reglages = FenetreReglages(self.racine, cible)
+        return self.fenetre_reglages
+
     def masquer_configuration(self) -> None:
         """Masque dans la barre des tâches, qui reste le geste de rappel fiable."""
-        self.relacher()
+        if self.ecoute_basculee:
+            self._envoyer_ecoute_toggle()
+        else:
+            self.relacher()
         self.racine.iconify()
 
     def _zone_texte(self, parent: tk.Misc) -> tk.Text:
@@ -1050,7 +1985,10 @@ class Application:
     def _composer_statut(self) -> str:
         if self.dernier_delai_ms is None:
             return self.texte_statut
-        return f"{self.texte_statut}  ·  premier son : {self.dernier_delai_ms:.0f} ms"
+        return (
+            f"{self.texte_statut}  ·  "
+            f"{ui_presence()['first_sound'].format(ms=self.dernier_delai_ms)}"
+        )
 
     def _afficher_statut(self, texte: str | None = None) -> None:
         if texte is not None:
@@ -1072,11 +2010,24 @@ class Application:
         )
 
     def enfoncer(self, _event: object | None = None) -> None:
-        if self.enfonce:
+        if est_repetition_clavier(self._touche_parler_enfoncee, _event):
             return
         if not self.session.canal_pret.is_set():
             _trace_c10("PTT_IGNORE")
             self._afficher_statut(ui_presence()["channel_not_ready"])
+            return
+        self._touche_parler_enfoncee = True
+        action = action_appui_parler(
+            mains_libres=self._mains_libres_actif(),
+            ecoute_active=self.ecoute_basculee,
+        )
+        if action == "send":
+            self._envoyer_ecoute_toggle()
+            return
+        if action == "start":
+            self._demarrer_ecoute_toggle()
+            return
+        if self.enfonce:
             return
         self.enfonce = True
         self.session.tenu.set()
@@ -1084,39 +2035,118 @@ class Application:
         if self.bulle is not None:
             self.bulle.appliquer_etat("ecoute", niveau=None)
         self._appliquer_eclair("ecoute")
-        self.bouton.configure(
-            relief=tk.SUNKEN,
-            text=ui_presence()["speaking"],
-            bg=visuel.PALETTES["ecoute"]["coeur"],
-            fg="#0c141c",
-        )
-        print("bouton : enfoncé", flush=True)
+        self._rafraichir_bouton_parler()
+        journaliser("bouton : enfoncé")
 
     def relacher(self, _event: object | None = None) -> None:
+        self._touche_parler_enfoncee = False
+        if not relache_termine_lecoute(self._mains_libres_actif()):
+            if self.ecoute_basculee:
+                self._rafraichir_bouton_parler()
+                self._afficher_statut(ui_presence()["listening_tap_send"])
+            return
         if not self.enfonce:
             return
         self.enfonce = False
         self.session.tenu.clear()
         _trace_c10("PTT_OFF")
-        self.bouton.configure(
-            relief=tk.RAISED,
-            text=ui_presence()["speak"],
-            bg=visuel.PALETTES["repos"]["anneau"],
-            fg=ENCRE,
-        )
-        print("bouton : relâché", flush=True)
+        self._rafraichir_bouton_parler()
+        journaliser("bouton : relâché")
+
+    def _demarrer_ecoute_toggle(self) -> None:
+        self.ecoute_basculee = True
+        self.enfonce = True
+        self.session.mains_libres = True
+        self.session.tenu.set()
+        _trace_c10("PTT_ON")
+        if self.bulle is not None:
+            self.bulle.appliquer_etat("ecoute", niveau=None)
+        self._appliquer_eclair("ecoute")
+        u = ui_presence()
+        self._rafraichir_bouton_parler()
+        self._afficher_statut(u["listening_toggle"])
+        journaliser("mains_libres=ON start")
+
+    def _envoyer_ecoute_toggle(self) -> None:
+        self.ecoute_basculee = False
+        self.enfonce = False
+        self.session.tenu.clear()
+        _trace_c10("PTT_OFF")
+        u = ui_presence()
+        self._rafraichir_bouton_parler()
+        self._afficher_statut(u["sending"])
+        journaliser("mains_libres=ON send")
+
+    def _voix_en_cours(self) -> bool:
+        if self.session.en_lecture.is_set():
+            return True
+        bulle = getattr(self, "bulle", None)
+        return bulle is not None and getattr(bulle, "etat", None) == "parole"
+
+    def couper_voix(self, _event: object | None = None) -> None:
+        """Stop : leve le drapeau, et rien d'autre.
+
+        Un seul fil touche le flux audio, celui de la session. Avorter le flux
+        ici, depuis le fil Tk, revenait a appeler ``abort()`` pendant que le fil
+        de session etait bloque dans ``sortie.write()`` ; PortAudio se coincait
+        et le rappel d'entree ``_on_audio`` cessait de se declencher. Mesure du
+        2026-09-20 : apres un Stop, plus aucun segment n'etait detecte pendant
+        trente secondes, alors que la capture se declarait non suspendue et que
+        la boucle mains libres restait vivante.
+
+        ``consommer_reponse`` scrute ``couper`` entre deux paquets audio et
+        avorte depuis le bon fil ; la coupure reste immediate a l'oreille.
+        """
+        self.session.couper.set()
+        self._afficher_statut(ui_presence()["interrupted"])
+        journaliser("stop : coupure voix demandee")
+
+    def _echap(self, _event: object | None = None) -> str | None:
+        if echap_coupe_la_voix(self._voix_en_cours()):
+            self.couper_voix()
+            return "break"
+        self.fermer()
+        return None
+
+
+    def _focus_autorise_ptt(self, event: tk.Event | None = None) -> bool:
+        """Espace = PTT sauf champ texte. En mains libres, le raccourci reste actif hors Speak."""
+        try:
+            w = self.racine.focus_get()
+        except tk.TclError:
+            w = None
+        if w is None:
+            return True
+        if getattr(self, "bouton", None) is not None and w is self.bouton:
+            return True
+        if isinstance(w, (tk.Entry, tk.Text, tk.Spinbox)):
+            return False
+        if self._mains_libres_actif():
+            return True
+        if isinstance(w, (tk.Radiobutton, tk.Checkbutton)):
+            return False
+        if isinstance(w, tk.Button) and w is not getattr(self, "bouton", None):
+            return False
+        return True
 
     def _espace_enfonce(self, event: tk.Event) -> str | None:
-        # Repeat clavier : KeyPress se répète tant que la touche reste enfoncée.
+        # Repeat clavier : KeyPress se repete tant que la touche reste enfoncee.
         if event.keysym != "space":
             return None
-        self.enfoncer()
+        if not self._focus_autorise_ptt(event):
+            return None
+        self.enfoncer(event)
         return "break"
 
     def _espace_relache(self, event: tk.Event) -> str | None:
         if event.keysym != "space":
             return None
-        self.relacher()
+        if self._touche_parler_enfoncee or self.enfonce or self.ecoute_basculee:
+            self.relacher(event)
+            return "break"
+        if not self._focus_autorise_ptt(event):
+            return None
+        self.relacher(event)
         return "break"
 
     def appliquer_etat_sante(self, etat: dict[str, Any]) -> None:
@@ -1167,14 +2197,14 @@ class Application:
         try:
             from handlers import handle_health_check
         except ImportError as exc:
-            print(f"sondes : {exc}", flush=True)
+            journaliser(f"sondes : {exc}")
             return
         while not self._sondes_stop.is_set():
             try:
                 etat = handle_health_check({})
                 self.file_ui.put({"type": "sante", "etat": etat})
             except Exception as exc:
-                print(f"sondes : {exc}", flush=True)
+                journaliser(f"sondes : {exc}")
             self._sondes_stop.wait(2.0)
 
     def _rafraichir_sante_fichier(self) -> None:
@@ -1216,9 +2246,19 @@ class Application:
                 self.dernier_delai_ms = float(message["ms"])
             except (KeyError, TypeError, ValueError):
                 return
-            self._afficher_statut("Réponse en cours.")
+            self._afficher_statut(ui_presence()["replying"])
         elif kind == "statut":
             self._afficher_statut(str(message.get("texte") or ""))
+        elif kind == "jev_pret":
+            self._annuler_repli_jev_pret()
+            self._afficher_jev_pret_si_en_connexion()
+        elif kind == "conversation":
+            self._conversation_ouverte = message.get("ouverte") is True
+            try:
+                self._conversation_restant_s = float(message.get("restant_s") or 0.0)
+            except (TypeError, ValueError):
+                self._conversation_restant_s = 0.0
+            self._rafraichir_indicateur_conversation()
         elif kind == "erreur":
             self._afficher_statut(str(message.get("texte") or "Erreur."))
         elif kind == "sante":
@@ -1247,7 +2287,7 @@ class Application:
             self.toile_fond,
             largeur=largeur,
             hauteur=hauteur,
-            palette=visuel.PALETTES.get(etat, visuel.PALETTES["repos"]),
+            palette=visuel.palette_pour(etat, self.configuration.contraste),
             maintenant=time.perf_counter() - self.naissance_champ,
             etat=etat,
             ampleur=0.58,
@@ -1274,13 +2314,43 @@ class Application:
         except tk.TclError:
             return
         except Exception as exc:
-            print(f"tic : {exc}", flush=True)
+            journaliser(f"tic : {exc}")
         try:
             self.racine.after(visuel.INTERVALLE_MS, self.tic)
         except tk.TclError:
             return
 
+
+    def _appliquer_icone_win32(self) -> None:
+        """Force l'icone fenetre/tache via WM_SETICON (Tk seul ne suffit pas toujours)."""
+        try:
+            path = getattr(self, "_icone_path", None)
+            if not path or not path.is_file():
+                return
+            user32 = ctypes.windll.user32
+            IMAGE_ICON = 1
+            LR_LOADFROMFILE = 0x0010
+            WM_SETICON = 0x0080
+            ICON_SMALL, ICON_BIG = 0, 1
+            LoadImageW = user32.LoadImageW
+            LoadImageW.restype = ctypes.c_void_p
+            h_big = LoadImageW(None, str(path), IMAGE_ICON, 32, 32, LR_LOADFROMFILE)
+            h_small = LoadImageW(None, str(path), IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
+            if not h_big and not h_small:
+                return
+            hwnd = self.racine.winfo_id()
+            parent = user32.GetParent(hwnd)
+            if parent:
+                hwnd = parent
+            if h_small:
+                user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_small)
+            if h_big:
+                user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_big)
+        except (AttributeError, OSError, tk.TclError):
+            pass
+
     def fermer(self, _event: object | None = None) -> None:
+        self._annuler_repli_jev_pret()
         self._sondes_stop.set()
         self.session.demander_arret()
         try:
@@ -1321,6 +2391,12 @@ def analyser_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         help="chemin de configuration (utile aux tests et installations portables)",
     )
     parseur.add_argument(
+        "--journal",
+        type=Path,
+        default=None,
+        help="journal propre à cette instance (notamment avec pythonw)",
+    )
+    parseur.add_argument(
         "--onboarding",
         action="store_true",
         help="réafficher l'onboarding sans effacer le choix enregistré",
@@ -1341,6 +2417,7 @@ def analyser_arguments(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = analyser_arguments(argv)
+    assurer_stdio(args.journal)
     if args.sante is None:
         args.sondes = True
     Application(args).boucler()

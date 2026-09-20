@@ -117,6 +117,35 @@ PALETTES: dict[str, dict[str, Any]] = {
 }
 
 
+def _palette_contraste(etat: str, coeur: str, lueur: str, anneau: str) -> dict[str, Any]:
+    base = dict(PALETTES[etat])
+    base["coeur"] = coeur
+    base["lueur"] = lueur
+    base["anneau"] = anneau
+    return base
+
+
+# WCAG 1.4.11 : objets graphiques ≥ 3:1 contre FOND_CHAMP (malvoyants).
+PALETTES_CONTRASTE: dict[str, dict[str, Any]] = {
+    "repos": _palette_contraste("repos", "#7ec8dc", "#e8f8fc", "#a8e0f0"),
+    "ecoute": _palette_contraste("ecoute", "#b8e8f4", "#f4fcff", "#d0f0f8"),
+    "reflexion": _palette_contraste("reflexion", "#f0d090", "#fff4d0", "#f8e0a8"),
+    "escalade": _palette_contraste("escalade", "#ffb080", "#ffe8c8", "#ffc898"),
+    "parole": _palette_contraste("parole", "#fff6e8", "#ffffff", "#ffe8c0"),
+}
+
+
+def palette_pour(etat: str, contraste: bool = False) -> dict[str, Any]:
+    source = PALETTES_CONTRASTE if contraste else PALETTES
+    return dict(source.get(etat, source["repos"]))
+
+
+def palettes(contraste: bool = False) -> dict[str, dict[str, Any]]:
+    """Jeux de couleurs de la bulle. ``True`` = WCAG 1.4.11 (≥ 3:1 vs fond)."""
+    source = PALETTES_CONTRASTE if contraste else PALETTES
+    return {etat: dict(source[etat]) for etat in ETATS}
+
+
 class RECT(Structure):
     """Aire utile Windows, pour coller la bulle au-dessus de la barre des tâches."""
 

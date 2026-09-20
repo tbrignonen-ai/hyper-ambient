@@ -64,7 +64,7 @@ def test_raccourcis_produisent_un_appui_et_un_relachement():
 
 
 def test_wizard_couvre_ptt_raccourci_et_masquage():
-    assert ETAPES_WIZARD == ("bienvenue", "ptt", "masquage")
+    assert ETAPES_WIZARD == ("bienvenue", "mains_libres", "ptt", "masquage")
 
 
 def test_saut_onboarding_termine_sans_perdre_le_raccourci():
@@ -198,13 +198,20 @@ def test_wizard_et_eclair_distant_sont_visibles(tmp_path):
         application.racine.update_idletasks()
         textes = _textes_widgets(application.conteneur)
         assert any("Bienvenue" in t for t in textes)
-        assert any("1 sur 3" in t for t in textes)
+        assert any("1 sur 4" in t for t in textes)
         assert any("Passer" in t for t in textes)
+
+        application._afficher_mains_libres()
+        application.racine.update_idletasks()
+        textes = _textes_widgets(application.conteneur)
+        assert any("2 sur 4" in t for t in textes)
+        assert any("Activer" in t for t in textes)
+        assert any("Plus tard" in t for t in textes)
 
         application._afficher_reglage_ptt()
         application.racine.update_idletasks()
         textes = _textes_widgets(application.conteneur)
-        assert any("2 sur 3" in t for t in textes)
+        assert any("3 sur 4" in t for t in textes)
         assert any("Espace" in t for t in textes)
         assert any("Essayer" in t for t in textes)
         assert any("Passer" in t for t in textes)
@@ -212,7 +219,7 @@ def test_wizard_et_eclair_distant_sont_visibles(tmp_path):
         application._afficher_masquage()
         application.racine.update_idletasks()
         textes = _textes_widgets(application.conteneur)
-        assert any("3 sur 3" in t for t in textes)
+        assert any("4 sur 4" in t for t in textes)
         assert any("Masquer" in t for t in textes)
 
         application._afficher_application()
