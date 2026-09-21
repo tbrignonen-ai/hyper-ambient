@@ -10,10 +10,14 @@ import contextlib
 
 import asyncio
 import ipaddress
+import math
 import os
+import re
 import sys
 import time
+from datetime import datetime, date, timedelta, tzinfo
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 
@@ -31,8 +35,15 @@ from src.hostagent.transport import create_transport_app
 from src.hostagent.warmup import prechauffer
 from src.presence.etat import Presence
 from src.mouth.secours import LIMITE_ENONCE_S, est_silence, phrase_de_secours
+from src.ears.silence import jeter_tour_bruit
 from src.mouth.reveil import phrase_de_reveil, reveil_court_suffit
 from src.mouth.output_gain import appliquer_gain_doux
+from src.brain.contexte import (
+    MemoireConversation,
+    TamponAmbiant,
+    phrase_garde,
+    question_d_outil,
+)
 from src.brain.tool_loop import run_tool_loop
 from src.brain.tools import MAX_TOOL_CONTENT_CHARS, ToolRegistry
 from src.brain.tools_calculator import register_calculator
@@ -40,16 +51,11 @@ from src.brain.tools_codex import register_ask_codex
 from src.brain.tools_cli import register_ask_claude
 from src.brain.tools_muse import register_ask_muse
 from src.brain.tools_web import register_web_search
-from src.brain.harnais import OUTILS_HARNAIS, harnais_demande
 from src.brain.mandat import (
     DELAI_RAPPEL_S,
+    NOMS_HARNAIS,
     OUTIL_PAR_HARNAIS,
-    PleinMandats,
     RegistreMandats,
-    confier,
-    extraire_harnais,
-    extraire_sujet,
-    phrase_accuse,
     phrase_arrivee,
     phrase_rappel,
 )
@@ -172,6 +178,64 @@ _CLES_CARTE = frozenset(
 _CARTE_FIGEE = _ROOT / "dev" / "scripts" / "carte_figee.env"
 
 
+_LANGUES_ASSISTANTE = frozenset({"fr", "en"})
+
+
+def _avertir_repli_configuration(cle: str, valeur: object, defaut: object) -> None:
+    """Journalise un repli de configuration sans empêcher le boot."""
+    print(
+        f"ATTENTION : {cle} invalide ({valeur!r}) — repli sur {defaut!r}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _code_langue(valeur: object, *, cle: str = "HA_LANG") -> str:
+    """Normalise la langue ; toute valeur absente ou invalide revient au français."""
+    code = str(valeur or "").replace("_", "-").strip().lower()
+    code = code.split("-", 1)[0]
+    if not code:
+        return "fr"
+    if code not in _LANGUES_ASSISTANTE:
+        _avertir_repli_configuration(cle, valeur, "fr")
+        return "fr"
+    return code
+
+
+def synchroniser_langue_assistante(
+    langue: object,
+    *,
+    environ: dict[str, str] | None = None,
+    accent: object | None = None,
+) -> dict[str, object]:
+    """Aligne cerveau, oreille et bouche sans effacer un accent explicite.
+
+    ``MOUTH_LANGUAGE_FORCE`` est le contrat de surcharge volontaire : absent,
+    la bouche suit la langue de l'assistante ; présent (ou ``accent`` fourni),
+    la bouche garde cette phonétique tandis que BRAIN et EARS changent. Cette
+    opération ne charge aucun modèle : Faster-Whisper/Qwen lisent ``language``
+    à chaque transcription, et Magpie l'envoie à chaque synthèse.
+    """
+    if environ is None:
+        environ = os.environ
+    code = _code_langue(langue)
+    accent_explicite = accent if _valeur_utile(accent) else environ.get(
+        "MOUTH_LANGUAGE_FORCE", ""
+    )
+    bouche = (
+        _code_langue(accent_explicite, cle="MOUTH_LANGUAGE_FORCE")
+        if _valeur_utile(accent_explicite)
+        else code
+    )
+    environ["HA_LANG"] = code
+    environ["HYPER_AMBIENT_LANG"] = code
+    environ["EARS_LANGUAGE"] = code
+    environ["MOUTH_LANGUAGE"] = bouche
+    if _valeur_utile(accent):
+        environ["MOUTH_LANGUAGE_FORCE"] = bouche
+    return {"language": code, "ears": code, "mouth": bouche, "accent": bouche != code}
+
+
 def _est_cle_modele(cle: str) -> bool:
     return cle in _CLES_MODELE or cle.startswith(_PREFIXES_MODELE)
 
@@ -180,6 +244,30 @@ def _valeur_utile(valeur: object) -> bool:
     if valeur is None:
         return False
     return bool(str(valeur).replace("\r", "").strip())
+
+
+def _texte_configuration(cle: str, defaut: str) -> str:
+    """Lit une chaîne d'environnement en traitant absence et blancs comme le défaut."""
+    valeur = os.getenv(cle)
+    if not _valeur_utile(valeur):
+        return defaut
+    return str(valeur).replace("\r", "").strip()
+
+
+def _nombre_configuration(cle: str, defaut: float) -> float:
+    """Lit un nombre d'environnement sans laisser une faute bloquer le démarrage."""
+    valeur = os.getenv(cle)
+    if not _valeur_utile(valeur):
+        return defaut
+    try:
+        nombre = float(str(valeur).replace("\r", "").strip())
+    except (TypeError, ValueError):
+        _avertir_repli_configuration(cle, valeur, defaut)
+        return defaut
+    if not math.isfinite(nombre):
+        _avertir_repli_configuration(cle, valeur, defaut)
+        return defaut
+    return nombre
 
 
 def parser_env_local(chemin: Path) -> dict[str, str]:
@@ -262,9 +350,14 @@ def charger_carte_figee(
 
 
 def _appliquer_env_boot(environ: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
-    """Jetons d'outils puis carte figée. Ordre figé : C1 ne déplace pas les modèles."""
+    """Jetons, carte, puis langue cohérente. C1 ne déplace pas les modèles."""
     outils = charger_env_local(environ=environ)
     carte = charger_carte_figee(environ=environ)
+    cible_env = environ if environ is not None else os.environ
+    langue = cible_env.get("HA_LANG")
+    if not _valeur_utile(langue):
+        langue = cible_env.get("HYPER_AMBIENT_LANG", "fr")
+    synchroniser_langue_assistante(langue, environ=cible_env)
     return outils, carte
 
 
@@ -384,7 +477,7 @@ def jev_doit_ignorer(evaluation, *, mains_libres: bool) -> bool:
     return jev_ignore_tour(evaluation)
 
 
-def construire_registre(client=None) -> ToolRegistry:
+def construire_registre(client=None, registre_mandats=None) -> ToolRegistry:
     """Les outils que hyper-ambient peut déclencher à la voix.
 
     Le calculateur est toujours disponible : il est local et ne dépend ni d'un
@@ -396,7 +489,11 @@ def construire_registre(client=None) -> ToolRegistry:
     jeton = os.getenv("CODEX_BRIDGE_TOKEN", "").strip()
     if jeton and client is not None:
         register_ask_codex(
-            registre, token=jeton, client=client, timeout_s=DELAI_OUTIL_S
+            registre,
+            token=jeton,
+            client=client,
+            timeout_s=DELAI_OUTIL_S,
+            registre_mandats=registre_mandats,
         )
     # Muse : second avis, sur un pont deja debout dans WSL. L'URL est lue ici et
     # non a l'import, pour qu'ajouter un agent ne demande ni reconstruction
@@ -412,7 +509,11 @@ def construire_registre(client=None) -> ToolRegistry:
     jeton_cli = os.getenv("CLI_BRIDGE_TOKEN", "").strip()
     if jeton_cli and client is not None:
         register_ask_claude(
-            registre, token=jeton_cli, client=client, timeout_s=DELAI_OUTIL_CLAUDE_S
+            registre,
+            token=jeton_cli,
+            client=client,
+            timeout_s=DELAI_OUTIL_CLAUDE_S,
+            registre_mandats=registre_mandats,
         )
     # Web : l'instance SearXNG locale ne demande aucune cle. Si elle devient
     # injoignable ou renvoie zero resultat (CAPTCHA), le handler essaie ddgs,
@@ -478,6 +579,217 @@ def construire_porte() -> Gate:
     return Gate(mode=os.getenv("GATE_MODE", "auto"))
 
 
+NOM_HARNAIS_PAR_OUTIL = {v: k for k, v in OUTIL_PAR_HARNAIS.items()}
+
+
+def dossier_conversations(environ=None) -> Path:
+    """Répertoire des transcriptions, via un chemin monté en conteneur.
+
+    `/workspace/data` est le volume `./data` du compose : c'est le même
+    mécanisme que les autres écritures du host-agent. Sur l'hôte Windows,
+    hors conteneur, on retombe sur `%LOCALAPPDATA%\\hyper-ambient\\conversations`.
+    """
+    environ = os.environ if environ is None else environ
+    override = str(environ.get("HA_CONVERSATIONS_DIR") or "").strip()
+    if override:
+        return Path(override)
+    data_conteneur = Path("/workspace/data")
+    if data_conteneur.is_dir():
+        return data_conteneur / "conversations"
+    local = environ.get("LOCALAPPDATA") or environ.get("APPDATA")
+    if local:
+        return Path(local) / "hyper-ambient" / "conversations"
+    return Path.home() / ".hyper-ambient" / "conversations"
+
+
+def _dernier_dimanche(annee: int, mois: int):
+    jour = date(annee, mois, 31)
+    return date.fromordinal(jour.toordinal() - ((jour.weekday() + 1) % 7))
+
+
+class _Paris(tzinfo):
+    """Repli Europe/Paris si tzdata n'est pas installé dans le conteneur."""
+
+    def utcoffset(self, dt):
+        if dt is None:
+            return timedelta(hours=1)
+        jour = dt.date() if hasattr(dt, "date") else dt
+        mars = _dernier_dimanche(jour.year, 3)
+        octo = _dernier_dimanche(jour.year, 10)
+        if mars <= jour < octo:
+            return timedelta(hours=2)
+        return timedelta(hours=1)
+
+    def tzname(self, dt):
+        return "CEST" if self.utcoffset(dt) == timedelta(hours=2) else "CET"
+
+    def dst(self, dt):
+        return (
+            timedelta(hours=1)
+            if self.utcoffset(dt) == timedelta(hours=2)
+            else timedelta(0)
+        )
+
+
+def _fuseau_paris():
+    """Europe/Paris, même sans la base tzdata du conteneur."""
+    try:
+        return ZoneInfo("Europe/Paris")
+    except Exception:
+        return _Paris()
+
+
+FUSEAU_CONVERSATION = _fuseau_paris()
+
+
+def maintenant_local(quand=None):
+    """Heure de la machine (Europe/Paris), jamais l'UTC du conteneur."""
+    if quand is None:
+        return datetime.now(FUSEAU_CONVERSATION)
+    if getattr(quand, "tzinfo", None) is None:
+        return quand
+    return quand.astimezone(FUSEAU_CONVERSATION)
+
+
+def nouveau_fichier_conversation(quand=None, dossier=None) -> Path:
+    """Un fichier Markdown horodaté par conversation, créé tout de suite."""
+    quand = maintenant_local(quand)
+    racine = dossier_conversations() if dossier is None else Path(dossier)
+    racine.mkdir(parents=True, exist_ok=True)
+    chemin = racine / f"{quand.strftime('%Y-%m-%d_%H-%M')}.md"
+    if not chemin.exists():
+        chemin.write_text(
+            f"# Conversation {quand.strftime('%Y-%m-%d %H:%M')}\n\n",
+            encoding="utf-8",
+        )
+    return chemin
+
+
+def ecrire_ligne_conversation(chemin, locuteur: str, texte: str, *, heure=None) -> None:
+    """Ajoute une ligne et flush : une coupure ne doit pas perdre le tour."""
+    if chemin is None:
+        return
+    chemin = Path(chemin)
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    heure = maintenant_local() if heure is None else maintenant_local(heure)
+    ligne = f"{heure.strftime('%H:%M:%S')}  {locuteur}  {texte}\n"
+    with open(chemin, "a", encoding="utf-8") as flux:
+        flux.write(ligne)
+        flux.flush()
+        os.fsync(flux.fileno())
+
+
+async def monter_cerveau(*, mandats=None, client=None, brain=None):
+    """Cerveau, registre, porte, mandats — le montage commun voix / écrit.
+
+    Sans EARS, sans MOUTH, sans websocket. Les deux chemins appellent cette
+    fonction : un second montage divergent serait une dette immédiate.
+    """
+    from src.brain.factory import build_brain_with_fallback
+    import httpx
+
+    if mandats is None:
+        mandats = RegistreMandats()
+    if client is None:
+        client = httpx.AsyncClient()
+    if brain is None:
+        brain = await build_brain_with_fallback()
+    registre = construire_registre(client=client, registre_mandats=mandats)
+    porte = construire_porte()
+    verifier_registre(registre)
+    return {
+        "brain": brain,
+        "registre": registre,
+        "porte": porte,
+        "mandats": mandats,
+        "client": client,
+    }
+
+
+def recoller_prononce(morceaux) -> str:
+    """Joint des phrases déjà closes.
+
+    Un `Un instant.` suivi de `Je vais…` se prononce collé. L'espace se
+    remet à la couture, pas à la fin de chaque libellé — un flux de
+    jetons (`Hel` + `lo`) ne doit pas devenir `Hel lo`.
+    """
+    texte = ""
+    for piece in morceaux:
+        if not piece:
+            continue
+        if texte and texte[-1] in ".!?" and not piece[:1].isspace():
+            texte += " "
+        texte += piece
+    return texte.strip()
+
+
+def flux_cerveau(brain, prompt, registre, porte, historique):
+    """Le flux d'un tour : boucle d'outils si le registre est garni.
+
+    Pas de `tool_choice` forcé : le distant appelle l'outil de lui-même.
+    Un mandat déposé clôt le tour sans reformulation.
+
+    Une seule annonce d'attente sur ce chemin : l'accusé du mandat. Il
+    nomme le harnais et promet l'arrivée — l'amorce du routeur et la
+    phrase du modèle disent la même chose. On les jette ici, au dépôt.
+    """
+    if registre is not None and len(registre):
+        def est_handler_mandat(nom: str) -> bool:
+            spec = registre.get(nom)
+            return bool(
+                spec is not None
+                and hasattr(spec.handler, "registre_mandats")
+            )
+
+        async def flux_avec_mandat():
+            # Ne retenir que si un harnais est nommé : sinon on casserait
+            # le flux mot à mot des tours ordinaires.
+            retenir = bool(
+                re.search(r"\b" + NOMS_HARNAIS + r"\b", prompt or "", re.IGNORECASE)
+            )
+            tampon = []
+            async for chunk in run_tool_loop(
+                brain,
+                prompt,
+                registre,
+                porte,
+                history=historique,
+                max_tool_calls=2,
+            ):
+                if chunk.get("channel") == "tool":
+                    nom = chunk.get("tool", "")
+                    if chunk.get("phase") == "call" and est_handler_mandat(nom):
+                        tampon.clear()
+                        yield chunk
+                        continue
+                    for piece in tampon:
+                        yield piece
+                    tampon.clear()
+                    yield chunk
+                    if (
+                        chunk.get("phase") == "result"
+                        and est_handler_mandat(nom)
+                    ):
+                        contenu = (chunk.get("content") or "").strip()
+                        if contenu:
+                            yield {
+                                "delta": contenu,
+                                "stop_reason": "mandat_depose",
+                                "ttft_ms": None,
+                            }
+                        return
+                    continue
+                if retenir:
+                    tampon.append(chunk)
+                else:
+                    yield chunk
+            for piece in tampon:
+                yield piece
+
+        return flux_avec_mandat()
+    return brain.query_streaming(prompt, history=historique)
+
+
 def construire_ears():
     """Construit EARS depuis l'environnement, sans charger les poids.
 
@@ -485,13 +797,16 @@ def construire_ears():
     via ``EARS_BACKEND=qwen3`` ; les imports restent paresseux afin qu'un
     backend absent n'empêche pas l'autre de démarrer.
     """
-    backend = os.getenv("EARS_BACKEND", "faster-whisper").strip().lower()
+    backend = _texte_configuration("EARS_BACKEND", "faster-whisper").lower()
+    if backend not in {"qwen3", "qwen3-asr", "faster-whisper", "faster_whisper", "whisper"}:
+        _avertir_repli_configuration("EARS_BACKEND", backend, "faster-whisper")
+        backend = "faster-whisper"
     default_model = (
         "0.6B" if backend in {"qwen3", "qwen3-asr"} else "large-v3-turbo"
     )
-    model_size = os.getenv("EARS_MODEL", default_model)
-    language = os.getenv("EARS_LANGUAGE", "fr")
-    device = os.getenv("EARS_DEVICE", "cuda")
+    model_size = _texte_configuration("EARS_MODEL", default_model)
+    language = _code_langue(_texte_configuration("EARS_LANGUAGE", "fr"), cle="EARS_LANGUAGE")
+    device = _texte_configuration("EARS_DEVICE", "cuda")
     compute_type = os.getenv("EARS_COMPUTE_TYPE")
 
     if backend in {"qwen3", "qwen3-asr"}:
@@ -502,11 +817,6 @@ def construire_ears():
         from src.ears.faster_whisper_asr import FasterWhisperASR
 
         classe = FasterWhisperASR
-    else:
-        raise ValueError(
-            f"EARS_BACKEND inconnu: {backend!r} (attendu: qwen3 ou faster-whisper)"
-        )
-
     kwargs = {"model_size": model_size, "language": language, "device": device}
     if compute_type:
         kwargs["compute_type"] = compute_type
@@ -597,7 +907,7 @@ def composer_rapport(amorces: list[str], reponse: list[str]) -> tuple[str, str]:
     la recoller au texte du modèle faisait lire « Un instant. Je suis juste là »
     comme une seule phrase, dans le rapport comme dans le log.
     """
-    return "".join(reponse).strip(), " ".join(a.strip() for a in amorces if a.strip())
+    return recoller_prononce(reponse), " ".join(a.strip() for a in amorces if a.strip())
 
 
 class HostPipeline:
@@ -611,10 +921,17 @@ class HostPipeline:
         # repondre. On garde les derniers echanges, pas toute la session :
         # le contexte du modele local est petit et la latence croit avec.
         self._historique: list[dict] = []
+        self._memoire = MemoireConversation()
+        self._tampon_ambiant = TamponAmbiant()
         # Resultats d'outils du dernier tour qui en a execute. `_historique`
         # ne retient que le texte parle : sans ce buffer, « contre-analyse
         # Claude du resultat Codex » n'a plus le texte Codex au tour suivant.
         self._dernier_outils: list[dict] = []
+        # Les messages issus d'un tour avec outil restent disponibles pendant
+        # une seule reprise.  Les conserver dans la mémoire conversationnelle
+        # ordinaire faisait réapparaître une météo plusieurs tours plus tard,
+        # même après l'expiration de `_dernier_outils`.
+        self._historique_outils_ephemeres: list[dict] = []
         self.brain = None
         self.tts = None
         # Le registre est vide tant que `load` ne l'a pas garni : un tour joue
@@ -630,31 +947,169 @@ class HostPipeline:
         self._tache_indicateur_conversation = None
         self._conversation_ouverte_emise = False
         self._lock = asyncio.Lock()
-        self.output_gain_db = float(os.getenv("MOUTH_OUTPUT_GAIN_DB", "0"))
+        self.output_gain_db = _nombre_configuration("MOUTH_OUTPUT_GAIN_DB", 0.0)
         self._mandats = RegistreMandats()
         self._dernier_parole_a = time.monotonic()
         self._tache_mandats = None
         self._badge_prets = -1
+        self._tache_rechargement_mouth = None
+        self._tache_surveillance_langue = None
+        self._signature_langue = None
+        self._journal_conversation = None
 
-    def on_options(self, message) -> None:
-        """Presence : flag ``mains_libres`` sur hello ou ``{"type":"options"}``."""
-        if not isinstance(message, dict) or "mains_libres" not in message:
+    def _noter_conversation(self, locuteur: str, texte: str) -> None:
+        if not texte:
             return
-        self._mains_libres = message.get("mains_libres") is True
-        if not self._mains_libres:
-            # Couper le mode referme la conversation : la prochaine
-            # activation repart d'une page blanche.
-            self._fenetre.fermer()
-        print(
-            f"JEV   : mains_libres={'on' if self._mains_libres else 'off'}",
-            flush=True,
+        ecrire_ligne_conversation(self._journal_conversation, locuteur, texte)
+
+    def on_options(self, message) -> dict | None:
+        """Presence : mains-libres et langue vivante sur hello/options.
+
+        Le protocole accepte ``language`` (ou les deux noms historiques) et
+        ``accent``. Le statut retourné est envoyé au client par le transport :
+        l'UI peut annoncer un éventuel rechargement au lieu de prétendre que la
+        nouvelle voix est déjà prête.
+        """
+        if not isinstance(message, dict):
+            return None
+        statut = None
+        langue = message.get("language", message.get("HA_LANG", message.get("HYPER_AMBIENT_LANG")))
+        if langue is not None:
+            accent = message.get("accent")
+            # Le client qui expose déjà le réglage sous son nom historique est
+            # aussi explicite qu'un champ ``accent`` dédié.
+            if not _valeur_utile(accent) and "MOUTH_LANGUAGE" in message:
+                accent = message["MOUTH_LANGUAGE"]
+            try:
+                reglage = synchroniser_langue_assistante(
+                    langue, accent=accent
+                )
+            except ValueError as exc:
+                return {"type": "language_status", "state": "error", "error": str(exc)}
+            mode = self._appliquer_langue_aux_modeles(reglage)
+            statut = {"type": "language_status", **reglage, "state": mode}
+            print(
+                "LANG  : "
+                f"{reglage['language']} (ASR={reglage['ears']}, TTS={reglage['mouth']}; "
+                f"{'appliquée à chaud' if mode == 'ready' else mode})",
+                flush=True,
+            )
+
+        if "mains_libres" in message:
+            self._mains_libres = message.get("mains_libres") is True
+            if not self._mains_libres:
+                # Couper le mode referme la conversation : la prochaine
+                # activation repart d'une page blanche.
+                self._fenetre.fermer()
+                self._fermer_conversation()
+            print(
+                f"JEV   : mains_libres={'on' if self._mains_libres else 'off'}",
+                flush=True,
+            )
+            if self._mains_libres:
+                self._demarrer_maintien_jev()
+                self._demarrer_indicateur_conversation()
+            else:
+                self._arreter_maintien_jev()
+                self._arreter_indicateur_conversation()
+        return statut
+
+    def _appliquer_langue_aux_modeles(self, reglage: dict[str, object]) -> str:
+        """Change les paramètres lus à chaque requête et rend son état honnête."""
+        if self.asr is not None and hasattr(self.asr, "language"):
+            self.asr.language = reglage["ears"]
+        if self.tts is None:
+            return "ready"
+        # Magpie ne lie pas la langue aux poids : _render la transmet au serveur
+        # pour chaque phrase. Whisper et Qwen ont la même propriété par appel.
+        if type(self.tts).__name__ == "MagpieTTS":
+            self.tts.language = reglage["mouth"]
+            return "ready"
+        if type(self.tts).__name__ == "PocketTTS":
+            self._demarrer_rechargement_pocket(str(reglage["mouth"]))
+            return "reloading"
+        # Piper et Supertonic ont une voix liée à leurs poids, sans carte de
+        # modèle par langue. Dire « prêt » ou « rechargement » serait mensonger.
+        return "unsupported"
+
+    def _demarrer_rechargement_pocket(self, langue: str) -> None:
+        """Recharge Pocket à côté de la voix active puis échange à la frontière d'un tour."""
+        tache = self._tache_rechargement_mouth
+        if tache is not None and not tache.done():
+            return
+
+        async def recharger() -> None:
+            from src.mouth.pocket_tts import PocketTTS
+
+            ancienne = self.tts
+            candidate = PocketTTS(
+                language=langue,
+                voice=os.getenv("MOUTH_VOICE_NAME", getattr(ancienne, "voice", "estelle")),
+                device=os.getenv("MOUTH_DEVICE", getattr(ancienne, "device", "cpu")),
+                profile=os.getenv("MOUTH_PROFILE", "aurora"),
+                demi_tons=_nombre_configuration("MOUTH_DEMI_TONS", 0.0),
+            )
+            if not await candidate.load_model():
+                print("LANG  : rechargement Pocket échoué — ancienne voix conservée", flush=True)
+                return
+            async with self._lock:
+                self.tts = candidate
+            print("LANG  : rechargement Pocket terminé", flush=True)
+
+        self._tache_rechargement_mouth = asyncio.create_task(recharger())
+
+    def _demarrer_surveillance_langue(self) -> None:
+        """Compatibilité avec le bouton existant qui écrit seulement .env.local.
+
+        Le message WS est instantané. Cette veille courte couvre l'ancienne UI
+        pendant sa migration : elle ne relance jamais le serveur et ne lit que
+        les trois réglages non secrets concernés.
+        """
+        tache = self._tache_surveillance_langue
+        if tache is not None and not tache.done():
+            return
+        self._tache_surveillance_langue = asyncio.create_task(
+            self._surveiller_langue()
         )
-        if self._mains_libres:
-            self._demarrer_maintien_jev()
-            self._demarrer_indicateur_conversation()
-        else:
-            self._arreter_maintien_jev()
-            self._arreter_indicateur_conversation()
+
+    async def _surveiller_langue(self) -> None:
+        chemin = _ROOT / ".env.local"
+        try:
+            while True:
+                paires = parser_env_local(chemin)
+                signature = tuple(
+                    (cle, paires.get(cle, ""))
+                    for cle in ("HA_LANG", "HYPER_AMBIENT_LANG", "MOUTH_ACCENT")
+                )
+                if signature != self._signature_langue:
+                    # Un tour possède les instances ASR/TTS pendant toute sa
+                    # durée. La bascule attend donc la frontière du tour, au
+                    # lieu de changer la phonétique au milieu d'une phrase.
+                    if self._lock.locked():
+                        await asyncio.sleep(0.25)
+                        continue
+                    self._signature_langue = signature
+                    langue = paires.get("HA_LANG") or paires.get("HYPER_AMBIENT_LANG")
+                    if _valeur_utile(langue):
+                        # Une clé explicitement vidée remet la bouche en mode
+                        # cohérent ; sans elle, une surcharge FORCE reste voulue.
+                        if "MOUTH_ACCENT" in paires and not _valeur_utile(
+                            paires["MOUTH_ACCENT"]
+                        ):
+                            os.environ.pop("MOUTH_LANGUAGE_FORCE", None)
+                        reglage = synchroniser_langue_assistante(
+                            langue,
+                            accent=paires.get("MOUTH_ACCENT"),
+                        )
+                        mode = self._appliquer_langue_aux_modeles(reglage)
+                        print(
+                            f"LANG  : .env.local → {reglage['language']} "
+                            f"({mode})",
+                            flush=True,
+                        )
+                await asyncio.sleep(0.25)
+        except asyncio.CancelledError:
+            raise
 
     def _demarrer_maintien_jev(self) -> None:
         tache = self._tache_maintien_jev
@@ -756,10 +1211,24 @@ class HostPipeline:
             while self._mains_libres:
                 await asyncio.sleep(1.0)
                 ouverte = self._fenetre.engagee()
+                if self._conversation_ouverte_emise and not ouverte:
+                    garde = self._fermer_conversation()
+                    if garde:
+                        print(f"JEV   : {garde}", flush=True)
+                        self._noter_conversation("hyper-ambient", garde)
                 if ouverte or self._conversation_ouverte_emise:
                     await self._signaler_conversation()
         except asyncio.CancelledError:
             raise
+
+    def _fermer_conversation(self) -> str:
+        """Purge la mémoire vive. Les mandats en cours restent."""
+        self._memoire.purger()
+        self._tampon_ambiant.oublier()
+        self._historique = []
+        self._dernier_outils = []
+        self._historique_outils_ephemeres = []
+        return phrase_garde([m.harnais for m in self._mandats.en_cours()])
 
     async def _ouvrir_conversation(self) -> None:
         self._fenetre.engager()
@@ -796,7 +1265,6 @@ class HostPipeline:
 
     async def load(self) -> None:
         """Charge EARS, BRAIN et MOUTH une seule fois, avant d'accepter un client."""
-        from src.brain.factory import build_brain_with_fallback
         injectees, cles_carte = _appliquer_env_boot()
         if injectees:
             print(
@@ -819,7 +1287,7 @@ class HostPipeline:
             f"{os.getenv('EARS_LANGUAGE', 'fr')}/{os.getenv('MOUTH_LANGUAGE', 'fr')})",
             flush=True,
         )
-        voix = os.getenv("MOUTH_VOICE", VOIX_PIPER)
+        voix = _texte_configuration("MOUTH_VOICE", VOIX_PIPER)
 
         gain_lineaire = 10.0 ** (self.output_gain_db / 20.0)
         print(
@@ -840,22 +1308,19 @@ class HostPipeline:
             print("EARS  : modèle indisponible", flush=True)
             raise SystemExit(1)
 
-        self.brain = await build_brain_with_fallback()
+        pieces = await monter_cerveau(mandats=self._mandats)
+        self.brain = pieces["brain"]
+        self._client_outils = pieces["client"]
+        self.registre = pieces["registre"]
+        self.porte = pieces["porte"]
+        self._mandats = pieces["mandats"]
         health = await self.brain.health()
         print(
             f"BRAIN : {self.brain.name} @ {self.brain.api_endpoint} — {health['detail']}",
             flush=True,
         )
 
-        # Les outils. Le client HTTP vit aussi longtemps que le pipeline : le
-        # rouvrir par appel ajouterait une poignee de main TCP au milieu d'un
-        # tour de parole, sur un chemin qui compte deja en dizaines de secondes.
-        import httpx
-
-        self._client_outils = httpx.AsyncClient()
-        self.registre = construire_registre(client=self._client_outils)
-        self.porte = construire_porte()
-        actifs = verifier_registre(self.registre)
+        actifs = {schema["function"]["name"] for schema in self.registre.schemas()}
         if actifs:
             noms = ", ".join(sorted(actifs))
             print(f"OUTILS: {noms} — porte en mode {self.porte.mode}", flush=True)
@@ -865,6 +1330,8 @@ class HostPipeline:
                 flush=True,
             )
         self._assurer_veille_mandats()
+        self._journal_conversation = nouveau_fichier_conversation()
+        print(f"CONVO : {self._journal_conversation}", flush=True)
 
         from src.ears.jev_reflexe import JevReflexe
 
@@ -873,20 +1340,23 @@ class HostPipeline:
 
         # MOUTH : Pocket TTS par défaut. Piper reste joignable par MOUTH_BACKEND=piper,
         # parce qu'il ne coûte aucune VRAM — c'est le repli si le GPU est saturé.
-        backend = os.getenv("MOUTH_BACKEND", "pocket").lower()
+        backend = _texte_configuration("MOUTH_BACKEND", "pocket").lower()
+        if backend not in {"pocket", "supertonic", "magpie", "piper"}:
+            _avertir_repli_configuration("MOUTH_BACKEND", backend, "piper")
+            backend = "piper"
         if backend == "pocket":
             from src.mouth.pocket_tts import PocketTTS
 
-            langue = os.getenv("MOUTH_LANGUAGE", "french_24l")
-            nom_voix = os.getenv("MOUTH_VOICE_NAME", "estelle")
-            profil = os.getenv("MOUTH_PROFILE", "aurora")
+            langue = _texte_configuration("MOUTH_LANGUAGE", "french_24l")
+            nom_voix = _texte_configuration("MOUTH_VOICE_NAME", "estelle")
+            profil = _texte_configuration("MOUTH_PROFILE", "aurora")
             # pocket-tts n'a ni reglage de vitesse ni reglage de hauteur.
             # MOUTH_DEMI_TONS descend la voix par reechantillonnage, ce qui
             # ralentit la diction dans le meme rapport : -3 donne une tierce
             # mineure plus bas et 19 % plus lent. Device cpu : 0 VRAM, le
             # GPU reste a EARS / llama-server.
-            demi_tons = float(os.getenv("MOUTH_DEMI_TONS", "0"))
-            device = os.getenv("MOUTH_DEVICE", "cpu")
+            demi_tons = _nombre_configuration("MOUTH_DEMI_TONS", 0.0)
+            device = _texte_configuration("MOUTH_DEVICE", "cpu")
             print(
                 f"MOUTH : chargement pocket-tts {langue} / {nom_voix} "
                 f"profil={profil} device={device} demi_tons={demi_tons:+g}…",
@@ -904,9 +1374,9 @@ class HostPipeline:
 
             # Voix feminine lente demandee le 15 sept : F5, la plus grave des
             # styles feminins, ralentie. CPU, 0 VRAM.
-            style = os.getenv("MOUTH_STYLE", "F5")
-            vitesse = float(os.getenv("MOUTH_SPEED", "0.88"))
-            profil = os.getenv("MOUTH_PROFILE", "aurora")
+            style = _texte_configuration("MOUTH_STYLE", "F5")
+            vitesse = _nombre_configuration("MOUTH_SPEED", 0.88)
+            profil = _texte_configuration("MOUTH_PROFILE", "aurora")
             print(
                 f"MOUTH : chargement supertonic-3 {style} vitesse={vitesse} profil={profil}…",
                 flush=True,
@@ -918,9 +1388,9 @@ class HostPipeline:
             # Voix retenue à la dégustation : Magpie Sofia, CPU, 0 VRAM.
             # Le modèle reste chargé (nemo-speech serve), pas un binaire
             # relancé à chaque phrase. llama-server (:8080) n'est pas touché.
-            nom_voix = os.getenv("MOUTH_VOICE_NAME", "Sofia")
-            langue = os.getenv("MOUTH_LANGUAGE", "fr")
-            device = os.getenv("MOUTH_DEVICE", "cpu")
+            nom_voix = _texte_configuration("MOUTH_VOICE_NAME", "Sofia")
+            langue = _code_langue(_texte_configuration("MOUTH_LANGUAGE", "fr"), cle="MOUTH_LANGUAGE")
+            device = _texte_configuration("MOUTH_DEVICE", "cpu")
             print(
                 f"MOUTH : chargement magpie {nom_voix}…",
                 flush=True,
@@ -933,8 +1403,8 @@ class HostPipeline:
             # entendu d'anglais — mais claires : 235 Hz mesures sur siwis, quand
             # hyper-ambient demande grave. MOUTH_DEMI_TONS les descend ; -6
             # ramene siwis a 155 Hz, la hauteur de la voix Pocket qu'il aimait.
-            demi_tons = float(os.getenv("MOUTH_DEMI_TONS", "0"))
-            profil = os.getenv("MOUTH_PROFILE", "aurora")
+            demi_tons = _nombre_configuration("MOUTH_DEMI_TONS", 0.0)
+            profil = _texte_configuration("MOUTH_PROFILE", "aurora")
             print(
                 f"MOUTH : chargement piper {voix} profil={profil} "
                 f"demi_tons={demi_tons:+g}…",
@@ -950,8 +1420,17 @@ class HostPipeline:
                 flush=True,
             )
             raise SystemExit(1)
+        self._demarrer_surveillance_langue()
 
     async def close(self) -> None:
+        tache_langue = self._tache_surveillance_langue
+        self._tache_surveillance_langue = None
+        if tache_langue is not None and not tache_langue.done():
+            tache_langue.cancel()
+        tache_mouth = self._tache_rechargement_mouth
+        self._tache_rechargement_mouth = None
+        if tache_mouth is not None and not tache_mouth.done():
+            tache_mouth.cancel()
         tache = self._tache_mandats
         self._tache_mandats = None
         if tache is not None and not tache.done():
@@ -979,32 +1458,24 @@ class HostPipeline:
             )
         return historique
 
+    def _purger_historique_outils_ephemere(self) -> None:
+        """Retire les échanges fondés sur un outil après leur unique reprise."""
+        if not self._historique_outils_ephemeres:
+            return
+        identifiants = {id(message) for message in self._historique_outils_ephemeres}
+        self._historique = [
+            message for message in self._historique if id(message) not in identifiants
+        ]
+        self._historique_outils_ephemeres = []
+
     def _registre_pour_tour(self, prompt: str):
         """Registre expose au modele pour CE tour.
 
-        Les harnais (Codex, Claude, Muse) ne sont plus jamais dans le registre
-        du tour : un appel synchrone bloquait 39 secondes. La demande explicite
-        pose un mandat hors tour, l'accuse part tout de suite.
+        Les harnais restent visibles à chaque tour : le modèle choisit de les
+        appeler comme il choisit le web. Leurs handlers déposent un mandat et
+        rendent la main immédiatement, sans appel bloquant dans le tour.
         """
-        if self.registre is None or not len(self.registre):
-            return self.registre
-        if self._client_outils is None and harnais_demande(prompt):
-            return self.registre
-        presents = [nom for nom in OUTILS_HARNAIS if nom in self.registre]
-        if not presents:
-            return self.registre
-        from src.brain.tools import ToolRegistry
-
-        restreint = ToolRegistry()
-        for nom, spec in self.registre._tools.items():
-            if nom not in OUTILS_HARNAIS:
-                restreint.register(spec)
-        print(
-            "OUTILS: harnais retires (%s) — mandat hors tour"
-            % ", ".join(presents),
-            flush=True,
-        )
-        return restreint
+        return self.registre
 
     def _flux_brain(self, prompt: str):
         """Le flux du tour : sous boucle d'outils si le registre est garni.
@@ -1021,51 +1492,14 @@ class HostPipeline:
         # requete : il ne sera plus reinjecte au tour suivant, sauf si ce tour
         # produit lui-meme un nouveau resultat d'outil.
         self._dernier_outils = []
+        # `historique` est la copie remise à ce tour de suivi.  Une fois cette
+        # copie prise, les réponses et résultats qui venaient de l'outil ne
+        # doivent plus atteindre le modèle au tour suivant.
+        self._purger_historique_outils_ephemere()
         registre = self._registre_pour_tour(prompt)
-        if registre is not None and len(registre):
-            return run_tool_loop(
-                self.brain,
-                prompt,
-                registre,
-                self.porte,
-                history=historique,
-                max_tool_calls=2,
-            )
-        return self.brain.query_streaming(prompt, history=historique)
-
-    def _peut_confier(self, prompt: str) -> bool:
-        harnais = extraire_harnais(prompt)
-        nom = OUTIL_PAR_HARNAIS.get(harnais)
-        return bool(self.registre is not None and nom and nom in self.registre)
-
-    def _appel_pour(self, harnais: str):
-        nom = OUTIL_PAR_HARNAIS.get(harnais)
-        spec = self.registre.get(nom) if self.registre is not None and nom else None
-        handler = spec.handler if spec is not None else None
-
-        async def appel(question: str) -> str:
-            if handler is None:
-                raise RuntimeError("pont absent")
-            return await handler(question)
-
-        return appel
-
-    async def _confier_depuis_voix(self, prompt: str) -> str:
-        harnais = extraire_harnais(prompt)
-        sujet = extraire_sujet(prompt)
-        try:
-            await confier(
-                self._mandats,
-                harnais,
-                prompt,
-                sujet,
-                self._appel_pour(harnais),
-            )
-        except PleinMandats as exc:
-            print(f"MANDAT: refuse — {exc.phrase}", flush=True)
-            return exc.phrase
-        print(f"MANDAT: {harnais} — {sujet!r}", flush=True)
-        return phrase_accuse(harnais, sujet)
+        return flux_cerveau(
+            self.brain, prompt, registre, self.porte, historique,
+        )
 
     def _assurer_veille_mandats(self) -> None:
         tache = self._tache_mandats
@@ -1083,6 +1517,13 @@ class HostPipeline:
                 await asyncio.sleep(0.5)
                 websocket = self._websocket
                 if websocket is None:
+                    continue
+                # Sans mandat, la boucle ne touche a RIEN : ni socket, ni
+                # verrou de parole. Mesure du 2026-09-20 : prendre le verrou
+                # toutes les demi-secondes faisait osciller l'etat de
+                # l'interface en continu, la fenetre clignotait sans arret
+                # alors qu'aucun mandat n'existait.
+                if not self._mandats.prets() and not self._mandats.en_cours():
                     continue
                 await self._signaler_badge_mandat(websocket)
                 if self._lock.locked():
@@ -1133,12 +1574,43 @@ class HostPipeline:
         maintenant = time.monotonic()
         for mandat in list(self._mandats.prets()):
             phrase = phrase_arrivee(mandat)
-            print(f"MANDAT: arrivee {mandat.harnais} — {phrase!r}", flush=True)
-            await self._dire_maintenant(websocket, phrase, leftover)
+            resume = ""
+            if mandat.reponse is not None:
+                resume = (getattr(mandat.reponse, "resume_voix", None) or "").strip()
+            self._noter_conversation(f"← {mandat.harnais}", resume or phrase)
+            print(
+                f"MANDAT: arrivee {mandat.harnais} id={mandat.identifiant} — {phrase!r}",
+                flush=True,
+            )
+            try:
+                n_trames, duree_s = await self._dire_maintenant(
+                    websocket, phrase, leftover
+                )
+            except Exception as exc:
+                print(
+                    f"MANDAT: annonce echec id={mandat.identifiant} "
+                    f"{type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+                continue
+            if not n_trames:
+                print(
+                    f"MANDAT: annonce audio_vide id={mandat.identifiant} — non confirmee",
+                    flush=True,
+                )
+                continue
+            print(
+                f"MANDAT: annonce emission id={mandat.identifiant} "
+                f"trames={n_trames} duree_s={duree_s:.3f}",
+                flush=True,
+            )
             # L'annonce arrive apres la fin du tour de parole precedent. Elle
             # est donc elle-meme un tour complet : sans ce marqueur, ses audio
             # reste sur la socket et est lu comme le debut du tour suivant.
             await self._envoyer(websocket, [])
+            print(
+                f"MANDAT: annonce fin_envoyee id={mandat.identifiant}", flush=True
+            )
             self._mandats.marquer_annonce(mandat.identifiant)
             await self._signaler_badge_mandat(websocket)
         silence_s = maintenant - self._dernier_parole_a
@@ -1202,7 +1674,7 @@ class HostPipeline:
             }
         )
 
-    async def _dire_maintenant(self, websocket, phrase: str, leftover: list) -> None:
+    async def _dire_maintenant(self, websocket, phrase: str, leftover: list) -> tuple[int, float]:
         """Synthetise et envoie une phrase sans passer par le flux de tokens.
 
         Sert aux phrases d'attente du routeur : leur seule raison d'etre est
@@ -1217,6 +1689,7 @@ class HostPipeline:
         trames = _trames_depuis_pcm(pcm, leftover) + _vider_reliquat(leftover)
         if trames:
             await self._envoyer(websocket, trames)
+        return len(trames), float(pcm.size) / SAMPLE_RATE
 
     async def _dire_secours(
         self,
@@ -1378,6 +1851,17 @@ class HostPipeline:
                 f"EARS  : \"{prompt}\" — {result.get('latency_ms', 0):.0f} ms",
                 flush=True,
             )
+            if jeter_tour_bruit(
+                prompt,
+                result.get("segments"),
+                mains_libres=self._mains_libres,
+            ):
+                print(
+                    f'EARS  : segment rejeté (bruit) "{prompt}"',
+                    flush=True,
+                )
+                await self._envoyer(websocket, [])
+                return
             if not prompt:
                 print("EARS  : rien transcrit", flush=True)
                 phrase = phrase_de_secours(
@@ -1424,6 +1908,7 @@ class HostPipeline:
                         "JEV   : pas adressée à MOTHER — tour ignoré",
                         flush=True,
                     )
+                    self._tampon_ambiant.deposer(prompt, time.monotonic())
                     presence.emettre("repos")
                     await presence.vider()
                     await self._envoyer(websocket, [])
@@ -1446,6 +1931,8 @@ class HostPipeline:
                         flush=True,
                     )
                     phrase = phrase_de_reveil(langue=langue_session())
+                    self._noter_conversation("Toi", prompt)
+                    self._noter_conversation("hyper-ambient", phrase)
                     presence.emettre("parole")
                     await presence.vider()
                     await self._dire_secours(
@@ -1461,29 +1948,16 @@ class HostPipeline:
                     await presence.vider()
                     return
 
-            if (
-                harnais_demande(prompt)
-                and self._client_outils is not None
-                and self._peut_confier(prompt)
+            self._noter_conversation("Toi", prompt)
+            if self._memoire.doit_fermer(
+                mains_libres=self._mains_libres, maintenant=time.monotonic()
             ):
-                phrase = await self._confier_depuis_voix(prompt)
-                self._historique.append({"role": "user", "content": prompt})
-                self._historique.append({"role": "assistant", "content": phrase})
-                del self._historique[:-MEMOIRE_MESSAGES]
-                presence.emettre("parole")
-                await presence.vider()
-                await self._dire_secours(
-                    websocket,
-                    leftover,
-                    phrase=phrase,
-                    transcript=prompt,
-                    t_tour=t_tour,
-                    ears_ms=ears_ms,
-                    brain_ms=0.0,
-                )
-                presence.emettre("repos")
-                await presence.vider()
-                return
+                garde = self._fermer_conversation()
+                if garde:
+                    print(f"JEV   : {garde}", flush=True)
+                    self._noter_conversation("hyper-ambient", garde)
+            ambiant = self._tampon_ambiant.fournir(prompt, time.monotonic())
+            prompt_modele = f"{ambiant}\n{prompt}" if ambiant else prompt
 
             ttft_ms = None
             amorces: list[str] = []
@@ -1502,7 +1976,7 @@ class HostPipeline:
                 # Vrai entre le retour d'un outil et le mot suivant : la phrase
                 # du modèle a été interrompue par l'appel, il faut la recoudre.
                 recoudre = False
-                async for chunk in self._flux_brain(prompt):
+                async for chunk in self._flux_brain(prompt_modele):
                     if presence_reflexion[0]:
                         presence_reflexion[0] = False
                         presence.emettre("reflexion")
@@ -1520,6 +1994,24 @@ class HostPipeline:
                     # hors de la voix.
                     if chunk.get("channel") == "tool":
                         if chunk.get("phase") == "call":
+                            nom_outil = chunk.get("tool") or "outil"
+                            harnais = NOM_HARNAIS_PAR_OUTIL.get(nom_outil, nom_outil)
+                            self._noter_conversation(
+                                f"→ {harnais}", question_d_outil(chunk)
+                            )
+                            # Codex et Claude ont un handler de mandat : il
+                            # répond tout de suite par son accusé. Annoncer ici
+                            # une attente de vingt secondes serait faux et
+                            # répéterait la phrase qui suit.
+                            spec = (
+                                self.registre.get(chunk.get("tool", ""))
+                                if self.registre is not None
+                                else None
+                            )
+                            if spec is not None and hasattr(
+                                spec.handler, "registre_mandats"
+                            ):
+                                continue
                             phrase = annonce_outil(chunk.get("tool", ""))
                             # Comptee comme une amorce : c'est une phrase
                             # d'attente, pas une reponse. Recollee au texte, le
@@ -1650,8 +2142,16 @@ class HostPipeline:
             # La memoire ne retient que la reponse utile : les phrases
             # d'attente sont du remplissage de latence, pas du contenu.
             if text:
-                self._historique.append({"role": "user", "content": prompt})
-                self._historique.append({"role": "assistant", "content": text})
+                message_utilisateur = {"role": "user", "content": prompt}
+                message_assistant = {"role": "assistant", "content": text}
+                self._historique.extend([message_utilisateur, message_assistant])
+                self._memoire.retenir(
+                    prompt, text, timestamp=time.monotonic()
+                )
+                if outils_ce_tour:
+                    self._historique_outils_ephemeres.extend(
+                        [message_utilisateur, message_assistant]
+                    )
                 del self._historique[:-MEMOIRE_MESSAGES]
             if outils_ce_tour:
                 self._dernier_outils = outils_ce_tour
@@ -1680,6 +2180,7 @@ class HostPipeline:
                 print(f"BRAIN : \"{text[:120]}{suffixe}\"", flush=True)
                 if ttft_ms is not None:
                     print(f"BRAIN : TTFT {ttft_ms:.0f} ms", flush=True)
+                self._noter_conversation("hyper-ambient", text)
 
             # Le rapport suit la première trame (ici : toutes les trames
             # utiles). On a transcript, reply, et total une fois la

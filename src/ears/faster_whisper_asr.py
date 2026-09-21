@@ -78,7 +78,14 @@ class FasterWhisperASR:
             kwargs["hotwords"] = self.hotwords
         segments, info = self.model.transcribe(audio, **kwargs)
         segs: List[Dict[str, Any]] = [
-            {"start": s.start, "end": s.end, "text": s.text} for s in segments
+            {
+                "start": s.start,
+                "end": s.end,
+                "text": s.text,
+                "no_speech_prob": getattr(s, "no_speech_prob", None),
+                "avg_logprob": getattr(s, "avg_logprob", None),
+            }
+            for s in segments
         ]
         return {
             "text": "".join(s["text"] for s in segs).strip(),

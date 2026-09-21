@@ -88,6 +88,20 @@ def create_transport_app(
         peer_address_of if peer_address_of is not None else _peer_address_from_socket
     )
 
+    @app.get("/")
+    async def readiness() -> dict[str, str]:
+        """Sonde légère : le WS vivant ne doit jamais répondre 404 à ``GET /``."""
+        return {"status": "ready", "transport": "hostagent"}
+
+    async def notifier_options(websocket: WebSocket, message) -> None:
+        if on_options is None:
+            return
+        retour = on_options(message)
+        if inspect.isawaitable(retour):
+            retour = await retour
+        if retour:
+            await websocket.send_json(retour)
+
     @app.websocket("/hostagent")
     async def hostagent(websocket: WebSocket) -> None:
         await websocket.accept()
@@ -103,8 +117,7 @@ def create_transport_app(
                 await _fermer_admission(websocket)
                 return
             await websocket.send_json({"type": "ready"})
-            if on_options is not None:
-                on_options(premier)
+            await notifier_options(websocket, premier)
 
             while True:
                 message = await websocket.receive_json()
@@ -113,14 +126,14 @@ def create_transport_app(
                     return
                 kind = message.get("type")
                 if kind == "options":
-                    if on_options is not None:
-                        on_options(message)
+                    await notifier_options(websocket, message)
                     continue
                 if kind != "invoke":
                     await _fermer_admission(websocket)
                     return
                 if "mains_libres" in message and on_options is not None:
-                    on_options(
+                    await notifier_options(
+                        websocket,
                         {
                             "type": "options",
                             "mains_libres": message.get("mains_libres") is True,

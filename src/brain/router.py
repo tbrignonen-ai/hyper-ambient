@@ -31,8 +31,12 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from typing import Any, AsyncIterator, Dict, List, Optional
+
+from src.brain.contexte import fenetre_classifieur, projeter_kw
+from src.brain.mandat import NOMS_HARNAIS
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +95,10 @@ HOLDING = [
 # « et alors ? » ne veulent rien dire seuls. Au-dela, l'enonce porte sa propre
 # difficulte et le tour precedent n'est plus qu'un parasite.
 LONGUEUR_ANAPHORIQUE = 25
+
+
+def nomme_un_harnais(prompt: str) -> bool:
+    return bool(re.search(r"\b" + NOMS_HARNAIS + r"\b", prompt or "", re.IGNORECASE))
 
 
 def sans_outils(kw: Dict[str, Any]) -> Dict[str, Any]:
@@ -216,6 +224,12 @@ class RouterBrain:
         grammar and a stable prefix, so llama-server's prompt cache covers
         everything but the transcript — measured 335 ms cold, ~90 ms warm.
         """
+        # Nommer un harnais est par definition une demande d'action, jamais un
+        # reflexe ; et la voie reflexe est la seule qui n'a pas d'outils, donc
+        # la seule ou la demande ne peut pas aboutir.
+        if nomme_un_harnais(prompt):
+            return {"route": "escalate", "latency_ms": 0.0, "verdict": "HARNAIS"}
+
         if self._client is None:
             return {"route": "escalate", "latency_ms": 0.0, "reason": "no client"}
 
@@ -224,15 +238,11 @@ class RouterBrain:
         # router en local fait repondre une politesse creuse a la place du
         # sujet. Le dernier tour suffit a lever l'ambiguite ; le prefixe reste
         # stable, donc le cache de prompt de llama-server tient toujours.
-        entete = ""
-        if contexte and doit_joindre_contexte(prompt):
-            dernier = contexte[-1]
-            if dernier.get("content"):
-                entete = "Tour precedent : " + dernier["content"].strip()[:160] + chr(10)
-                # chr(10) plutot qu'une sequence d'echappement : ce fichier a deja
-                # ete casse deux fois par un antislash mal transmis.
+        # Fenêtre adaptative : énoncé seul si > 25 car. ; sinon + tour
+        # précédent. Troncature à 160 (mesure déjà inscrite), pas 80.
+        fenetre = fenetre_classifieur(prompt, contexte)
         body = {
-            "prompt": CLASSIFY_PREFIX + entete + prompt.strip() + CLASSIFY_SUFFIX,
+            "prompt": CLASSIFY_PREFIX + fenetre + CLASSIFY_SUFFIX,
             "grammar": CLASSIFY_GRAMMAR,
             "n_predict": 4,
             "temperature": 0,
@@ -277,7 +287,7 @@ class RouterBrain:
         if route == "reflex":
             self.stats["reflex"] += 1
             async for chunk in self.reflex.query_streaming(
-                prompt, system=system, **sans_outils(kw)
+                prompt, system=system, **projeter_kw(sans_outils(kw), "reflex")
             ):
                 chunk["channel"] = "reflex"
                 yield chunk
@@ -293,7 +303,15 @@ class RouterBrain:
         # ici tomberait APRES l'attente qu'elle est censee couvrir. Mesure du
         # 13/09 sur la chaine reelle : trois phrases d'attente pour une seule
         # question, dont la derniere a 18,1 s sur un outil rendu a 17,8 s.
-        if self.enable_filler and not est_une_suite_d_outil(kw.get("messages")):
+        # Une seule annonce d'attente par tour harnais : l'accusé du mandat.
+        # L'amorce ici dirait la même chose. est_une_suite_d_outil ne couvre
+        # pas ce cas : les trois phrases naissent au premier query_streaming,
+        # avant tout message role=tool — le garde du 13/09 ne les voit pas.
+        if (
+            self.enable_filler
+            and not est_une_suite_d_outil(kw.get("messages"))
+            and not nomme_un_harnais(prompt)
+        ):
             yield {
                 "delta": self._next_filler(),
                 "stop_reason": None,
@@ -304,7 +322,9 @@ class RouterBrain:
 
         emitted = False
         try:
-            stream = self.deep.query_streaming(prompt, system=system, **kw)
+            stream = self.deep.query_streaming(
+                prompt, system=system, **projeter_kw(kw, "deep")
+            )
             holding = 0
             async for chunk in _with_holding(
                 stream, self.deep_timeout_ms, self.holding_after_ms,
@@ -339,7 +359,7 @@ class RouterBrain:
         # Nothing spoken past the filler — the local channel can still answer,
         # and "Un instant." followed by a local answer stays coherent.
         async for chunk in self.reflex.query_streaming(
-            prompt, system=system, **sans_outils(kw)
+            prompt, system=system, **projeter_kw(sans_outils(kw), "reflex")
         ):
             chunk["channel"] = "reflex"
             yield chunk
@@ -348,12 +368,17 @@ class RouterBrain:
         """Non-streaming convenience — no filler, since nothing is spoken."""
         decision = await self.classify(prompt)
         target = self.reflex if decision["route"] == "reflex" else self.deep
-        target_kw = kw if target is self.deep else sans_outils(kw)
-        result = await target.query(prompt, system=system, **target_kw)
+        canal = "reflex" if target is self.reflex else "deep"
+        cible_kw = kw if target is self.deep else sans_outils(kw)
+        result = await target.query(
+            prompt, system=system, **projeter_kw(cible_kw, canal)
+        )
         result["channel"] = decision["route"]
         if result["stop_reason"] == "error" and target is self.deep:
             self.stats["deep_failed"] += 1
-            result = await self.reflex.query(prompt, system=system, **sans_outils(kw))
+            result = await self.reflex.query(
+                prompt, system=system, **projeter_kw(sans_outils(kw), "reflex")
+            )
             result["channel"] = "reflex"
         return result
 

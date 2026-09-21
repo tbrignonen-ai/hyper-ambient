@@ -16,6 +16,7 @@ import os
 from typing import Any, Optional
 
 from src.brain.tools import MAX_TOOL_CONTENT_CHARS, ToolRegistry, ToolSpec
+from src.brain.mandat import RegistreMandats, deposer_depuis_outil
 
 logger = logging.getLogger(__name__)
 
@@ -109,20 +110,40 @@ class CodexBridge:
         return text
 
 
+class CodexMandat:
+    """Handler vocal : confie à Codex sans attendre son pont."""
+
+    def __init__(self, registre_mandats: RegistreMandats, pont: CodexBridge):
+        self.registre_mandats = registre_mandats
+        self.pont = pont
+
+    async def __call__(self, question: str) -> str:
+        return await deposer_depuis_outil(
+            self.registre_mandats, "Codex", question, self.pont
+        )
+
+
 def register_ask_codex(
     registry: ToolRegistry,
     token: Optional[str] = None,
     client: Any = None,
+    registre_mandats: Optional[RegistreMandats] = None,
     **kwargs,
 ) -> ToolSpec:
     """Enregistre `ask_codex`. `danger="read"` : le pont epingle Codex en
     bac a sable lecture seule."""
+    pont = CodexBridge(token=token, client=client, **kwargs)
+    handler = (
+        CodexMandat(registre_mandats, pont)
+        if registre_mandats is not None
+        else pont
+    )
     return registry.register(
         ToolSpec(
             name="ask_codex",
             description=ASK_CODEX_DESCRIPTION,
             parameters=ASK_CODEX_PARAMETERS,
             danger="read",
-            handler=CodexBridge(token=token, client=client, **kwargs),
+            handler=handler,
         )
     )

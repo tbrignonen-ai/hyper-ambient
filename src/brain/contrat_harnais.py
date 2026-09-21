@@ -92,8 +92,11 @@ def _nettoyer_voix(texte: str) -> str:
     if not texte:
         return texte
 
-    texte = re.sub(r"```.*?```", " ", texte, flags=re.DOTALL)
-    texte = re.sub(r"`[^`]*`", " ", texte)
+    # Retire le balisage, jamais le texte. Mesure du 21/09 : les accents
+    # graves avalaient le contenu (`python:3.11`) — phrase encore
+    # grammaticale, donc fausse à l'oreille sans signal de perte.
+    texte = re.sub(r"```\w*", " ", texte)
+    texte = texte.replace("`", "")
     texte = re.sub(r"[A-Za-z]:[\\/][^\s]+", " ", texte)
 
     lignes = texte.splitlines()

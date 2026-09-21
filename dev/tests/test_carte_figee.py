@@ -32,8 +32,9 @@ def test_carte_figee_ecrase_l_ancienne_carte(tmp_path):
     injectees = serve_hostagent.charger_carte_figee(chemin=CARTE, environ=env)
 
     assert "BRAIN_SERVICE" in injectees
-    assert env["BRAIN_SERVICE"] == "llamacpp"
-    assert env["BRAIN_MODEL"] == "mother-local"
+    assert env["BRAIN_SERVICE"] == "router"
+    assert env["BRAIN_MODEL"] == "MiniMaxAI/MiniMax-M3"
+    assert env["BRAIN_MODEL_LOCAL"] == "mother-local"
     assert env["MODEL"].endswith("granite-4.2-3b-Q4_K_M.gguf")
     assert env["EARS_BACKEND"] == "faster-whisper"
     assert env["EARS_MODEL"] == "large-v3"
@@ -94,6 +95,8 @@ def test_charger_env_local_laisse_la_carte_au_chargeur_carte(tmp_path):
     serve_hostagent.charger_env_local(chemin=chemin, environ=env)
     assert env == {"CODEX_BRIDGE_TOKEN": "jeton-ok"}
     serve_hostagent.charger_carte_figee(chemin=CARTE, environ=env)
-    assert env["BRAIN_SERVICE"] == "llamacpp"
+    assert env["BRAIN_SERVICE"] == "router"
+    assert env["BRAIN_MODEL"] == "MiniMaxAI/MiniMax-M3"
+    assert env["BRAIN_MODEL_LOCAL"] == "mother-local"
     assert env["MOUTH_BACKEND"] == "magpie"
     assert env["CODEX_BRIDGE_TOKEN"] == "jeton-ok"

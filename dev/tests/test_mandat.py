@@ -83,12 +83,19 @@ from src.brain.mandat import (  # noqa: E402
     PleinMandats,
     RegistreMandats,
     confier,
+    deposer_depuis_outil,
     extraire_harnais,
     extraire_sujet,
+    nom_harnais_dit,
     phrase_accuse,
+    phrase_depot,
+    phrase_harnais_absent,
+    respecter_harnais_nomme,
+    phrase_question_manquante,
     phrase_arrivee,
     phrase_plein,
     phrase_rappel,
+    question_est_substantielle,
 )
 from src.i18n import t  # noqa: E402
 
@@ -218,6 +225,70 @@ def test_extraire_harnais_et_sujet():
     assert extraire_sujet("demande à Claude de relire le code") == "relire le code"
 
 
+def test_extraire_harnais_cursor_reste_mappe_sur_codex():
+    """Piège de la table : `cursor` rend Codex. Non changé ici — à confirmer."""
+    assert extraire_harnais("demande a Cursor d'ouvrir le fichier") == "Codex"
+
+
+def test_nom_harnais_dit_garde_claude_code():
+    prompt = "Demande a Claude Code de me dire quelle version de Python tourne."
+    assert extraire_harnais(prompt) == "Claude"
+    assert nom_harnais_dit(prompt) == "Claude Code"
+
+
+def test_phrase_harnais_absent_dit_le_nom_sans_basculer():
+    phrase = phrase_harnais_absent("Claude Code")
+    assert phrase == "Claude Code n'est pas connecté sur cette machine"
+
+
+class _Registre:
+    def __init__(self, noms):
+        self._noms = set(noms)
+
+    def get(self, nom):
+        return nom if nom in self._noms else None
+
+
+def test_respecter_harnais_nomme_recrit_codex_vers_claude():
+    from src.brain.tools import ToolCall
+
+    appel = ToolCall(id="c1", name="ask_codex", arguments={"question": "version Python"})
+    appels, refus = respecter_harnais_nomme(
+        "Demande a Claude Code de me dire la version.",
+        [appel],
+        _Registre({"ask_claude", "ask_codex"}),
+    )
+    assert refus is None
+    assert [a.name for a in appels] == ["ask_claude"]
+    assert appels[0].arguments["question"] == "version Python"
+
+
+def test_respecter_harnais_nomme_refuse_si_absent_du_registre():
+    from src.brain.tools import ToolCall
+
+    appel = ToolCall(id="c1", name="ask_codex", arguments={"question": "version Python"})
+    appels, refus = respecter_harnais_nomme(
+        "Demande a Claude Code de me dire la version.",
+        [appel],
+        _Registre({"ask_codex"}),
+    )
+    assert appels == []
+    assert refus == "Claude Code n'est pas connecté sur cette machine"
+
+
+def test_respecter_harnais_nomme_laisse_un_outil_local():
+    from src.brain.tools import ToolCall
+
+    appel = ToolCall(id="c1", name="calculer", arguments={"expression": "2+2"})
+    appels, refus = respecter_harnais_nomme(
+        "Demande a Claude Code de calculer 2+2.",
+        [appel],
+        _Registre({"ask_claude", "calculer"}),
+    )
+    assert refus is None
+    assert [a.name for a in appels] == ["calculer"]
+
+
 def test_accuse_est_un_gabarit_sans_attente(lang_env=None):
     phrase = phrase_accuse("Codex", "relire transport.py")
     assert "Codex" in phrase
@@ -290,6 +361,19 @@ def test_phrases_rappel_et_plein_prononcables():
     assert "patiente" not in plein.lower()
 
 
+@pytest.mark.parametrize(
+    "question",
+    ["", "Codex", "demande à Codex", "Je voudrais que tu demandes à Codex"],
+)
+def test_un_simple_destinataire_n_est_pas_un_mandat(question):
+    assert question_est_substantielle(question) is False
+
+
+def test_une_question_courte_mais_reelle_reste_substantielle():
+    assert question_est_substantielle("la météo") is True
+    assert question_est_substantielle("Demande à Codex de relire transport.py") is True
+
+
 # --- confier ------------------------------------------------------------------
 
 
@@ -315,8 +399,33 @@ async def test_confier_rend_la_main_avant_l_appel(monkeypatch):
     assert r.en_cours() == [m]
     await asyncio.sleep(0.4)
     assert m.etat == "fini"
-    assert vues == ["ENV:relire transport.py"]
+    # Le pont impose déjà une forme parlable. Empiler le contrat JSON
+    # devant la question fait échoer la consigne au lieu du travail.
+    assert vues == ["relire transport.py"]
     assert m.reponse.resume_voix == "bref"
+
+
+@runs_async
+async def test_le_pont_recoit_la_question_sans_contrat_json(monkeypatch):
+    """Cause racine de l'écho : PREFIXE_CONTRAT + préfixe vocal du pont."""
+    from src.brain.contrat_harnais import PREFIXE_CONTRAT
+    import src.brain.mandat as mod
+
+    vues = []
+
+    async def appel(question: str) -> str:
+        vues.append(question)
+        return "src/brain contient quinze fichiers Python."
+
+    monkeypatch.setattr(mod, "analyser", lambda t: _reponse(resume_voix=t[:220]))
+
+    r = RegistreMandats()
+    await confier(r, "Codex", "combien de fichiers Python dans src/brain", "fichiers Python", appel)
+    await asyncio.sleep(0.05)
+    assert vues
+    assert PREFIXE_CONTRAT not in vues[0]
+    assert "JSON" not in vues[0]
+    assert vues[0] == "combien de fichiers Python dans src/brain"
 
 
 @runs_async
@@ -464,22 +573,24 @@ def _rapport(socket):
     return None
 
 
-def test_registre_pour_tour_retire_les_harnais_meme_si_demande(monkeypatch):
+def test_registre_pour_tour_garde_les_harnais_a_chaque_tour(monkeypatch):
     monkeypatch.setenv("CODEX_BRIDGE_TOKEN", "jeton")
     monkeypatch.delenv("CLI_BRIDGE_TOKEN", raising=False)
     monkeypatch.delenv("MUSE_BRIDGE_URL", raising=False)
     monkeypatch.delenv("SEARXNG_URL", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     pipeline = serve_hostagent.HostPipeline()
-    pipeline.registre = serve_hostagent.construire_registre(client=object())
+    pipeline.registre = serve_hostagent.construire_registre(
+        client=object(), registre_mandats=pipeline._mandats
+    )
     pipeline._client_outils = object()
-    restreint = pipeline._registre_pour_tour("demande a Codex de relire transport.py")
-    assert "ask_codex" not in restreint
-    assert "calculer" in restreint
+    registre = pipeline._registre_pour_tour("envoie une tache a Codex")
+    assert "ask_codex" in registre
+    assert "calculer" in registre
 
 
 @runs_async
-async def test_demande_harnais_accuse_sans_modele_local(monkeypatch):
+async def test_appel_harnais_depose_un_mandat_et_rend_la_main(monkeypatch):
     monkeypatch.setenv("CODEX_BRIDGE_TOKEN", "jeton")
     monkeypatch.delenv("CLI_BRIDGE_TOKEN", raising=False)
     monkeypatch.delenv("MUSE_BRIDGE_URL", raising=False)
@@ -487,11 +598,31 @@ async def test_demande_harnais_accuse_sans_modele_local(monkeypatch):
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
 
     pipeline = serve_hostagent.HostPipeline()
-    pipeline.registre = serve_hostagent.construire_registre(client=object())
+    pipeline.registre = serve_hostagent.construire_registre(
+        client=object(), registre_mandats=pipeline._mandats
+    )
     pipeline.porte = serve_hostagent.construire_porte()
     pipeline.asr = _ASRTexte("demande a Codex de relire transport.py")
     pipeline.tts = _MOUTHDouble()
-    pipeline.brain = _BrainDouble()
+    from src.brain.tools import ToolCall
+
+    class _BrainQuiConfie(_BrainDouble):
+        async def query_streaming(self, prompt, **kw):
+            self.appels.append({"prompt": prompt, **kw})
+            yield {
+                "delta": "",
+                "stop_reason": "tool_calls",
+                "tool_calls": [
+                    ToolCall(
+                        id="mandat-codex",
+                        name="ask_codex",
+                        arguments={"question": "une toute petite tache de test"},
+                        raw_arguments='{"question":"une toute petite tache de test"}',
+                    )
+                ],
+            }
+
+    pipeline.brain = _BrainQuiConfie()
     pipeline._client_outils = object()
     socket = _SocketDouble()
 
@@ -499,16 +630,16 @@ async def test_demande_harnais_accuse_sans_modele_local(monkeypatch):
         await asyncio.sleep(30)
         return "trop tard"
 
-    pipeline._appel_pour = lambda harnais: lent
+    pipeline.registre.get("ask_codex").handler.pont = lent
 
     t0 = time.monotonic()
     await pipeline._enchainer(_trames_de_parole(), socket)
     assert time.monotonic() - t0 < 1.0
-    assert pipeline.brain.appels == []
+    assert len(pipeline.brain.appels) == 1
     rapport = _rapport(socket)
     assert rapport is not None
     assert "Codex" in rapport["reply"]
-    assert "relire transport.py" in rapport["reply"]
+    assert "préviens" in rapport["reply"].lower() or "previens" in rapport["reply"].lower()
     assert "patiente" not in rapport["reply"].lower()
     assert "le modele local a parle" not in rapport["reply"]
     assert pipeline._mandats.en_cours()
@@ -516,6 +647,38 @@ async def test_demande_harnais_accuse_sans_modele_local(monkeypatch):
         pipeline._mandats.oublier(m.identifiant)
     if pipeline._tache_mandats is not None and not pipeline._tache_mandats.done():
         pipeline._tache_mandats.cancel()
+
+
+@runs_async
+async def test_handler_depot_ne_depend_pas_d_un_verbe_ou_d_une_regex():
+    r = RegistreMandats()
+
+    async def lent(question: str) -> str:
+        await asyncio.sleep(30)
+        return "trop tard"
+
+    t0 = time.monotonic()
+    phrase = await deposer_depuis_outil(r, "Claude", "une tache de test", lent)
+    assert time.monotonic() - t0 < 1.0
+    assert phrase == phrase_depot("Claude")
+    assert len(r.en_cours()) == 1
+    for mandat in r.en_cours():
+        r.oublier(mandat.identifiant)
+
+
+@runs_async
+async def test_depot_vide_demande_la_question_sans_appel_ni_mandat():
+    r = RegistreMandats()
+    appels = []
+
+    async def pont(question: str) -> str:
+        appels.append(question)
+        return "impossible"
+
+    phrase = await deposer_depuis_outil(r, "Codex", "demande à Codex", pont)
+    assert phrase == phrase_question_manquante("Codex")
+    assert appels == []
+    assert r.en_cours() == []
 
 
 @runs_async
@@ -590,6 +753,34 @@ async def test_annonce_arrivee_est_un_tour_transport_autonome():
     ]
     assert audio
     assert any(fin > audio[-1] for fin in fins)
+
+
+@runs_async
+async def test_annonce_sans_audio_reste_a_annoncer():
+    """Ne jamais déclarer livré un résultat que MOUTH n'a pas produit."""
+    class _MOUTHMuet(_MOUTHDouble):
+        async def synthesize(self, phrase):
+            self.hors_flux.append(phrase)
+            return {"audio": np.zeros(0, dtype=np.float32), "sample_rate": self.sample_rate}
+
+    pipeline = serve_hostagent.HostPipeline()
+    pipeline.tts = _MOUTHMuet()
+    socket = _SocketDouble()
+    mandat = Mandat(
+        identifiant="m-muet",
+        harnais="Codex",
+        question="q",
+        sujet="s",
+        depose_a=time.monotonic(),
+        etat="fini",
+        reponse=_reponse(),
+    )
+    pipeline._mandats.deposer(mandat)
+
+    await pipeline.annoncer_mandats_prets(socket, [np.zeros(0, dtype=np.float32)])
+
+    assert mandat.annonce_faite is False
+    assert mandat in pipeline._mandats.prets()
 
 
 @runs_async

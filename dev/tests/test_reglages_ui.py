@@ -36,6 +36,17 @@ def session_propre():
     assert apres == avant, "le .env.local du depot a ete touche par un test"
 
 
+@pytest.fixture(autouse=True)
+def voix_sans_reseau(monkeypatch):
+    """Les fenêtres de test ne tapent pas Magpie."""
+    from src.onboarding.sondes import VOIX_TTS_REPLI, VoixTts
+
+    async def faux(*_a, **_k):
+        return VoixTts(VOIX_TTS_REPLI, False)
+
+    monkeypatch.setattr("src.onboarding.sondes.lister_voix_tts", faux)
+
+
 def _env(tmp_path: Path, texte: str) -> Path:
     chemin = tmp_path / ".env.local"
     chemin.write_bytes(texte.encode("utf-8"))
@@ -81,6 +92,18 @@ def _textes_widgets(widget) -> list[str]:
     for enfant in widget.winfo_children():
         textes.extend(_textes_widgets(enfant))
     return textes
+
+
+def _radios(widget) -> list:
+    trouves = []
+    try:
+        if widget.winfo_class() == "Radiobutton":
+            trouves.append(widget)
+    except Exception:
+        pass
+    for enfant in widget.winfo_children():
+        trouves.extend(_radios(enfant))
+    return trouves
 
 
 def _pomper(racine, jusqua, timeout_s: float = 2.0) -> None:
@@ -206,6 +229,8 @@ def test_blocs_couvrent_les_quatre_services_et_leurs_variables():
     assert ids == [
         "modele_local",
         "cles",
+        "voix",
+        "langue",
         "outil_codex",
         "outil_claude",
         "codex",
@@ -216,6 +241,8 @@ def test_blocs_couvrent_les_quatre_services_et_leurs_variables():
     ]
     par_id = {bloc["id"]: bloc["cles"] for bloc in BLOCS}
     assert par_id["modele_local"] == ()
+    assert par_id["voix"] == ("MOUTH_VOICE_NAME", "MOUTH_LANGUAGE")
+    assert par_id["langue"] == ()
     assert par_id["outil_codex"] == ()
     assert par_id["outil_claude"] == ()
     assert par_id["codex"] == ("CODEX_BRIDGE_URL", "CODEX_BRIDGE_TOKEN")
@@ -230,8 +257,10 @@ def test_blocs_couvrent_les_quatre_services_et_leurs_variables():
     assert par_id["cles"] == ()
     assert ids.index("brain_distant") > ids.index("outil_claude")
     assert ids.index("brain_distant") > ids.index("codex")
-    assert ids.index("modele_local") < ids.index("outil_codex")
-    assert ids.index("cles") < ids.index("outil_codex")
+    assert ids.index("modele_local") < ids.index("cles")
+    assert ids.index("cles") < ids.index("voix")
+    assert ids.index("voix") < ids.index("langue")
+    assert ids.index("langue") < ids.index("outil_codex")
     assert ids.index("brain_distant") < ids.index("jev")
 
 
@@ -256,7 +285,7 @@ def test_categories_regroupent_les_blocs():
     ]
     plat = [bloc_id for categorie in CATEGORIES for bloc_id in categorie["blocs"]]
     assert plat == [bloc["id"] for bloc in BLOCS]
-    assert CATEGORIES[0]["blocs"] == ("modele_local", "cles")
+    assert CATEGORIES[0]["blocs"] == ("modele_local", "cles", "voix", "langue")
     assert CATEGORIES[1]["blocs"] == (
         "outil_codex",
         "outil_claude",
@@ -273,6 +302,8 @@ def test_blocs_portent_un_libelle_donnees():
 
     attendu_sortie = {
         "modele_local": False,
+        "voix": False,
+        "langue": False,
         "cles": False,
         "outil_codex": False,
         "outil_claude": False,
@@ -295,6 +326,8 @@ def test_blocs_portent_un_marqueur_de_sortie():
 
     attendu = {
         "modele_local": False,
+        "voix": False,
+        "langue": False,
         "cles": False,
         "outil_codex": False,
         "outil_claude": False,
@@ -412,15 +445,25 @@ def test_fenetre_a_quatre_blocs_et_champs_masques(tmp_path):
         assert _FAUX_SUFFIXE in textes
         assert fenetre.champs["BRAIN_API_ENDPOINT"].get() == _FAUX_URL
         assert fenetre.champs["BRAIN_MODEL"].get() == _FAUX_MODELE
+        assert not fenetre.champs["BRAIN_MODEL"].invite_visible
         assert fenetre.champs["BRAIN_API_KEY"].get() == ""
+        assert fenetre.champs["BRAIN_API_KEY"].invite_visible
+        assert str(fenetre.champs["BRAIN_API_KEY"].cget("show")) == ""
+        assert str(fenetre.champs["BRAIN_API_KEY"].cget("state")) == "normal"
+        fenetre.champs["BRAIN_API_KEY"].insert(0, "x")
         assert str(fenetre.champs["BRAIN_API_KEY"].cget("show"))
-        assert str(fenetre.champs["CODEX_BRIDGE_TOKEN"].cget("show"))
-        assert str(fenetre.champs["CLI_BRIDGE_TOKEN"].cget("show"))
-        assert str(fenetre.champs["TYPESAFE_API_KEY"].cget("show"))
+        assert str(fenetre.champs["CODEX_BRIDGE_TOKEN"].cget("show")) == ""
+        assert str(fenetre.champs["CLI_BRIDGE_TOKEN"].cget("show")) == ""
+        assert str(fenetre.champs["TYPESAFE_API_KEY"].cget("show")) == ""
+        assert fenetre.champs["CODEX_BRIDGE_TOKEN"].secret
+        assert fenetre.champs["CLI_BRIDGE_TOKEN"].secret
+        assert fenetre.champs["TYPESAFE_API_KEY"].secret
         assert isinstance(fenetre.fenetre, tk.Toplevel)
         assert fenetre.fenetre.grab_current() is None
         assert "ne collecte" in textes.lower()
         assert fenetre.marqueurs_confidentialite["modele_local"] is False
+        assert fenetre.marqueurs_confidentialite["voix"] is False
+        assert fenetre.marqueurs_confidentialite["langue"] is False
         assert fenetre.marqueurs_confidentialite["cles"] is False
         assert fenetre.marqueurs_confidentialite["brain_distant"] is True
         assert fenetre.marqueurs_confidentialite["outil_codex"] is False
@@ -430,6 +473,8 @@ def test_fenetre_a_quatre_blocs_et_champs_masques(tmp_path):
         assert fenetre.marqueurs_confidentialite["jev"] is True
         assert fenetre.marqueurs_confidentialite["recherche"] is True
         assert "modele_local" not in fenetre.boutons_verifier
+        assert "voix" not in fenetre.boutons_verifier
+        assert "langue" not in fenetre.boutons_verifier
         assert "recherche" not in fenetre.boutons_verifier
         assert "cles" not in fenetre.boutons_verifier
 
@@ -441,7 +486,13 @@ def test_fenetre_a_quatre_blocs_et_champs_masques(tmp_path):
 
         assert _idx("Sur votre machine") < _idx("Modèle local")
         assert _idx("Modèle local") < _idx("Clés et réglages")
-        assert _idx("Clés et réglages") < _idx("Vos outils, vos abonnements")
+        assert _idx("Clés et réglages") < _idx("Voix")
+        assert _idx("Voix") < _idx("Langue")
+        assert _idx("Langue") < _idx("Vos outils, vos abonnements")
+        assert "Tavily" in textes
+        assert "app.tavily.com" in textes
+        assert "peu fiable" in textes.lower()
+        assert "carte bancaire" in textes.lower() or "carte" in textes.lower()
         assert _idx("Vos outils, vos abonnements") < _idx("Pont Codex")
         assert _idx("Pont Claude") < _idx("Services distants")
         assert _idx("Services distants") < _idx("Modèle distant")
@@ -585,6 +636,8 @@ def test_fenetre_utilisable_au_clavier_et_echap_ne_ferme_pas_l_app(tmp_path):
         fenetre = FenetreReglages(racine, tmp_path / ".env.local")
         racine.update_idletasks()
         for champ in fenetre.champs.values():
+            if not hasattr(champ, "cget"):
+                continue
             assert str(champ.cget("takefocus")) in ("1", "true")
         assert str(fenetre.bouton_enregistrer.cget("takefocus")) in ("1", "true")
         assert str(fenetre.bouton_tout.cget("takefocus")) in ("1", "true")
@@ -767,11 +820,598 @@ def test_bouton_reglages_ouvre_depuis_la_fenetre_principale(tmp_path):
         assert bouton is not None
         assert "Réglages" in bouton.cget("text") or "Reglages" in bouton.cget("text")
         assert str(bouton.cget("takefocus")) in ("1", "true")
+        textes = " ".join(_textes_widgets(application.conteneur)).lower()
+        assert "un retour" not in textes
+        assert "feedback" not in textes
+        assert getattr(application, "bouton_feedback", None) is None
         application.ouvrir_reglages(env_local)
         application.racine.update_idletasks()
         assert application.fenetre_reglages is not None
         assert application.fenetre_reglages.fenetre.winfo_exists()
         assert application.fenetre_reglages.fenetre.grab_current() is None
+        assert application.fenetre_reglages.menu_aide.entrycget(1, "label") == "Feedback"
         application.racine.update()
+    finally:
+        application.fermer()
+
+
+def test_couleurs_champ_distinctes_du_panneau():
+    from native.presence.reglages_ui import FOND_VITRE, couleurs_champ
+
+    for contraste in (False, True):
+        palette = couleurs_champ(contraste)
+        assert palette["fond"].lower() != FOND_VITRE.lower()
+        assert palette["bord"] != palette["fond"]
+        assert palette["focus"] != palette["bord"]
+        assert palette["invite"] != palette["encre"]
+    assert couleurs_champ(True)["bord"] != couleurs_champ(False)["bord"]
+    assert couleurs_champ(True)["focus"] != couleurs_champ(False)["focus"]
+
+
+def test_libelles_invite_et_feedback_francais(monkeypatch):
+    monkeypatch.delenv("HA_LANG", raising=False)
+    monkeypatch.delenv("HYPER_AMBIENT_LANG", raising=False)
+    from src.i18n import t
+
+    assert t("ui.feedback") == "Feedback"
+    assert t("reglages.menu") == "Aide"
+    assert t("reglages.invite.BRAIN_API_KEY").startswith("coller")
+    assert t("reglages.invite.CODEX_BRIDGE_TOKEN").startswith("coller")
+    for cle in (
+        "BRAIN_API_KEY",
+        "CODEX_BRIDGE_TOKEN",
+        "CLI_BRIDGE_TOKEN",
+        "TYPESAFE_API_KEY",
+    ):
+        texte = t(f"reglages.invite.{cle}").lower()
+        assert "déjà" not in texte
+        assert "posee" not in texte and "posée" not in texte
+        assert "****" not in texte
+        assert "sk-" not in texte
+    assert t("reglages.invite.BRAIN_MODEL").startswith("ex.")
+    assert t("reglages.invite.BRAIN_API_ENDPOINT").startswith("ex.")
+    assert t("reglages.voix_titre") == "Voix"
+    assert "oreille" in t("reglages.voix_aide").lower()
+    assert "redemarrage" in t("reglages.voix_aide").lower().replace("é", "e")
+    assert t("reglages.voix_repli").lower().startswith("liste de repli") or "repli" in t(
+        "reglages.voix_repli"
+    ).lower()
+    assert t("reglages.accent_titre") == "Accent"
+    assert t("reglages.accent_aucun") == "Aucun accent"
+    assert t("reglages.accent.en") == "Accent anglais"
+    assert t("reglages.accent.es") == "Accent espagnol"
+    assert t("reglages.accent.de") == "Accent allemand"
+    assert t("reglages.accent.fr") == "Accent français"
+    assert t("reglages.accent.it") == "Accent italien"
+    assert t("reglages.accent.vi") == "Accent vietnamien"
+    assert t("reglages.accent.hi") == "Accent hindi"
+    assert "charmante" in t("reglages.accent_compromis").lower()
+    assert "comprendre" in t("reglages.accent_compromis").lower()
+    assert t("reglages.voix_ecouter") == "Écouter"
+    assert t("reglages.langue_titre") == "Langue"
+    assert "interface" in t("reglages.langue_aide").lower()
+    assert "rechargement" in t("reglages.langue_delai").lower()
+    assert "modèles" in t("reglages.langue_delai") or "modeles" in t(
+        "reglages.langue_delai"
+    ).lower().replace("é", "e")
+    assert t("reglages.langue.fr") == "Français"
+    assert t("reglages.langue.en") == "Anglais"
+    assert "Tavily" in t("reglages.recherche_tavily")
+    assert "app.tavily.com" in t("reglages.recherche_tavily")
+    assert "peu fiable" in t("reglages.recherche_tavily").lower()
+    assert "gratuit" in t("reglages.recherche_tavily").lower()
+    from native.presence.reglages_ui import url_tavily
+
+    assert url_tavily() == "https://app.tavily.com"
+
+
+def test_libelles_invite_et_feedback_anglais(monkeypatch):
+    monkeypatch.delenv("HYPER_AMBIENT_LANG", raising=False)
+    monkeypatch.setenv("HA_LANG", "en")
+    from src.i18n import t
+
+    assert t("ui.feedback") == "Feedback"
+    assert t("reglages.menu") == "Help"
+    assert t("reglages.invite.BRAIN_API_KEY") == "paste a new key"
+    assert t("reglages.invite.CODEX_BRIDGE_TOKEN") == "paste a new token"
+    assert t("reglages.invite.BRAIN_MODEL").startswith("e.g.")
+    assert "already" not in t("reglages.invite.BRAIN_API_KEY").lower()
+    assert t("reglages.voix_titre") == "Voice"
+    assert "ear" in t("reglages.voix_aide").lower()
+    assert "restart" in t("reglages.voix_aide").lower()
+    assert t("reglages.accent_titre") == "Voice accent"
+    assert t("reglages.accent_aucun") == "No accent"
+    assert t("reglages.accent.en") == "English accent"
+    assert t("reglages.accent.es") == "Spanish accent"
+    assert t("reglages.accent.de") == "German accent"
+    assert "charming" in t("reglages.accent_compromis").lower()
+    assert "understand" in t("reglages.accent_compromis").lower()
+    assert t("reglages.voix_ecouter") == "Listen"
+    assert t("reglages.langue_titre") == "Language"
+    assert "interface" in t("reglages.langue_aide").lower()
+    assert "reload" in t("reglages.langue_delai").lower()
+    assert t("reglages.langue.fr") == "French"
+    assert t("reglages.langue.en") == "English"
+    assert "Tavily" in t("reglages.recherche_tavily")
+    assert "app.tavily.com" in t("reglages.recherche_tavily")
+    assert "unreliable" in t("reglages.recherche_tavily").lower()
+    assert "free" in t("reglages.recherche_tavily").lower()
+    from native.presence.reglages_ui import url_tavily
+
+    assert url_tavily() == "https://app.tavily.com"
+
+
+def test_champs_sont_visiblement_editables(tmp_path):
+    tk, racine = _racine_tk()
+
+    from native.presence.reglages_ui import (
+        FOND_VITRE,
+        FenetreReglages,
+        couleurs_champ,
+    )
+
+    chemin = _env(tmp_path, f"BRAIN_MODEL={_FAUX_MODELE}\nBRAIN_API_KEY={_FAUX_JETON}\n")
+    try:
+        fenetre = FenetreReglages(racine, chemin)
+        racine.update_idletasks()
+        palette = couleurs_champ(False)
+        for champ in fenetre.champs.values():
+            if not hasattr(champ, "invite_visible"):
+                continue
+            assert str(champ.cget("relief")).lower() != "flat"
+            assert str(champ.cget("bg")).lower() == palette["fond"].lower()
+            assert str(champ.cget("bg")).lower() != FOND_VITRE.lower()
+            assert int(str(champ.cget("highlightthickness")) or 0) >= 2
+            assert str(champ.cget("highlightcolor")).lower() == palette["focus"].lower()
+            assert str(champ.cget("state")) == "normal"
+            assert str(champ.cget("takefocus")) in ("1", "true")
+        secret = fenetre.champs["BRAIN_API_KEY"]
+        assert secret.invite_visible
+        assert "coller" in secret.texte_affiche().lower()
+        assert _FAUX_SUFFIXE in fenetre._suffixes["BRAIN_API_KEY"].cget("text")
+        vide = fenetre.champs["TYPESAFE_MODEL"]
+        assert vide.invite_visible
+        assert vide.get() == ""
+        assert "jev-latest" in vide.texte_affiche()
+    finally:
+        racine.destroy()
+
+
+def test_invite_disparait_a_la_premiere_frappe(tmp_path):
+    tk, racine = _racine_tk()
+
+    from native.presence.reglages_ui import FenetreReglages
+
+    try:
+        fenetre = FenetreReglages(racine, tmp_path / ".env.local")
+        racine.update_idletasks()
+        champ = fenetre.champs["TYPESAFE_MODEL"]
+        assert champ.invite_visible
+
+        class _Frappe:
+            keysym = "j"
+            char = "j"
+            state = 0
+
+        champ._frappe(_Frappe())
+        racine.update()
+        assert not champ.invite_visible
+        secret = fenetre.champs["TYPESAFE_API_KEY"]
+        assert secret.invite_visible
+        assert str(secret.cget("show")) == ""
+        secret.insert(0, "abcd")
+        assert not secret.invite_visible
+        assert str(secret.cget("show")) == "*"
+        assert secret.get() == "abcd"
+    finally:
+        racine.destroy()
+
+
+def test_focus_change_la_bordure_du_champ(tmp_path):
+    tk, racine = _racine_tk()
+
+    from native.presence.reglages_ui import FenetreReglages, couleurs_champ
+
+    try:
+        fenetre = FenetreReglages(racine, tmp_path / ".env.local")
+        racine.update_idletasks()
+        palette = couleurs_champ(False)
+        champ = fenetre.champs["BRAIN_MODEL"]
+        autre = fenetre.champs["BRAIN_API_ENDPOINT"]
+        champ.focus_force()
+        racine.update()
+        assert str(champ.cget("highlightbackground")).lower() == palette["focus"].lower()
+        autre.focus_force()
+        racine.update()
+        assert str(champ.cget("highlightbackground")).lower() == palette["bord"].lower()
+    finally:
+        racine.destroy()
+
+
+def test_enregistrer_puis_rouvrir_relit_la_saisie(tmp_path):
+    tk, racine = _racine_tk()
+
+    from native.presence.reglages_ui import FenetreReglages
+
+    nouveau_modele = "modele-apres"
+    nouveau_secret = "faux-remplacement-abcd"
+    chemin = _env(
+        tmp_path,
+        f"BRAIN_MODEL=avant\nBRAIN_API_KEY={_FAUX_JETON}\n",
+    )
+    try:
+        fenetre = FenetreReglages(racine, chemin)
+        racine.update_idletasks()
+        fenetre.champs["BRAIN_MODEL"].delete(0, tk.END)
+        fenetre.champs["BRAIN_MODEL"].insert(0, nouveau_modele)
+        fenetre.champs["BRAIN_API_KEY"].insert(0, nouveau_secret)
+        fenetre.bouton_enregistrer.invoke()
+        racine.update_idletasks()
+        fenetre.fermer()
+        racine.update()
+        relue = FenetreReglages(racine, chemin)
+        racine.update_idletasks()
+        assert relue.champs["BRAIN_MODEL"].get() == nouveau_modele
+        assert not relue.champs["BRAIN_MODEL"].invite_visible
+        assert relue.champs["BRAIN_API_KEY"].get() == ""
+        assert relue.champs["BRAIN_API_KEY"].invite_visible
+        assert "abcd" in relue._suffixes["BRAIN_API_KEY"].cget("text")
+        lus = module_reglages.lire_reglages(chemin)
+        assert lus["BRAIN_MODEL"] == nouveau_modele
+        assert lus["BRAIN_API_KEY"] == nouveau_secret
+        relue.fermer()
+    finally:
+        racine.destroy()
+
+
+def test_menu_feedback_dans_la_fenetre_reglages(tmp_path):
+    tk, racine = _racine_tk()
+
+    from native.presence.reglages_ui import FenetreReglages
+
+    recu: list[bool] = []
+    try:
+        fenetre = FenetreReglages(
+            racine,
+            tmp_path / ".env.local",
+            ouvrir_retour=lambda: recu.append(True),
+        )
+        racine.update_idletasks()
+        assert fenetre.barre_menus.entrycget(1, "label") == "Aide"
+        assert fenetre.menu_aide.entrycget(1, "label") == "Feedback"
+        fenetre.menu_aide.invoke(1)
+        assert recu == [True]
+    finally:
+        racine.destroy()
+
+
+def test_voix_courante_lit_env_local_puis_carte(tmp_path):
+    from native.presence.reglages_ui import voix_courante
+
+    carte = tmp_path / "carte.env"
+    carte.write_bytes(b"MOUTH_VOICE_NAME=Sofia\n")
+    vide = tmp_path / ".env.local"
+    vide.write_bytes(b"BRAIN_MODEL=x\n")
+    assert voix_courante(vide, carte) == "Sofia"
+    pose = tmp_path / "pose.env"
+    pose.write_bytes(b"MOUTH_VOICE_NAME=Aria\n")
+    assert voix_courante(pose, carte) == "Aria"
+
+
+def test_accent_courant_lit_env_local_puis_carte(tmp_path):
+    from native.presence.reglages_ui import accent_courant
+
+    carte = tmp_path / "carte.env"
+    carte.write_bytes(b"MOUTH_LANGUAGE=fr\n")
+    vide = tmp_path / ".env.local"
+    vide.write_bytes(b"BRAIN_MODEL=x\n")
+    assert accent_courant(vide, carte) == "fr"
+    pose = tmp_path / "pose.env"
+    pose.write_bytes(b"MOUTH_LANGUAGE=en-US\n")
+    assert accent_courant(pose, carte) == "en-US"
+
+
+def test_libelles_accent_pour_un_humain(monkeypatch):
+    monkeypatch.delenv("HA_LANG", raising=False)
+    monkeypatch.delenv("HYPER_AMBIENT_LANG", raising=False)
+    from native.presence.reglages_ui import libelle_accent, options_accent
+
+    options = options_accent(
+        ("en-US", "es-ES", "de-DE", "fr-FR", "it-IT", "vi-VN", "hi-IN", "pt-BR"),
+        naturel="fr",
+    )
+    libelles = [libelle for libelle, _code in options]
+    codes = [code for _libelle, code in options]
+    assert libelles[0] == "Aucun accent"
+    assert codes[0] == "fr"
+    assert "Accent anglais" in libelles
+    assert "en-US" not in libelles
+    assert options[libelles.index("Accent anglais")][1] == "en-US"
+    assert "Accent espagnol" in libelles
+    assert "Accent allemand" in libelles
+    assert "Accent français" in libelles
+    assert "Accent italien" in libelles
+    assert "Accent vietnamien" in libelles
+    assert "Accent hindi" in libelles
+    assert libelle_accent("pt-BR") == "Accent (pt-BR)"
+    assert "phonétique" not in " ".join(libelles).lower()
+    assert "phonetique" not in " ".join(libelles).lower()
+
+
+def test_menu_voix_vient_du_serveur_pas_du_code(tmp_path):
+    tk, racine = _racine_tk()
+
+    from src.onboarding.sondes import VoixTts
+
+    from native.presence.reglages_ui import FenetreReglages
+
+    def lister():
+        return VoixTts(("Nova", "Kai"), True, ("en-US", "ja-JP"))
+
+    try:
+        fenetre = FenetreReglages(
+            racine,
+            tmp_path / ".env.local",
+            lister_voix=lister,
+        )
+        racine.update_idletasks()
+        _pomper(
+            racine,
+            lambda: "Nova" in tuple(fenetre.combo_voix.cget("values")),
+        )
+        valeurs = tuple(fenetre.combo_voix.cget("values"))
+        assert "Nova" in valeurs
+        assert "Kai" in valeurs
+        assert "John" not in valeurs
+        assert fenetre.ligne_voix_repli.cget("text") == ""
+        _pomper(
+            racine,
+            lambda: "Accent anglais" in tuple(fenetre.combo_accent.cget("values")),
+        )
+        accents = tuple(fenetre.combo_accent.cget("values"))
+        assert accents[0] == "Aucun accent"
+        assert "Accent anglais" in accents
+        assert "en-US" not in accents
+        assert "ja-JP" not in accents
+        assert fenetre.champs["MOUTH_LANGUAGE"].get() == "fr"
+    finally:
+        racine.destroy()
+
+
+def test_menu_voix_dit_le_repli_si_serveur_muet(tmp_path):
+    tk, racine = _racine_tk()
+
+    from src.onboarding.sondes import VOIX_TTS_REPLI, VoixTts
+
+    from native.presence.reglages_ui import FenetreReglages
+
+    def lister():
+        return VoixTts(VOIX_TTS_REPLI, False)
+
+    try:
+        fenetre = FenetreReglages(
+            racine,
+            tmp_path / ".env.local",
+            lister_voix=lister,
+        )
+        racine.update_idletasks()
+        _pomper(racine, lambda: bool(fenetre.ligne_voix_repli.cget("text")))
+        textes = " ".join(_textes_widgets(fenetre.fenetre))
+        assert "Voix" in textes
+        assert "repli" in fenetre.ligne_voix_repli.cget("text").lower()
+        assert "Sofia" in tuple(fenetre.combo_voix.cget("values"))
+        assert fenetre.champs["MOUTH_VOICE_NAME"].get() == "Sofia"
+        assert "redemarrage" in textes.lower().replace("é", "e")
+        assert "Écouter" in textes
+        assert "charmante" in textes.lower()
+        assert not fenetre.corps_voix.winfo_ismapped()
+    finally:
+        racine.destroy()
+
+
+def test_enregistrer_ecrit_la_voix_choisie(tmp_path):
+    tk, racine = _racine_tk()
+
+    from src.onboarding.sondes import VoixTts
+
+    from native.presence.reglages_ui import FenetreReglages
+
+    def lister():
+        return VoixTts(("Sofia", "Aria", "Leo"), True)
+
+    chemin = _env(tmp_path, "BRAIN_MODEL=avant\n")
+    try:
+        fenetre = FenetreReglages(racine, chemin, lister_voix=lister)
+        racine.update_idletasks()
+        _pomper(racine, lambda: "Aria" in tuple(fenetre.combo_voix.cget("values")))
+        fenetre.var_voix.set("Aria")
+        fenetre.bouton_enregistrer.invoke()
+        racine.update_idletasks()
+        lus = module_reglages.lire_reglages(chemin)
+        assert lus["MOUTH_VOICE_NAME"] == "Aria"
+        assert lus["BRAIN_MODEL"] == "avant"
+        assert lus.get("MOUTH_LANGUAGE", "fr") == "fr"
+    finally:
+        racine.destroy()
+
+
+def test_enregistrer_ecrit_l_accent_choisi(tmp_path):
+    tk, racine = _racine_tk()
+
+    from src.onboarding.sondes import VoixTts
+
+    from native.presence.reglages_ui import FenetreReglages
+
+    def lister():
+        return VoixTts(("Sofia", "Aria"), True, ("en-US", "de-DE", "fr-FR"))
+
+    chemin = _env(tmp_path, "BRAIN_MODEL=avant\n")
+    try:
+        fenetre = FenetreReglages(racine, chemin, lister_voix=lister)
+        racine.update_idletasks()
+        _pomper(
+            racine,
+            lambda: "Accent anglais" in tuple(fenetre.combo_accent.cget("values")),
+        )
+        fenetre.var_accent.set("Accent anglais")
+        fenetre.bouton_enregistrer.invoke()
+        racine.update_idletasks()
+        lus = module_reglages.lire_reglages(chemin)
+        assert lus["MOUTH_LANGUAGE"] == "en-US"
+        assert lus["BRAIN_MODEL"] == "avant"
+        assert lus.get("MOUTH_VOICE_NAME", "Sofia") == "Sofia"
+    finally:
+        racine.destroy()
+
+
+def test_ecouter_envoie_voix_et_accent(tmp_path):
+    tk, racine = _racine_tk()
+
+    from src.onboarding.sondes import VoixTts
+
+    from native.presence.reglages_ui import FenetreReglages
+
+    recu: list[tuple[str, str, str]] = []
+
+    def lister():
+        return VoixTts(("Sofia", "Aria"), True, ("en-US", "de-DE"))
+
+    def jouer(voix: str, langue: str, texte: str) -> bytes:
+        recu.append((voix, langue, texte))
+        return b"RIFF"
+
+    try:
+        fenetre = FenetreReglages(
+            racine,
+            tmp_path / ".env.local",
+            lister_voix=lister,
+            jouer_extrait=jouer,
+        )
+        racine.update_idletasks()
+        _pomper(
+            racine,
+            lambda: "Accent anglais" in tuple(fenetre.combo_accent.cget("values")),
+        )
+        fenetre.var_voix.set("Aria")
+        fenetre.var_accent.set("Accent anglais")
+        fenetre.bouton_ecouter.invoke()
+        _pomper(racine, lambda: bool(recu))
+        assert recu[0][0] == "Aria"
+        assert recu[0][1] == "en-US"
+        assert recu[0][2].strip()
+    finally:
+        racine.destroy()
+
+
+def test_url_tavily_extrait_du_libelle(monkeypatch):
+    monkeypatch.delenv("HA_LANG", raising=False)
+    monkeypatch.delenv("HYPER_AMBIENT_LANG", raising=False)
+    from native.presence.reglages_ui import url_tavily
+
+    assert url_tavily() == "https://app.tavily.com"
+    assert (
+        url_tavily("Compte : https://app.tavily.com — ensuite la clé.")
+        == "https://app.tavily.com"
+    )
+    assert url_tavily("sans adresse") == ""
+
+
+def test_menu_langue_dans_reglages(tmp_path):
+    tk, racine = _racine_tk()
+
+    from native.presence.reglages_ui import FenetreReglages
+
+    recu: list[str] = []
+
+    try:
+        fenetre = FenetreReglages(
+            racine,
+            tmp_path / ".env.local",
+            langue="fr",
+            sur_langue=lambda code: recu.append(code),
+        )
+        racine.update_idletasks()
+        assert fenetre.combo_langue is not None
+        assert fenetre.var_langue is not None
+        textes = " ".join(_textes_widgets(fenetre.fenetre))
+        assert "Langue" in textes
+        assert "Français" in textes or "Anglais" in textes
+        assert "rechargement" in textes.lower() or "modeles" in textes.lower().replace(
+            "é", "e"
+        )
+        assert fenetre.ligne_langue_delai.cget("text")
+        fenetre.var_langue.set("Anglais")
+        fenetre._appliquer_langue()
+        assert "langue" in fenetre.ligne_langue_etat.cget("text").lower()
+        _pomper(racine, lambda: recu == ["en"] and not fenetre.ligne_langue_etat.cget("text"))
+        assert recu == ["en"]
+        assert fenetre.ligne_langue_delai.cget("text")
+    finally:
+        racine.destroy()
+
+
+def test_lien_tavily_ouvre_l_adresse(tmp_path):
+    tk, racine = _racine_tk()
+
+    from native.presence.reglages_ui import FenetreReglages
+
+    ouvert: list[str] = []
+    try:
+        fenetre = FenetreReglages(
+            racine,
+            tmp_path / ".env.local",
+            ouvrir_lien=lambda url: ouvert.append(url),
+        )
+        racine.update_idletasks()
+        assert fenetre.lien_tavily is not None
+        assert "app.tavily.com" in fenetre.lien_tavily.cget("text")
+        fenetre.lien_tavily.invoke()
+        assert ouvert == ["https://app.tavily.com"]
+    finally:
+        racine.destroy()
+
+
+def test_page_principale_sans_selecteur_langue(tmp_path):
+    _ouvrir_tk()
+
+    from native.presence.app import Application, analyser_arguments
+    from native.presence.onboarding import (
+        ConfigurationPresence,
+        enregistrer_configuration,
+    )
+
+    config = tmp_path / "presence.json"
+    enregistrer_configuration(
+        ConfigurationPresence(onboarding_termine=True),
+        config,
+    )
+    env_local = _env(tmp_path, f"BRAIN_MODEL={_FAUX_MODELE}\n")
+    args = analyser_arguments(["--onboarding", "--config", str(config)])
+    try:
+        application = Application(args)
+    except Exception as exc:
+        if exc.__class__.__name__ == "TclError":
+            pytest.skip(f"Tk indisponible : {exc}")
+        raise
+    application.session_lancee = True
+    try:
+        application._afficher_application()
+        application.racine.withdraw()
+        application.racine.update_idletasks()
+        textes = " ".join(_textes_widgets(application.conteneur))
+        assert application.bouton is not None
+        assert application.bouton_stop is not None
+        assert application.bouton_mains_libres is not None
+        assert application.bouton_reglages is not None
+        assert _radios(application.conteneur) == []
+        assert "Français" not in textes
+        assert "English" not in textes
+        application.ouvrir_reglages(env_local)
+        application.racine.update_idletasks()
+        reglages = " ".join(
+            _textes_widgets(application.fenetre_reglages.fenetre)
+        )
+        assert "Langue" in reglages
+        assert "Français" in reglages or "Anglais" in reglages
     finally:
         application.fermer()

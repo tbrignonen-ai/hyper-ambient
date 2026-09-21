@@ -5,6 +5,7 @@ Sans réseau, sans secrets, sans chargement GPU.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from src.brain.openai_compat import LlamaCppBrain
 from src.ears.jev_reflexe import JevEvaluation, JevSignals
@@ -53,11 +54,120 @@ def test_ha_lang_injecte_depuis_env_local_sans_secret(tmp_path, monkeypatch):
     assert "HF_TOKEN" not in env
 
 
+def test_boot_sans_ha_lang_retombe_sur_le_francais(monkeypatch):
+    """Régression C8 : le relanceur exporte HA_LANG vide si la clé est absente."""
+    env: dict[str, str] = {}
+    monkeypatch.setattr(serve_hostagent, "charger_env_local", lambda **_kwargs: [])
+    monkeypatch.setattr(serve_hostagent, "charger_carte_figee", lambda **_kwargs: [])
+
+    serve_hostagent._appliquer_env_boot(environ=env)
+
+    assert env["HA_LANG"] == "fr"
+    assert env["HYPER_AMBIENT_LANG"] == "fr"
+    assert env["EARS_LANGUAGE"] == "fr"
+    assert env["MOUTH_LANGUAGE"] == "fr"
+
+
+def test_langue_inconnue_est_journalisee_et_retombe_sur_le_francais(capsys):
+    env: dict[str, str] = {}
+
+    resultat = serve_hostagent.synchroniser_langue_assistante("zz", environ=env)
+
+    assert resultat["language"] == "fr"
+    assert env["HA_LANG"] == "fr"
+    assert "ATTENTION : HA_LANG invalide" in capsys.readouterr().err
+
+
+def test_langue_assistante_synchronise_oreille_cerveau_et_bouche():
+    """Le changement de langue ne laisse aucune des trois voies en arrière."""
+    env = {
+        "HA_LANG": "fr",
+        "HYPER_AMBIENT_LANG": "fr",
+        "EARS_LANGUAGE": "fr",
+        "MOUTH_LANGUAGE": "fr",
+    }
+
+    resultat = serve_hostagent.synchroniser_langue_assistante("en", environ=env)
+
+    assert resultat == {"language": "en", "ears": "en", "mouth": "en", "accent": False}
+    assert env == {
+        "HA_LANG": "en",
+        "HYPER_AMBIENT_LANG": "en",
+        "EARS_LANGUAGE": "en",
+        "MOUTH_LANGUAGE": "en",
+    }
+
+
+def test_accent_explicite_survit_au_changement_de_langue():
+    """Une bouche volontairement anglaise reste anglaise quand le texte passe en FR."""
+    env = {
+        "HA_LANG": "en",
+        "HYPER_AMBIENT_LANG": "en",
+        "EARS_LANGUAGE": "en",
+        "MOUTH_LANGUAGE": "en",
+        "MOUTH_LANGUAGE_FORCE": "en",
+    }
+
+    resultat = serve_hostagent.synchroniser_langue_assistante("fr", environ=env)
+
+    assert resultat == {"language": "fr", "ears": "fr", "mouth": "en", "accent": True}
+    assert env["HA_LANG"] == env["HYPER_AMBIENT_LANG"] == env["EARS_LANGUAGE"] == "fr"
+    assert env["MOUTH_LANGUAGE"] == "en"
+
+
+def test_option_langue_met_a_jour_whisper_et_magpie_sans_redemarrage(monkeypatch):
+    """Les deux modèles présents à la dégustation changent leur paramètre à chaud."""
+    monkeypatch.setenv("HA_LANG", "fr")
+    monkeypatch.setenv("HYPER_AMBIENT_LANG", "fr")
+    monkeypatch.setenv("EARS_LANGUAGE", "fr")
+    monkeypatch.setenv("MOUTH_LANGUAGE", "fr")
+    pipeline = serve_hostagent.HostPipeline()
+    pipeline.asr = SimpleNamespace(language="fr")
+    pipeline.tts = type("MagpieTTS", (), {"language": "fr"})()
+
+    status = pipeline.on_options({"type": "options", "language": "en"})
+
+    assert status == {
+        "type": "language_status",
+        "language": "en",
+        "ears": "en",
+        "mouth": "en",
+        "accent": False,
+        "state": "ready",
+    }
+    assert pipeline.asr.language == pipeline.tts.language == "en"
+
+
 def test_relance_exporte_ha_lang():
     texte = RELANCE.read_text(encoding="utf-8")
     assert "HA_LANG=" in texte
     assert "export HA_LANG" in texte
     assert "HYPER_AMBIENT_LANG" in texte
+
+
+def test_relance_surcharge_mouth_voice_name_depuis_env_local():
+    """.env.local gagne via MOUTH_VOICE_NAME_FORCE, sinon la carte reste le défaut."""
+    texte = RELANCE.read_text(encoding="utf-8")
+    assert "lire_env_local MOUTH_VOICE_NAME" in texte
+    assert "MOUTH_VOICE_NAME_FORCE" in texte
+    assert "lire_carte MOUTH_VOICE_NAME" in texte
+    idx_local = texte.index("lire_env_local MOUTH_VOICE_NAME")
+    idx_force = texte.index("export MOUTH_VOICE_NAME_FORCE")
+    idx_carte = texte.index("lire_carte MOUTH_VOICE_NAME")
+    assert idx_local < idx_force < idx_carte
+
+
+def test_relance_surcharge_accent_depuis_env_local():
+    """L'accent explicite gagne ; MOUTH_LANGUAGE historique ne fige pas la langue."""
+    texte = RELANCE.read_text(encoding="utf-8")
+    assert "lire_env_local MOUTH_ACCENT" in texte
+    assert "MOUTH_LANGUAGE_FORCE" in texte
+    assert "lire_carte MOUTH_LANGUAGE" in texte
+    idx_local = texte.index("lire_env_local MOUTH_ACCENT")
+    idx_force = texte.index("export MOUTH_LANGUAGE_FORCE")
+    idx_carte = texte.index("lire_carte MOUTH_LANGUAGE")
+    assert idx_local < idx_force < idx_carte
+    assert idx_local < texte.index("lire_carte MOUTH_LANGUAGE")
 
 
 def test_dry_run_rapporte_carte_figee_c11_c12_jev_en(tmp_path, monkeypatch):
@@ -77,7 +187,7 @@ def test_dry_run_rapporte_carte_figee_c11_c12_jev_en(tmp_path, monkeypatch):
         carte=CARTE,
     )
     texte = serve_hostagent.formatter_rapport(rapport)
-    assert rapport["brain_service"] == "llamacpp"
+    assert rapport["brain_service"] == "router"
     assert rapport["ears_model"] == "large-v3"
     assert rapport["ears_hotwords"] == "Hyper Ambient"
     assert rapport["mouth_backend"] == "magpie"

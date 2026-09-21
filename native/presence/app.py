@@ -35,7 +35,6 @@ import overlay as visuel
 import sante as etat_sante
 from onboarding import (
     ETAPES_WIZARD,
-    URL_FEEDBACK,
     ConfigurationPresence,
     appliquer_langue_presence,
     charger_configuration,
@@ -44,7 +43,6 @@ from onboarding import (
     libelle_eclair,
     message_options,
     normaliser_configuration,
-    ouvrir_feedback,
     raccourcis_lisibles,
     sequences_relache_extra,
     sequences_tk,
@@ -52,6 +50,7 @@ from onboarding import (
     terminer_onboarding,
     ui_presence,
 )
+from src.i18n import t
 
 # Champ sombre plein : le bureau ne perce plus la fenêtre app.
 # L'overlay flottant, lui, garde le chroma-key (COULEUR_TRANSPARENTE).
@@ -709,6 +708,15 @@ class SessionVocale(threading.Thread):
         while not self.arreter.is_set():
             if self.mains_libres and self._capture_continue is not None:
                 deja_en_ecoute = False
+                # Un seul flux a la fois sur le micro. Mesure du 2026-09-20 :
+                # un appui sur Parler laissait son flux ouvert, le mains
+                # libres en ouvrait un second sur le meme peripherique, et
+                # Windows servait du silence au second — rms=0 alors que le
+                # micro fonctionnait. L'oreille paraissait morte.
+                try:
+                    capture.stop()
+                except Exception:
+                    pass
                 self._boucle_tours_continus(ws, self._capture_continue, sortie)
                 continue
             if not deja_en_ecoute:
@@ -1358,39 +1366,42 @@ class Application:
         )
         self._bouton_secondaire(pied, u["start_and_hide"], commencer_et_masquer)
 
-    def _monter_langue_et_contraste(self, parent: tk.Misc) -> None:
+    def _monter_langue_et_contraste(
+        self, parent: tk.Misc, *, avec_langue: bool = True
+    ) -> None:
         u = ui_presence()
-        tk.Label(
-            parent,
-            text=u["language"],
-            bg=FOND_VITRE,
-            fg=ENCRE,
-            font=("Segoe UI", 11, "bold"),
-            anchor="w",
-        ).pack(fill=tk.X, pady=(16, 4))
-        choix = tk.StringVar(value=self.configuration.langue)
-
-        def retenir_langue(*_args: object) -> None:
-            self._appliquer_options(langue=choix.get())
-
-        choix.trace_add("write", retenir_langue)
-        for code, libelle in (("fr", "Français"), ("en", "English")):
-            radio = tk.Radiobutton(
+        if avec_langue:
+            tk.Label(
                 parent,
-                text=libelle,
-                variable=choix,
-                value=code,
+                text=u["language"],
                 bg=FOND_VITRE,
                 fg=ENCRE,
-                activebackground=FOND_VITRE,
-                activeforeground=ENCRE,
-                selectcolor="#142028",
-                font=("Segoe UI", 11),
+                font=("Segoe UI", 11, "bold"),
                 anchor="w",
-                takefocus=1,
-            )
-            radio.pack(fill=tk.X, pady=2)
-            self._rendre_focus_visible(radio)
+            ).pack(fill=tk.X, pady=(16, 4))
+            choix = tk.StringVar(value=self.configuration.langue)
+
+            def retenir_langue(*_args: object) -> None:
+                self._appliquer_options(langue=choix.get())
+
+            choix.trace_add("write", retenir_langue)
+            for code, cle in (("fr", "reglages.langue.fr"), ("en", "reglages.langue.en")):
+                radio = tk.Radiobutton(
+                    parent,
+                    text=t(cle),
+                    variable=choix,
+                    value=code,
+                    bg=FOND_VITRE,
+                    fg=ENCRE,
+                    activebackground=FOND_VITRE,
+                    activeforeground=ENCRE,
+                    selectcolor="#142028",
+                    font=("Segoe UI", 11),
+                    anchor="w",
+                    takefocus=1,
+                )
+                radio.pack(fill=tk.X, pady=2)
+                self._rendre_focus_visible(radio)
         contraste = tk.IntVar(value=1 if self.configuration.contraste else 0)
 
         def retenir_contraste(*_args: object) -> None:
@@ -1812,23 +1823,9 @@ class Application:
         self.bouton_masquer.pack(fill=tk.X, pady=(0, 8))
         self._rendre_focus_visible(self.bouton_masquer)
 
-        self.bouton_feedback = tk.Button(
-            cadre,
-            text=u["feedback"],
-            command=ouvrir_feedback,
-            bg=FOND_VITRE,
-            fg=ENCRE_SOURDE,
-            activebackground="#142028",
-            activeforeground=ENCRE,
-            relief=tk.FLAT,
-            takefocus=1,
-        )
-        self.bouton_feedback.pack(fill=tk.X, pady=(0, 8))
-        self._rendre_focus_visible(self.bouton_feedback)
-
         options = tk.Frame(cadre, bg=FOND)
         options.pack(fill=tk.X, pady=(0, 4))
-        self._monter_langue_et_contraste(options)
+        self._monter_langue_et_contraste(options, avec_langue=False)
 
         vitre = tk.Frame(
             cadre,
@@ -1946,7 +1943,13 @@ class Application:
             except tk.TclError:
                 pass
         cible = Path(chemin) if chemin is not None else chemin_env_local()
-        self.fenetre_reglages = FenetreReglages(self.racine, cible)
+        self.fenetre_reglages = FenetreReglages(
+            self.racine,
+            cible,
+            contraste=bool(self.configuration.contraste),
+            langue=self.configuration.langue,
+            sur_langue=lambda code: self._appliquer_options(langue=code),
+        )
         return self.fenetre_reglages
 
     def masquer_configuration(self) -> None:

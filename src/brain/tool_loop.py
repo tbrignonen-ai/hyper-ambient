@@ -20,6 +20,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional
 
+from src.brain.mandat import respecter_harnais_nomme
 from src.brain.tools import ToolCall, ToolRegistry, ToolResult
 
 if TYPE_CHECKING:  # pragma: no cover - contrat partage, ecrit cote GATE
@@ -171,6 +172,7 @@ async def run_tool_loop(
     history: Optional[List[Dict[str, Any]]] = None,
     max_iterations: int = 3,
     max_tool_calls: int = MAX_TOOL_CALLS_PER_TURN,
+    tool_choice: Optional[Any] = None,
 ) -> AsyncIterator[Dict[str, Any]]:
     """Stream de chunks BRAIN, outils executes sous permission entre deux tours.
 
@@ -189,13 +191,21 @@ async def run_tool_loop(
         # un schema encore declare, et Luciole 8B recommence la tempete.
         tools_this_round = schemas if executed < max_tool_calls else []
 
-        async for chunk in brain.query_streaming(
-            prompt,
-            system=system,
-            history=history,
-            messages=messages,
-            tools=tools_this_round,
-        ):
+        # Mesure du 21/09 : le modele local a refuse trois fois d'appeler
+        # ask_codex alors que l'outil lui etait declare ; nommer un harnais
+        # est une intention sans ambiguite, on retire donc le choix.
+        # Uniquement au premier tour, et seulement s'il reste des outils :
+        # un tool_choice maintenu ferait boucler le modele sur l'outil.
+        query_kw: Dict[str, Any] = {
+            "system": system,
+            "history": history,
+            "messages": messages,
+            "tools": tools_this_round,
+        }
+        if iteration == 0 and tools_this_round and tool_choice is not None:
+            query_kw["tool_choice"] = tool_choice
+
+        async for chunk in brain.query_streaming(prompt, **query_kw):
             if chunk.get("stop_reason") == "tool_calls":
                 pending = list(chunk.get("tool_calls") or [])
                 continue  # ce chunk ne sort pas : il n'est pas parlable
@@ -222,12 +232,28 @@ async def run_tool_loop(
                 len(pending),
                 len(to_run),
             )
+        # Le distant choisit s'il appelle ; le nom dit par l'utilisateur
+        # choisit lequel. Mesure du 21/09 : « Claude Code » saisi comme Codex.
+        to_run, refus = respecter_harnais_nomme(prompt, to_run, registry)
+        if refus:
+            yield {
+                "delta": refus,
+                "stop_reason": "harnais_absent",
+                "ttft_ms": None,
+            }
+            return
 
         # L'historique ne porte que les appels vraiment executes : le protocole
         # exige un message `tool` par `tool_call` de l'assistant.
         messages.append(_assistant_message(to_run))
         for call in to_run:
-            yield {"channel": "tool", "tool": call.name, "phase": "call", "delta": ""}
+            yield {
+                "channel": "tool",
+                "tool": call.name,
+                "phase": "call",
+                "delta": "",
+                "arguments": _sanitize(dict(call.arguments or {})),
+            }
             result, phase = await _execute(call, registry, gate)
             # `content` hors delta : MOUTH ne parle que les deltas non vides.
             # Le tour vocal le recopie dans `_dernier_outils` pour le tour suivant.

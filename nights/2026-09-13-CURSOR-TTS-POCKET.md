@@ -49,7 +49,7 @@ Log au chargement :
 
 ```text
 EARS  : chargement qwen3 / 0.6B sur cuda…
-BRAIN : router @ reflex=http://localhost:8080/v1/chat/completions deep=https://api.commandcode.ai/provider/v1/chat/completions — reflex HTTP 200, deep HTTP 200
+BRAIN : router @ reflex=http://localhost:8080/v1/chat/completions deep=<endpoint du modele distant> — reflex HTTP 200, deep HTTP 200
 MOUTH : chargement pocket-tts french_24l / estelle profil=aurora device=cpu demi_tons=+0…
 PocketTTS: french_24l/estelle on cpu profile=aurora demi_tons=+0
 pocket-tts loaded in 3.5s @ 24000 Hz

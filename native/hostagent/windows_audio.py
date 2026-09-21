@@ -172,11 +172,11 @@ class PushToTalkCapture:
 
 
 def _silence_ms_tour() -> float:
-    brut = os.environ.get("TURN_SILENCE_MS", "700")
+    brut = os.environ.get("TURN_SILENCE_MS", "1200")
     try:
         return max(0.0, float(brut))
     except (TypeError, ValueError):
-        return 700.0
+        return 1200.0
 
 
 def _rms_int16(echantillons: np.ndarray) -> float:

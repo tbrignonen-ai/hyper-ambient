@@ -37,6 +37,28 @@ def test_decode_sans_hotwords_n_envoie_pas_la_cle():
     assert "hotwords" not in asr.model.kwargs
 
 
+class _Segment:
+    start = 0.0
+    end = 1.0
+    text = "bonjour"
+    no_speech_prob = 0.81
+    avg_logprob = -1.4
+
+
+class _ModeleAvecSignal(_ModeleEspion):
+    def transcribe(self, _audio, **kwargs):
+        self.kwargs = kwargs
+        return [_Segment()], _Info()
+
+
+def test_decode_remonte_no_speech_prob_et_avg_logprob():
+    asr = FasterWhisperASR()
+    asr.model = _ModeleAvecSignal()
+    result = asr._decode(np.zeros(1600, dtype=np.float32), beam_size=5)
+    assert result["segments"][0]["no_speech_prob"] == 0.81
+    assert result["segments"][0]["avg_logprob"] == -1.4
+
+
 def test_construire_ears_lit_ears_hotwords(monkeypatch):
     monkeypatch.setenv("EARS_BACKEND", "faster-whisper")
     monkeypatch.setenv("EARS_MODEL", "large-v3")

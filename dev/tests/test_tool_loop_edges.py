@@ -10,6 +10,7 @@ doivent jamais fuir en delta parle.
 import asyncio
 import functools
 import json
+from pathlib import Path
 
 from src.brain.openai_compat import LlamaCppBrain, OpenAICompatBrain
 from src.brain.tool_loop import (
@@ -632,3 +633,154 @@ async def test_resultat_tronque_reste_sous_la_limite_apres_json():
     content = brain.calls[1]["messages"][-1]["content"]
     assert len(content) <= MAX_TOOL_CONTENT_CHARS
     assert content.endswith("[…]") or content.endswith("…]")
+
+
+# -- tool_choice force : premiere iteration seulement ------------------------
+
+CHOIX_CODEX = {"type": "function", "function": {"name": "ask_codex"}}
+
+
+@runs_async
+async def test_tool_choice_present_a_la_premiere_iteration():
+    brain = FakeBrain([
+        [tool_calls_chunk([_call()])],
+        [{"delta": "ok", "stop_reason": "stop", "ttft_ms": 1.0}],
+    ])
+    _ = [c async for c in run_tool_loop(
+        brain, "x", make_registry(), FakeGate(), tool_choice=CHOIX_CODEX,
+    )]
+    assert brain.calls[0]["tool_choice"] == CHOIX_CODEX
+
+
+@runs_async
+async def test_tool_choice_absent_a_la_seconde_iteration():
+    brain = FakeBrain([
+        [tool_calls_chunk([_call()])],
+        [{"delta": "ok", "stop_reason": "stop", "ttft_ms": 1.0}],
+    ])
+    _ = [c async for c in run_tool_loop(
+        brain, "x", make_registry(), FakeGate(), tool_choice=CHOIX_CODEX,
+    )]
+    assert len(brain.calls) == 2
+    assert "tool_choice" not in brain.calls[1]
+
+
+@runs_async
+async def test_tool_choice_absent_quand_tools_this_round_vide():
+    brain = FakeBrain([
+        [{"delta": "fin.", "stop_reason": "stop", "ttft_ms": 1.0}],
+    ])
+    _ = [c async for c in run_tool_loop(
+        brain, "x", make_registry(), FakeGate(),
+        tool_choice=CHOIX_CODEX, max_tool_calls=0,
+    )]
+    assert brain.calls[0]["tools"] == []
+    assert "tool_choice" not in brain.calls[0]
+
+
+@runs_async
+async def test_sans_tool_choice_charge_utile_identique():
+    brain = FakeBrain([
+        [{"delta": "ok", "stop_reason": "stop", "ttft_ms": 1.0}],
+    ])
+    _ = [c async for c in run_tool_loop(brain, "x", make_registry(), FakeGate())]
+    charge = brain.calls[0]
+    assert "tool_choice" not in charge
+    assert set(charge.keys()) == {"prompt", "system", "history", "messages", "tools"}
+
+
+def _charger_serve_hostagent():
+    import importlib.util
+    import sys
+    from pathlib import Path
+    from unittest.mock import MagicMock
+
+    racine = Path(__file__).resolve().parents[2]
+    if str(racine) not in sys.path:
+        sys.path.insert(0, str(racine))
+    try:
+        import fastapi  # noqa: F401
+        import uvicorn  # noqa: F401
+    except ImportError:
+        for nom in ("fastapi", "fastapi.responses", "fastapi.websockets", "uvicorn"):
+            sys.modules.setdefault(nom, MagicMock(name=nom))
+    chemin = racine / "dev" / "scripts" / "serve_hostagent.py"
+    spec = importlib.util.spec_from_file_location(
+        "serve_hostagent_forcer_outil", chemin,
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_serve_hostagent_n_a_plus_de_forcage_tool_choice():
+    """Le distant appelle l'outil de lui-même ; le forçage local est retiré."""
+    serve = _charger_serve_hostagent()
+    assert not hasattr(serve, "tool_choice_si_harnais")
+    source = Path(__file__).resolve().parents[2] / "dev" / "scripts" / "serve_hostagent.py"
+    texte = source.read_text(encoding="utf-8")
+    assert "tool_choice=forcage" not in texte
+    assert "def tool_choice_si_harnais" not in texte
+
+
+@runs_async
+async def test_harnais_nomme_fait_autorite_sur_le_choix_du_modele():
+    """L'utilisateur a dit Claude Code ; le distant a choisi ask_codex."""
+    appeles = []
+
+    async def codex(question: str) -> str:
+        appeles.append("codex")
+        return "codex"
+
+    async def claude(question: str) -> str:
+        appeles.append("claude")
+        return "claude"
+
+    brain = FakeBrain([
+        [tool_calls_chunk([_call("ask_codex", args={"question": "version Python"})])],
+        [{"delta": "ok", "stop_reason": "stop", "ttft_ms": 1.0}],
+    ])
+    registre = make_registry(
+        _spec("ask_codex", codex, question={"type": "string"}),
+        _spec("ask_claude", claude, question={"type": "string"}),
+    )
+    chunks = [
+        c
+        async for c in run_tool_loop(
+            brain,
+            "Demande a Claude Code de me dire quelle version de Python tourne.",
+            registre,
+            FakeGate(),
+        )
+    ]
+    assert appeles == ["claude"]
+    outils = [c.get("tool") for c in chunks if c.get("channel") == "tool"]
+    assert "ask_claude" in outils
+    assert "ask_codex" not in outils
+
+
+@runs_async
+async def test_harnais_nomme_absent_se_dit_sans_basculer():
+    appeles = []
+
+    async def codex(question: str) -> str:
+        appeles.append("codex")
+        return "codex"
+
+    brain = FakeBrain([
+        [tool_calls_chunk([_call("ask_codex", args={"question": "version Python"})])],
+        [{"delta": "ok", "stop_reason": "stop", "ttft_ms": 1.0}],
+    ])
+    registre = make_registry(_spec("ask_codex", codex, question={"type": "string"}))
+    chunks = [
+        c
+        async for c in run_tool_loop(
+            brain,
+            "Demande a Claude Code de me dire quelle version de Python tourne.",
+            registre,
+            FakeGate(),
+        )
+    ]
+    assert appeles == []
+    texte = "".join(c.get("delta") or "" for c in chunks)
+    assert "Claude Code n'est pas connecté sur cette machine" in texte

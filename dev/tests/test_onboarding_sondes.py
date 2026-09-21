@@ -13,6 +13,8 @@ import json
 import logging
 import time
 
+import pytest
+
 from src.brain.tools_cli import CLI_BRIDGE_ENDPOINT
 from src.brain.tools_codex import CODEX_BRIDGE_ENDPOINT
 from src.ears.jev_reflexe import JEV_ENDPOINT, JEV_MODEL
@@ -27,10 +29,14 @@ def runs_async(fn):
 
 
 class _FakeResponse:
-    def __init__(self, payload, status_code=200):
+    def __init__(self, payload, status_code=200, content=None):
         self._payload = payload
         self.status_code = status_code
         self.text = json.dumps(payload) if isinstance(payload, (dict, list)) else str(payload)
+        if content is not None:
+            self.content = content
+        else:
+            self.content = self.text.encode("utf-8")
 
     def json(self):
         if not isinstance(self._payload, (dict, list)):
@@ -48,8 +54,20 @@ class FakeHTTPClient:
         self.calls = []
 
     async def post(self, url, json=None, headers=None, timeout=None):
+        return await self._appeler("POST", url, json=json, headers=headers, timeout=timeout)
+
+    async def get(self, url, json=None, headers=None, timeout=None):
+        return await self._appeler("GET", url, json=json, headers=headers, timeout=timeout)
+
+    async def _appeler(self, methode, url, json=None, headers=None, timeout=None):
         self.calls.append(
-            {"url": url, "json": json, "headers": headers or {}, "timeout": timeout}
+            {
+                "method": methode,
+                "url": url,
+                "json": json,
+                "headers": headers or {},
+                "timeout": timeout,
+            }
         )
         if self.delay_s:
             await asyncio.sleep(self.delay_s)
@@ -80,6 +98,17 @@ REGLAGES_OK = {
     "TYPESAFE_API_KEY": "cle-jev",
 }
 
+# Une reponse qui satisfait les quatre services a la fois : chacun verifie
+# autre chose qu'un statut, donc le double doit porter les quatre formes.
+PAYLOAD_TOUT_REPOND = {
+    "ok": True,
+    "reponse": "PONG",
+    "question": "…",
+    "duree_ms": 1200,
+    "choices": [{"message": {"content": "pong"}}],
+    "answers": {"phrase_finished": {"noul": 0.9, "confidence": 0.9}},
+}
+
 
 # --- API imposee --------------------------------------------------------
 
@@ -88,7 +117,39 @@ def test_sonde_a_les_champs_imposes():
     from src.onboarding.sondes import Sonde
 
     champs = {item.name for item in Sonde.__dataclass_fields__.values()}
-    assert champs == {"service", "ok", "detail", "latence_ms"}
+    assert champs == {"service", "ok", "detail", "latence_ms", "etat"}
+
+
+def test_sonde_sans_etat_explicite_le_deduit_de_ok():
+    """Les appelants existants construisent `Sonde(service, ok, detail, latence)`.
+
+    Un vert sans etat doit rester un vert ; un echec sans etat reste le cas le
+    plus prudent, « injoignable », jamais « repond ».
+    """
+    from src.onboarding.sondes import (
+        ETAT_INJOIGNABLE,
+        ETAT_REPOND,
+        Sonde,
+    )
+
+    assert Sonde("codex", True, "oui", 1.0).etat == ETAT_REPOND
+    assert Sonde("codex", False, "non", 1.0).etat == ETAT_INJOIGNABLE
+    assert Sonde("codex", False, "non", None).etat == ETAT_INJOIGNABLE
+
+
+def test_les_etats_sont_les_trois_du_brief_plus_l_absent():
+    from src.onboarding.sondes import (
+        ETAT_ABSENT,
+        ETAT_INJOIGNABLE,
+        ETAT_MUET,
+        ETAT_REPOND,
+        ETATS,
+    )
+
+    assert ETATS == frozenset(
+        {ETAT_REPOND, ETAT_MUET, ETAT_INJOIGNABLE, ETAT_ABSENT}
+    )
+    assert len({ETAT_REPOND, ETAT_MUET, ETAT_INJOIGNABLE}) == 3
 
 
 def test_signatures_respectent_l_api_imposee():
@@ -233,7 +294,7 @@ async def test_reponse_ok_pose_la_latence_et_le_service():
         sonder_jev,
     )
 
-    client = FakeHTTPClient(_FakeResponse({"ok": True, "answer": "oui"}))
+    client = FakeHTTPClient(_FakeResponse(PAYLOAD_TOUT_REPOND))
     brain = await sonder_brain_distant(
         "http://exemple.invalid/v1/chat/completions",
         "cle-test",
@@ -255,7 +316,7 @@ async def test_reponse_ok_pose_la_latence_et_le_service():
         assert sonde.latence_ms is not None
         assert sonde.latence_ms >= 0
         _dicible(sonde.detail)
-        assert "repond" in sonde.detail
+        assert "repondu" in sonde.detail or "repond" in sonde.detail
 
 
 # --- formes d'appel : ne pas reinventer les ponts -----------------------
@@ -265,30 +326,32 @@ async def test_reponse_ok_pose_la_latence_et_le_service():
 async def test_codex_poste_la_question_avec_le_jeton():
     from src.onboarding.sondes import sonder_codex
 
-    client = FakeHTTPClient(_FakeResponse({"ok": True}))
+    client = FakeHTTPClient(_FakeResponse(PAYLOAD_TOUT_REPOND))
     await sonder_codex("http://exemple.invalid:8765/ask", "jeton-codex", client=client)
 
-    assert len(client.calls) == 1
-    envoi = client.calls[0]
-    assert envoi["url"] == "http://exemple.invalid:8765/ask"
-    assert "question" in envoi["json"]
-    assert envoi["headers"]["Authorization"] == "Bearer jeton-codex"
-    assert envoi["timeout"] <= 5
+    assert client.calls, "aucun appel : la sonde n'a rien prouve"
+    for envoi in client.calls:
+        assert envoi["url"] == "http://exemple.invalid:8765/ask"
+        assert envoi["method"] == "POST"
+        assert "question" in envoi["json"]
+        assert envoi["headers"]["Authorization"] == "Bearer jeton-codex"
+    # Le dernier appel est la vraie question, pas la question vide.
+    assert client.calls[-1]["json"]["question"].strip()
 
 
 @runs_async
 async def test_claude_poste_l_agent_sur_le_pont_cli():
     from src.onboarding.sondes import sonder_claude
 
-    client = FakeHTTPClient(_FakeResponse({"ok": True}))
+    client = FakeHTTPClient(_FakeResponse(PAYLOAD_TOUT_REPOND))
     await sonder_claude("http://exemple.invalid:8766/ask", "jeton-claude", client=client)
 
-    envoi = client.calls[0]
-    assert envoi["url"] == "http://exemple.invalid:8766/ask"
-    assert envoi["json"]["agent"] == "claude"
-    assert "question" in envoi["json"]
-    assert envoi["headers"]["Authorization"] == "Bearer jeton-claude"
-    assert envoi["timeout"] <= 5
+    for envoi in client.calls:
+        assert envoi["url"] == "http://exemple.invalid:8766/ask"
+        assert envoi["json"]["agent"] == "claude"
+        assert "question" in envoi["json"]
+        assert envoi["headers"]["Authorization"] == "Bearer jeton-claude"
+    assert client.calls[-1]["json"]["question"].strip()
 
 
 @runs_async
@@ -408,7 +471,7 @@ async def test_la_cle_n_apparait_jamais_dans_les_journaux(caplog):
 async def test_sonder_tout_rend_les_quatre_services_dans_l_ordre():
     from src.onboarding.sondes import sonder_tout
 
-    client = FakeHTTPClient(_FakeResponse({"ok": True, "answer": "oui"}))
+    client = FakeHTTPClient(_FakeResponse(PAYLOAD_TOUT_REPOND))
     sondes = await sonder_tout(REGLAGES_OK, client=client)
 
     assert [sonde.service for sonde in sondes] == [
@@ -426,7 +489,7 @@ async def test_sonder_tout_passe_le_modele_jev():
 
     reglages = dict(REGLAGES_OK)
     reglages["TYPESAFE_MODEL"] = "jev-autre"
-    client = FakeHTTPClient(_FakeResponse({"ok": True, "answer": "oui"}))
+    client = FakeHTTPClient(_FakeResponse(PAYLOAD_TOUT_REPOND))
     await sonder_tout(reglages, client=client)
 
     jev = next(appel for appel in client.calls if appel["url"] == JEV_ENDPOINT)
@@ -435,16 +498,55 @@ async def test_sonder_tout_passe_le_modele_jev():
 
 @runs_async
 async def test_sonder_tout_s_execute_en_parallele():
+    """Les quatre services partent ensemble ; seuls les deux harnais se suivent.
+
+    Le pont n'a qu'une place : deux questions reelles lancees en meme temps
+    renvoient « une demande est deja en cours » et l'un des deux voyants
+    serait orange sans raison.
+    """
     from src.onboarding.sondes import sonder_tout
 
-    client = FakeHTTPClient(_FakeResponse({"ok": True}), delay_s=0.2)
+    client = FakeHTTPClient(_FakeResponse(PAYLOAD_TOUT_REPOND), delay_s=0.2)
     debut = time.monotonic()
     sondes = await sonder_tout(REGLAGES_OK, client=client)
     duree = time.monotonic() - debut
 
     assert len(sondes) == 4
-    assert duree < 0.55
-    assert len(client.calls) == 4
+    assert all(sonde.ok for sonde in sondes)
+    # 6 appels : une question vide + une vraie question par harnais, un par
+    # service distant. Deux harnais serialises coutent 0,4 s, pas 1,2 s.
+    assert len(client.calls) == 6
+    assert duree < 1.1
+
+
+@runs_async
+async def test_sonder_tout_ne_lance_pas_les_deux_harnais_en_meme_temps():
+    from src.onboarding.sondes import sonder_tout
+
+    class _UnePlace:
+        """Le pont reel refuse une seconde question simultanee."""
+
+        def __init__(self):
+            self.calls = []
+            self.en_cours = 0
+            self.chevauchements = 0
+
+        async def post(self, url, json=None, headers=None, timeout=None):
+            self.calls.append({"url": url, "json": json, "timeout": timeout})
+            vraie = bool((json or {}).get("question", "").strip())
+            if vraie:
+                self.en_cours += 1
+                if self.en_cours > 1:
+                    self.chevauchements += 1
+                await asyncio.sleep(0.05)
+                self.en_cours -= 1
+            return _FakeResponse(PAYLOAD_TOUT_REPOND)
+
+    client = _UnePlace()
+    sondes = await sonder_tout(REGLAGES_OK, client=client)
+
+    assert client.chevauchements == 0, "deux questions reelles en meme temps"
+    assert len(sondes) == 4
 
 
 @runs_async
@@ -490,7 +592,7 @@ class _ClientHoteAlterneur:
         )
         if self.coupe in url:
             raise ConnectionError("hote injoignable depuis ici")
-        return _FakeResponse({"ok": True}, status_code=self.statut_ok)
+        return _FakeResponse(PAYLOAD_TOUT_REPOND, status_code=self.statut_ok)
 
 
 @runs_async
@@ -504,12 +606,14 @@ async def test_pont_retente_sur_l_hote_alterne_et_trouve_le_pont():
     url = "http://host.docker.internal:8765/ask"
     sonde = await sonder_codex(url, "jeton", client=client)
 
-    assert [envoi["url"] for envoi in client.calls] == [
-        "http://host.docker.internal:8765/ask",
-        "http://127.0.0.1:8765/ask",
-    ]
+    vus = [envoi["url"] for envoi in client.calls]
+    assert vus[0] == url
+    assert vus[1] == "http://127.0.0.1:8765/ask"
+    # La vraie question reste sur l'hote qui a repondu : on ne revient pas
+    # taper sur celui qui est tombe.
+    assert all("host.docker.internal" not in vue for vue in vus[1:])
     assert sonde.ok is True
-    assert "repond" in sonde.detail
+    assert "repondu" in sonde.detail
     _dicible(sonde.detail)
 
 
@@ -520,10 +624,10 @@ async def test_pont_retente_de_localhost_vers_docker_internal():
     client = _ClientHoteAlterneur(coupe="127.0.0.1", statut_ok=200)
     sonde = await sonder_claude("http://127.0.0.1:8766/ask", "jeton", client=client)
 
-    assert [envoi["url"] for envoi in client.calls] == [
-        "http://127.0.0.1:8766/ask",
-        "http://host.docker.internal:8766/ask",
-    ]
+    vus = [envoi["url"] for envoi in client.calls]
+    assert vus[0] == "http://127.0.0.1:8766/ask"
+    assert vus[1] == "http://host.docker.internal:8766/ask"
+    assert all("127.0.0.1" not in vue for vue in vus[1:])
     assert sonde.ok is True
     _dicible(sonde.detail)
 
@@ -532,7 +636,7 @@ async def test_pont_retente_de_localhost_vers_docker_internal():
 async def test_pont_joignable_en_401_n_est_pas_un_faux_negatif():
     """Un 401 depuis l'hote alterne prouve que le pont repond.
     Ce n'est plus « ne repond pas »."""
-    from src.onboarding.sondes import sonder_codex
+    from src.onboarding.sondes import ETAT_MUET, sonder_codex
 
     client = _ClientHoteAlterneur(coupe="host.docker.internal", statut_ok=401)
     sonde = await sonder_codex(
@@ -542,6 +646,7 @@ async def test_pont_joignable_en_401_n_est_pas_un_faux_negatif():
     assert len(client.calls) == 2
     assert client.calls[1]["url"] == "http://127.0.0.1:8765/ask"
     assert sonde.ok is False
+    assert sonde.etat == ETAT_MUET
     assert "ne repond pas" not in sonde.detail
     assert "refuse" in sonde.detail
     _dicible(sonde.detail)
@@ -561,19 +666,54 @@ async def test_pont_n_alterne_pas_une_adresse_qui_n_est_pas_locale():
 
 @runs_async
 async def test_pont_reussi_du_premier_coup_n_invente_pas_de_second_appel():
+    """Deux appels vers la meme adresse : le pont, puis le harnais.
+    Aucun appel vers un hote qui n'a pas ete demande."""
     from src.onboarding.sondes import sonder_codex
 
-    client = FakeHTTPClient(_FakeResponse({"ok": True}))
+    client = FakeHTTPClient(_FakeResponse(PAYLOAD_TOUT_REPOND))
     await sonder_codex("http://host.docker.internal:8765/ask", "jeton", client=client)
-    assert [envoi["url"] for envoi in client.calls] == [
-        "http://host.docker.internal:8765/ask",
-    ]
+    assert {envoi["url"] for envoi in client.calls} == {
+        "http://host.docker.internal:8765/ask"
+    }
+    assert "127.0.0.1" not in " ".join(envoi["url"] for envoi in client.calls)
 
 
-# --- harnais CLI : un executable, pas une cle API -----------------------
+# --- harnais CLI : un executable ET une connexion posee -----------------
 
 
-def test_outil_cli_pret_absent_dit_qu_il_n_est_pas_installe(monkeypatch):
+@pytest.fixture
+def maison_vide(tmp_path, monkeypatch):
+    """Une machine ou aucun harnais n'a jamais ete connecte."""
+    monkeypatch.setattr("src.onboarding.sondes._maison", lambda: tmp_path)
+    return tmp_path
+
+
+def _poser_identifiants(maison, nom: str) -> None:
+    """Ecrit la trace locale que laisse l'outil officiel apres `login`."""
+    if nom == "codex":
+        dossier = maison / ".codex"
+        dossier.mkdir(parents=True, exist_ok=True)
+        (dossier / "auth.json").write_text(
+            json.dumps(
+                {
+                    "auth_mode": "chatgpt",
+                    "OPENAI_API_KEY": None,
+                    "tokens": {"id_token": "faux-jeton-ne-jamais-afficher"},
+                    "last_refresh": "2026-09-20T12:00:00Z",
+                }
+            ),
+            encoding="utf-8",
+        )
+    else:
+        dossier = maison / ".claude"
+        dossier.mkdir(parents=True, exist_ok=True)
+        (dossier / ".credentials.json").write_text(
+            json.dumps({"claudeAiOauth": {"accessToken": "faux-jeton-ne-jamais-afficher"}}),
+            encoding="utf-8",
+        )
+
+
+def test_outil_cli_pret_absent_dit_qu_il_n_est_pas_installe(monkeypatch, maison_vide):
     from src.onboarding.sondes import outil_cli_pret
 
     monkeypatch.setattr("src.onboarding.sondes.shutil.which", lambda _nom: None)
@@ -587,8 +727,10 @@ def test_outil_cli_pret_absent_dit_qu_il_n_est_pas_installe(monkeypatch):
     assert "codex" in sonde.detail.lower()
 
 
-def test_outil_cli_pret_present_ne_pretend_pas_verifier_l_abonnement(monkeypatch):
-    from src.onboarding.sondes import outil_cli_pret
+def test_outil_cli_pret_installe_sans_connexion_n_est_pas_vert(monkeypatch, maison_vide):
+    """Le defaut vise par le brief : un executable present ne prouve pas
+    qu'un abonnement est actif. Vert ici = panne garantie en demonstration."""
+    from src.onboarding.sondes import ETAT_MUET, outil_cli_pret
 
     monkeypatch.setattr(
         "src.onboarding.sondes.shutil.which", lambda nom: f"/usr/bin/{nom}"
@@ -596,16 +738,86 @@ def test_outil_cli_pret_present_ne_pretend_pas_verifier_l_abonnement(monkeypatch
     sonde = outil_cli_pret("claude")
 
     assert sonde.service == "claude"
-    assert sonde.ok is True
-    assert sonde.latence_ms is not None
+    assert sonde.ok is False
+    assert sonde.etat == ETAT_MUET
     _dicible(sonde.detail)
-    assert "claude" in sonde.detail.lower()
-    texte = sonde.detail.lower()
-    assert "install" in texte or "present" in texte
-    assert "abonnement" in texte or "connexion" in texte
+    texte = sonde.detail.lower().replace("é", "e").replace("è", "e")
+    assert "claude" in texte
+    assert "installe" in texte
+    assert "connexion" in texte or "abonnement" in texte
+    assert "login" in texte or "claude" in texte
 
 
-def test_outil_cli_pret_aucune_exception_ne_sort(monkeypatch):
+def test_outil_cli_pret_installe_et_connecte_est_vert(monkeypatch, maison_vide):
+    from src.onboarding.sondes import ETAT_REPOND, outil_cli_pret
+
+    monkeypatch.setattr(
+        "src.onboarding.sondes.shutil.which", lambda nom: f"/usr/bin/{nom}"
+    )
+    _poser_identifiants(maison_vide, "codex")
+    sonde = outil_cli_pret("codex")
+
+    assert sonde.ok is True
+    assert sonde.etat == ETAT_REPOND
+    _dicible(sonde.detail)
+    texte = sonde.detail.lower().replace("é", "e").replace("è", "e")
+    assert "codex" in texte
+    assert "connect" in texte
+
+
+def test_outil_cli_pret_dit_ce_qu_il_prouve_et_ce_qu_il_ne_prouve_pas(
+    monkeypatch, maison_vide
+):
+    """Une connexion posee sur cette machine n'est pas un abonnement actif :
+    le libelle ne doit pas promettre plus que la verification reelle."""
+    from src.onboarding.sondes import outil_cli_pret
+
+    monkeypatch.setattr(
+        "src.onboarding.sondes.shutil.which", lambda nom: f"/usr/bin/{nom}"
+    )
+    _poser_identifiants(maison_vide, "claude")
+    sonde = outil_cli_pret("claude")
+
+    texte = sonde.detail.lower().replace("é", "e").replace("è", "e")
+    assert sonde.ok is True
+    assert "abonnement" in texte
+    # ni jurer que l'abonnement est actif, ni pretendre l'avoir teste
+    assert "est actif" not in texte
+
+
+def test_outil_cli_pret_ne_revele_jamais_le_contenu_des_identifiants(
+    monkeypatch, maison_vide, caplog
+):
+    from src.onboarding.sondes import outil_cli_pret
+
+    monkeypatch.setattr(
+        "src.onboarding.sondes.shutil.which", lambda nom: f"/usr/bin/{nom}"
+    )
+    _poser_identifiants(maison_vide, "codex")
+    caplog.set_level(logging.DEBUG)
+    sonde = outil_cli_pret("codex")
+
+    assert "faux-jeton-ne-jamais-afficher" not in sonde.detail
+    assert "faux-jeton-ne-jamais-afficher" not in caplog.text
+    assert "id_token" not in sonde.detail
+
+
+def test_outil_cli_pret_identifiants_illisible_ne_ment_pas(monkeypatch, maison_vide):
+    from src.onboarding.sondes import outil_cli_pret
+
+    monkeypatch.setattr(
+        "src.onboarding.sondes.shutil.which", lambda nom: f"/usr/bin/{nom}"
+    )
+    dossier = maison_vide / ".codex"
+    dossier.mkdir(parents=True)
+    (dossier / "auth.json").write_text("{ pas du json", encoding="utf-8")
+    sonde = outil_cli_pret("codex")
+
+    assert sonde.ok is False
+    _dicible(sonde.detail)
+
+
+def test_outil_cli_pret_aucune_exception_ne_sort(monkeypatch, maison_vide):
     from src.onboarding.sondes import outil_cli_pret
 
     def boom(_nom):
@@ -617,7 +829,7 @@ def test_outil_cli_pret_aucune_exception_ne_sort(monkeypatch):
     _dicible(sonde.detail)
 
 
-def test_outil_cli_pret_nom_inconnu_reste_calme():
+def test_outil_cli_pret_nom_inconnu_reste_calme(maison_vide):
     from src.onboarding.sondes import outil_cli_pret
 
     sonde = outil_cli_pret("muse")
@@ -626,7 +838,7 @@ def test_outil_cli_pret_nom_inconnu_reste_calme():
     _dicible(sonde.detail)
 
 
-def test_outil_cli_pret_absent_donne_la_commande_powershell(monkeypatch):
+def test_outil_cli_pret_absent_donne_la_commande_powershell(monkeypatch, maison_vide):
     from src.onboarding.sondes import outil_cli_pret
 
     monkeypatch.setattr("src.onboarding.sondes.shutil.which", lambda _nom: None)
@@ -641,8 +853,8 @@ def test_outil_cli_pret_absent_donne_la_commande_powershell(monkeypatch):
     assert "est connecte" not in texte.replace("é", "e")
 
 
-def test_outil_cli_pret_present_donne_la_commande_sans_affirmer_la_connexion(
-    monkeypatch,
+def test_outil_cli_pret_present_sans_connexion_donne_la_commande_de_connexion(
+    monkeypatch, maison_vide
 ):
     from src.onboarding.sondes import outil_cli_pret
 
@@ -651,16 +863,15 @@ def test_outil_cli_pret_present_donne_la_commande_sans_affirmer_la_connexion(
     )
     sonde = outil_cli_pret("claude")
 
-    assert sonde.ok is True
+    assert sonde.ok is False
     _dicible(sonde.detail)
     texte = sonde.detail.lower()
     assert "powershell" in texte
     assert "claude" in texte
-    assert "verifi" in texte.replace("é", "e")
     assert "est connecte" not in texte.replace("é", "e")
 
 
-def test_detecter_abonnements_appelle_les_deux_outils(monkeypatch):
+def test_detecter_abonnements_appelle_les_deux_outils(monkeypatch, maison_vide):
     from src.onboarding.sondes import detecter_abonnements
 
     vus: list[str] = []
@@ -677,3 +888,482 @@ def test_detecter_abonnements_appelle_les_deux_outils(monkeypatch):
     assert [sonde.service for sonde in sondes] == ["codex", "claude"]
     assert sondes[0].ok is True
     assert sondes[1].ok is False
+
+
+# --- trois etats honnetes, vraie question ------------------------------
+
+
+@runs_async
+async def test_un_pont_qui_repond_ok_false_n_est_plus_un_vert():
+    """Le defaut mesure : 200 + `{"ok": false}` en 13 ms etait compte comme
+    « Codex repond ». Le pont rend toujours le statut 200 quand le harnais
+    n'a rien dit : seul le corps prouve quelque chose."""
+    from src.onboarding.sondes import ETAT_MUET, sonder_claude, sonder_codex
+
+    client = FakeHTTPClient(
+        _FakeResponse({"ok": False, "error": "question vide"}, status_code=200)
+    )
+    codex = await sonder_codex("http://exemple.invalid/ask", "jeton", client=client)
+    claude = await sonder_claude("http://exemple.invalid/ask", "jeton", client=client)
+
+    for sonde in (codex, claude):
+        assert sonde.ok is False
+        assert sonde.etat == ETAT_MUET
+        _dicible(sonde.detail)
+        assert "repondu" not in sonde.detail
+
+
+@runs_async
+async def test_une_reponse_sans_le_mot_attendu_n_est_pas_un_vert():
+    from src.onboarding.sondes import ETAT_MUET, sonder_codex
+
+    client = FakeHTTPClient(_FakeResponse({"ok": True, "reponse": ""}))
+    sonde = await sonder_codex("http://exemple.invalid/ask", "jeton", client=client)
+
+    assert sonde.ok is False
+    assert sonde.etat == ETAT_MUET
+    _dicible(sonde.detail)
+
+    bavard = FakeHTTPClient(
+        _FakeResponse({"ok": True, "reponse": "Je ne sais pas quoi dire."})
+    )
+    sonde = await sonder_codex("http://exemple.invalid/ask", "jeton", client=bavard)
+    assert sonde.ok is False
+    _dicible(sonde.detail)
+
+
+@runs_async
+async def test_la_reponse_attendue_ne_depend_pas_de_la_casse():
+    from src.onboarding.sondes import sonder_codex
+
+    for reponse in ("PONG", "pong", "Pong.", "Le mot demande est PONG."):
+        client = FakeHTTPClient(_FakeResponse({"ok": True, "reponse": reponse}))
+        sonde = await sonder_codex(
+            "http://exemple.invalid/ask", "jeton", client=client
+        )
+        assert sonde.ok is True, reponse
+        _dicible(sonde.detail)
+
+
+@runs_async
+async def test_la_question_de_sonde_est_minimale_et_verifiable():
+    """La question posee doit etre courte, et sa reponse attendue connue."""
+    from src.onboarding.sondes import MARQUEUR_SONDE, QUESTION_SONDE, sonder_codex
+
+    assert QUESTION_SONDE.strip()
+    assert len(QUESTION_SONDE) < 200
+    assert MARQUEUR_SONDE.lower() in QUESTION_SONDE.lower()
+
+    client = FakeHTTPClient(_FakeResponse(PAYLOAD_TOUT_REPOND))
+    await sonder_codex("http://exemple.invalid/ask", "jeton", client=client)
+    questions = [envoi["json"]["question"] for envoi in client.calls]
+    assert questions[-1] == QUESTION_SONDE
+
+
+@runs_async
+async def test_la_vraie_question_a_un_delai_borne_superieur_a_cinq_secondes():
+    """Un harnais met plus de cinq secondes : borner a cinq produirait un
+    faux negatif systematique. La borne est annoncee, pas devinee."""
+    from src.onboarding.sondes import (
+        DELAI_HARNAIS_S,
+        DELAI_HARNAIS_SERVEUR_S,
+        DELAI_S,
+        sonder_codex,
+    )
+
+    assert DELAI_S == 5.0
+    assert DELAI_HARNAIS_S > DELAI_S
+    # Le serveur doit rendre son propre depassement avant que le client
+    # abandonne : sinon on dit « injoignable » pour un pont qui repond.
+    assert DELAI_HARNAIS_SERVEUR_S < DELAI_HARNAIS_S
+
+    client = FakeHTTPClient(_FakeResponse(PAYLOAD_TOUT_REPOND))
+    await sonder_codex("http://exemple.invalid/ask", "jeton", client=client)
+    delais = [envoi["timeout"] for envoi in client.calls]
+    assert delais[0] <= DELAI_S, "le premier appel doit echouer vite"
+    assert delais[-1] <= DELAI_HARNAIS_S
+    assert client.calls[-1]["json"]["timeout"] <= DELAI_HARNAIS_SERVEUR_S
+
+
+@runs_async
+async def test_un_harnais_qui_pend_ne_bloque_pas_plus_que_la_borne():
+    from src.onboarding.sondes import DELAI_HARNAIS_S, ETAT_MUET, sonder_codex
+
+    class _PondApresLePont:
+        """Le pont repond, le harnais ne rend jamais la main."""
+
+        def __init__(self):
+            self.calls = []
+
+        async def post(self, url, json=None, headers=None, timeout=None):
+            self.calls.append(json or {})
+            if (json or {}).get("question", "").strip():
+                await asyncio.sleep(600)
+            return _FakeResponse({"ok": False, "error": "question vide"})
+
+    client = _PondApresLePont()
+    debut = time.monotonic()
+    sonde = await sonder_codex("http://exemple.invalid/ask", "jeton", client=client)
+    duree = time.monotonic() - debut
+
+    assert sonde.ok is False
+    assert sonde.etat == ETAT_MUET
+    assert duree < DELAI_HARNAIS_S + 2.0
+    _dicible(sonde.detail)
+
+
+@runs_async
+async def test_le_pont_occupe_le_dit():
+    from src.onboarding.sondes import ETAT_MUET, sonder_codex
+
+    class _Occupe:
+        async def post(self, url, json=None, headers=None, timeout=None):
+            if (json or {}).get("question", "").strip():
+                return _FakeResponse(
+                    {"ok": False, "error": "Une demande est déjà en cours"},
+                    status_code=429,
+                )
+            return _FakeResponse({"ok": False, "error": "question vide"})
+
+    sonde = await sonder_codex("http://exemple.invalid/ask", "jeton", client=_Occupe())
+
+    assert sonde.ok is False
+    assert sonde.etat == ETAT_MUET
+    assert "occupe" in sonde.detail.lower().replace("é", "e")
+    _dicible(sonde.detail)
+
+
+@runs_async
+async def test_le_delai_du_serveur_est_dit_comme_un_delai():
+    from src.onboarding.sondes import ETAT_MUET, sonder_codex
+
+    class _TropLong:
+        async def post(self, url, json=None, headers=None, timeout=None):
+            if (json or {}).get("question", "").strip():
+                return _FakeResponse(
+                    {"ok": False, "error": "délai dépassé"}, status_code=408
+                )
+            return _FakeResponse({"ok": False, "error": "question vide"})
+
+    sonde = await sonder_codex("http://exemple.invalid/ask", "jeton", client=_TropLong())
+
+    assert sonde.ok is False
+    assert sonde.etat == ETAT_MUET
+    assert "delai" in sonde.detail.lower().replace("é", "e")
+    _dicible(sonde.detail)
+
+
+@runs_async
+async def test_un_harnais_non_connecte_le_dit():
+    from src.onboarding.sondes import ETAT_MUET, sonder_codex
+
+    class _PasConnecte:
+        async def post(self, url, json=None, headers=None, timeout=None):
+            if (json or {}).get("question", "").strip():
+                return _FakeResponse(
+                    {
+                        "ok": False,
+                        "error": "codex failed (exit 1)",
+                        "erreur": "Error: not logged in",
+                        "sortie": "codex: authentication required",
+                    }
+                )
+            return _FakeResponse({"ok": False, "error": "question vide"})
+
+    sonde = await sonder_codex(
+        "http://exemple.invalid/ask", "jeton", client=_PasConnecte()
+    )
+
+    assert sonde.ok is False
+    assert sonde.etat == ETAT_MUET
+    texte = sonde.detail.lower().replace("é", "e").replace("è", "e")
+    assert "connect" in texte or "login" in texte
+    _dicible(sonde.detail)
+
+
+@runs_async
+async def test_injoignable_et_muet_sont_deux_etats_differents():
+    from src.onboarding.sondes import (
+        ETAT_INJOIGNABLE,
+        ETAT_MUET,
+        ETAT_REPOND,
+        sonder_codex,
+    )
+
+    coupe = FakeHTTPClient(raises=ConnectionRefusedError("refuse"))
+    muet = FakeHTTPClient(_FakeResponse({"ok": False, "error": "question vide"}))
+    pret = FakeHTTPClient(_FakeResponse(PAYLOAD_TOUT_REPOND))
+
+    injoignable = await sonder_codex("http://exemple.invalid/ask", "j", client=coupe)
+    silencieux = await sonder_codex("http://exemple.invalid/ask", "j", client=muet)
+    vivant = await sonder_codex("http://exemple.invalid/ask", "j", client=pret)
+
+    assert injoignable.etat == ETAT_INJOIGNABLE
+    assert silencieux.etat == ETAT_MUET
+    assert vivant.etat == ETAT_REPOND
+    details = {injoignable.detail, silencieux.detail, vivant.detail}
+    assert len(details) == 3, "trois etats doivent donner trois phrases"
+    for sonde in (injoignable, silencieux, vivant):
+        _dicible(sonde.detail)
+
+
+@runs_async
+async def test_le_jeton_absent_est_un_etat_a_part():
+    from src.onboarding.sondes import ETAT_ABSENT, sonder_codex, sonder_jev
+
+    for sonde in (
+        await sonder_codex("http://exemple.invalid/ask", "", client=FakeHTTPClient()),
+        await sonder_jev("", client=FakeHTTPClient()),
+    ):
+        assert sonde.ok is False
+        assert sonde.etat == ETAT_ABSENT
+        assert "pas encore" in sonde.detail
+        assert sonde.latence_ms is None
+
+
+@runs_async
+async def test_brain_distant_exige_un_contenu_pas_seulement_un_statut():
+    from src.onboarding.sondes import ETAT_MUET, ETAT_REPOND, sonder_brain_distant
+
+    url = "http://exemple.invalid/v1/chat/completions"
+    vide = FakeHTTPClient(_FakeResponse({"ok": True, "id": "chatcmpl-1"}))
+    sonde = await sonder_brain_distant(url, "cle", "modele", client=vide)
+    assert sonde.ok is False
+    assert sonde.etat == ETAT_MUET
+    _dicible(sonde.detail)
+
+    plein = FakeHTTPClient(
+        _FakeResponse({"choices": [{"message": {"content": "pong"}}]})
+    )
+    sonde = await sonder_brain_distant(url, "cle", "modele", client=plein)
+    assert sonde.ok is True
+    assert sonde.etat == ETAT_REPOND
+    _dicible(sonde.detail)
+
+    vide_de_contenu = FakeHTTPClient(
+        _FakeResponse({"choices": [{"message": {"content": "   "}}]})
+    )
+    sonde = await sonder_brain_distant(url, "cle", "modele", client=vide_de_contenu)
+    assert sonde.ok is False
+    assert sonde.etat == ETAT_MUET
+
+
+@runs_async
+async def test_jev_exige_la_reponse_a_la_question_posee():
+    """La sonde ne pose que `phrase_finished` : une reponse qui ne contient
+    pas ce signal ne prouve rien, meme avec un statut de succes."""
+    from src.onboarding.sondes import ETAT_MUET, ETAT_REPOND, sonder_jev
+
+    vide = FakeHTTPClient(_FakeResponse({"answers": {}}))
+    sonde = await sonder_jev("cle", client=vide)
+    assert sonde.ok is False
+    assert sonde.etat == ETAT_MUET
+    _dicible(sonde.detail)
+
+    autre = FakeHTTPClient(_FakeResponse({"answers": {"real_interruption": {"noul": 0.1}}}))
+    sonde = await sonder_jev("cle", client=autre)
+    assert sonde.ok is False
+
+    plein = FakeHTTPClient(
+        _FakeResponse({"answers": {"phrase_finished": {"noul": 0.9}}})
+    )
+    sonde = await sonder_jev("cle", client=plein)
+    assert sonde.ok is True
+    assert sonde.etat == ETAT_REPOND
+    _dicible(sonde.detail)
+
+
+@runs_async
+async def test_aucun_service_ne_rend_vert_sur_un_corps_illisible():
+    from src.onboarding.sondes import (
+        sonder_brain_distant,
+        sonder_claude,
+        sonder_codex,
+        sonder_jev,
+    )
+
+    client = FakeHTTPClient(_FakeResponse("du html", status_code=200))
+    for sonde in (
+        await sonder_codex("http://exemple.invalid/ask", "j", client=client),
+        await sonder_claude("http://exemple.invalid/ask", "j", client=client),
+        await sonder_jev("j", client=client),
+        await sonder_brain_distant("http://exemple.invalid/v1", "j", "m", client=client),
+    ):
+        assert sonde.ok is False
+        _dicible(sonde.detail)
+
+
+# --- voix TTS (Magpie GET /v1/models) ----------------------------------
+
+
+MAGPIE_MODELS = {
+    "data": [
+        {
+            "id": "magpietts",
+            "capability": "speech",
+            "device": "cuda",
+            "voices": ["John", "Sofia", "Aria", "Jason", "Leo"],
+            "languages": [
+                "en-US",
+                "es-ES",
+                "de-DE",
+                "fr-FR",
+                "it-IT",
+                "vi-VN",
+                "hi-IN",
+            ],
+        }
+    ]
+}
+
+
+def test_extraire_voix_modele_lit_data_voices():
+    from src.onboarding.sondes import extraire_voix_modele
+
+    assert extraire_voix_modele(MAGPIE_MODELS) == (
+        "John",
+        "Sofia",
+        "Aria",
+        "Jason",
+        "Leo",
+    )
+
+
+def test_extraire_voix_modele_suit_un_modele_nouveau():
+    from src.onboarding.sondes import extraire_voix_modele
+
+    payload = {"data": [{"id": "autre", "voices": ["Nova", "Kai", "Nova"]}]}
+    assert extraire_voix_modele(payload) == ("Nova", "Kai")
+
+
+def test_extraire_voix_modele_repli_sur_forme_inconnue():
+    from src.onboarding.sondes import extraire_voix_modele
+
+    assert extraire_voix_modele(None) == ()
+    assert extraire_voix_modele({"data": []}) == ()
+    assert extraire_voix_modele({"voices": ["John"]}) == ()
+    assert extraire_voix_modele("pas-json") == ()
+
+
+def test_extraire_langues_modele_lit_data_languages():
+    from src.onboarding.sondes import extraire_langues_modele
+
+    assert extraire_langues_modele(MAGPIE_MODELS) == (
+        "en-US",
+        "es-ES",
+        "de-DE",
+        "fr-FR",
+        "it-IT",
+        "vi-VN",
+        "hi-IN",
+    )
+
+
+def test_extraire_langues_modele_suit_un_modele_nouveau():
+    from src.onboarding.sondes import extraire_langues_modele
+
+    payload = {"data": [{"id": "autre", "languages": ["pt-BR", "ja-JP", "pt-BR"]}]}
+    assert extraire_langues_modele(payload) == ("pt-BR", "ja-JP")
+
+
+def test_extraire_langues_modele_repli_sur_forme_inconnue():
+    from src.onboarding.sondes import extraire_langues_modele
+
+    assert extraire_langues_modele(None) == ()
+    assert extraire_langues_modele({"data": []}) == ()
+    assert extraire_langues_modele({"languages": ["en-US"]}) == ()
+    assert extraire_langues_modele("pas-json") == ()
+
+
+@runs_async
+async def test_lister_voix_tts_prend_la_liste_du_serveur():
+    from src.onboarding.sondes import lister_voix_tts
+
+    client = FakeHTTPClient(response=_FakeResponse(MAGPIE_MODELS))
+    resultat = await lister_voix_tts(client=client)
+    assert resultat.depuis_serveur is True
+    assert resultat.voix == ("John", "Sofia", "Aria", "Jason", "Leo")
+    assert resultat.langues == (
+        "en-US",
+        "es-ES",
+        "de-DE",
+        "fr-FR",
+        "it-IT",
+        "vi-VN",
+        "hi-IN",
+    )
+    assert client.calls
+    assert client.calls[0]["method"] == "GET"
+    assert client.calls[0]["url"].endswith("/v1/models")
+    assert "8092" in client.calls[0]["url"]
+
+
+@runs_async
+async def test_lister_voix_tts_se_rabat_si_injoignable():
+    from src.onboarding.sondes import LANGUES_TTS_REPLI, VOIX_TTS_REPLI, lister_voix_tts
+
+    client = FakeHTTPClient(raises=TimeoutError("coupe"))
+    resultat = await lister_voix_tts(client=client)
+    assert resultat.depuis_serveur is False
+    assert resultat.voix == VOIX_TTS_REPLI
+    assert resultat.langues == LANGUES_TTS_REPLI
+
+
+@runs_async
+async def test_lister_voix_tts_se_rabat_si_reponse_illisible():
+    from src.onboarding.sondes import LANGUES_TTS_REPLI, VOIX_TTS_REPLI, lister_voix_tts
+
+    client = FakeHTTPClient(response=_FakeResponse("html", status_code=404))
+    resultat = await lister_voix_tts(client=client)
+    assert resultat.depuis_serveur is False
+    assert resultat.voix == VOIX_TTS_REPLI
+    assert resultat.langues == LANGUES_TTS_REPLI
+
+
+@runs_async
+async def test_lister_voix_tts_essaie_l_url_alternee():
+    from src.onboarding.sondes import lister_voix_tts
+
+    class _PremierRate:
+        def __init__(self):
+            self.calls = []
+
+        async def get(self, url, json=None, headers=None, timeout=None):
+            self.calls.append(url)
+            if "127.0.0.1" in url:
+                raise ConnectionError("refuse")
+            return _FakeResponse({"data": [{"voices": ["Kai"]}]})
+
+    client = _PremierRate()
+    resultat = await lister_voix_tts(client=client)
+    assert resultat.depuis_serveur is True
+    assert resultat.voix == ("Kai",)
+    assert resultat.langues == ()
+    assert any("127.0.0.1" in url for url in client.calls)
+    assert any("host.docker.internal" in url for url in client.calls)
+
+
+@runs_async
+async def test_synthetiser_extrait_tts_envoie_voix_et_langue():
+    from src.onboarding.sondes import synthetiser_extrait_tts
+
+    wav = b"RIFF....WAVE"
+    client = FakeHTTPClient(response=_FakeResponse({}, content=wav))
+    rendu = await synthetiser_extrait_tts(
+        "Aria", "en-US", "Bonjour, je suis là.", client=client
+    )
+    assert rendu == wav
+    assert client.calls
+    assert client.calls[0]["method"] == "POST"
+    assert client.calls[0]["url"].endswith("/v1/audio/speech")
+    assert client.calls[0]["json"]["voice"] == "Aria"
+    assert client.calls[0]["json"]["language"] == "en-US"
+    assert client.calls[0]["json"]["input"] == "Bonjour, je suis là."
+
+
+@runs_async
+async def test_synthetiser_extrait_tts_se_rabat_si_injoignable():
+    from src.onboarding.sondes import synthetiser_extrait_tts
+
+    client = FakeHTTPClient(raises=TimeoutError("coupe"))
+    assert await synthetiser_extrait_tts("Sofia", "fr", "bonjour", client=client) == b""

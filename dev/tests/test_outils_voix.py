@@ -703,7 +703,26 @@ async def test_le_resultat_outil_expire_apres_le_tour_de_suivi():
 
     history = pipeline.brain.appels[0].get("history") or []
     assert not any("[résultat outil ask_codex]" in m.get("content", "") for m in history)
+    assert not any("neuf fichiers" in m.get("content", "") for m in history), (
+        "deux tours après l'outil, ni son résultat brut ni sa réponse fondée "
+        "sur lui ne doivent contaminer la requête modèle"
+    )
     assert pipeline._dernier_outils == []
+
+
+@pytest.mark.asyncio
+async def test_artefact_whisper_sur_silence_ne_parvient_pas_au_brain():
+    pipeline = serve_hostagent.HostPipeline()
+    pipeline._mains_libres = True
+    pipeline.asr = _ASRTexte("Sous-titrage ST' 501")
+    pipeline.tts = _MOUTHDouble()
+    pipeline.brain = _BrainDouble([])
+    socket = _SocketDouble()
+
+    await pipeline._enchainer(_trames_de_parole(), socket)
+
+    assert pipeline.brain.appels == []
+    assert _rapport(socket) is None
 
 
 @pytest.mark.asyncio

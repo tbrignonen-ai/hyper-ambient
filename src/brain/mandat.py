@@ -9,7 +9,7 @@ import asyncio
 import re
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Awaitable, Callable, Optional
 
 from src.i18n import t
@@ -49,12 +49,22 @@ OUTIL_PAR_HARNAIS = {
 }
 
 _NOMS = r"(codex|claude|muse|cursor)"
+NOMS_HARNAIS = _NOMS
 _NOMS_VERS_HARNAIS = {
     "claude": "Claude",
     "codex": "Codex",
     "muse": "Muse",
     "cursor": "Codex",
 }
+
+# Un harnais ne doit jamais recevoir le simple geste de le nommer.  Cette
+# vérification vit à la frontière du mandat (et non dans le prompt) : le modèle
+# peut encore produire un appel d'outil avec ``question=""`` ou reformuler la
+# demande de l'utilisateur en « demande à Codex ».  Elle est volontairement
+# structurelle, pas une liste de verbes ou de sujets autorisés.
+_MOTS_QUESTION = re.compile(r"[^\W\d_]+", re.UNICODE)
+_LONGUEUR_MIN_QUESTION = 8
+_NOMBRE_MIN_MOTS_QUESTION = 2
 
 
 class PleinMandats(Exception):
@@ -120,6 +130,44 @@ def extraire_harnais(prompt: str) -> str:
     return "Codex"
 
 
+def nom_harnais_dit(prompt: str) -> str:
+    """Le nom tel que l'utilisateur l'a prononcé, pour le dire en retour."""
+    if re.search(r"\bclaude\s+code\b", prompt or "", re.IGNORECASE):
+        return "Claude Code"
+    return extraire_harnais(prompt)
+
+
+def phrase_harnais_absent(nom: str) -> str:
+    return f"{nom} n'est pas connecté sur cette machine"
+
+
+def respecter_harnais_nomme(prompt, appels, registre):
+    """Le harnais nommé fait autorité au moment du choix d'outil.
+
+    Ne force pas d'appel : « qu'est-ce que Codex ? » reste une question.
+    Si le distant saisit un autre harnais, on réécrit. S'il n'est pas
+    configuré, on le dit — on ne bascule pas.
+    """
+    if not re.search(r"\b" + _NOMS + r"\b", prompt or "", re.IGNORECASE):
+        return list(appels or []), None
+    exigé = OUTIL_PAR_HARNAIS.get(extraire_harnais(prompt))
+    if exigé is None:
+        return list(appels or []), None
+    noms_harnais = set(OUTIL_PAR_HARNAIS.values())
+    retenus = list(appels or [])
+    if not any(getattr(appel, "name", None) in noms_harnais for appel in retenus):
+        return retenus, None
+    if registre.get(exigé) is None:
+        return [], phrase_harnais_absent(nom_harnais_dit(prompt))
+    recrits = []
+    for appel in retenus:
+        if appel.name in noms_harnais and appel.name != exigé:
+            recrits.append(replace(appel, name=exigé))
+        else:
+            recrits.append(appel)
+    return recrits, None
+
+
 def extraire_sujet(prompt: str) -> str:
     texte = (prompt or "").strip()
     if not texte:
@@ -138,8 +186,43 @@ def extraire_sujet(prompt: str) -> str:
     return reste or "ça"
 
 
+def question_est_substantielle(question: str) -> bool:
+    """Vrai si le mandat porte une demande, pas seulement un destinataire.
+
+    Deux mots et huit caractères laissent passer « la météo », « quel temps »
+    ou « relis transport.py », tout en arrêtant une chaîne vide, « Codex » et
+    « demande à Codex ».  Quand le texte mentionne un harnais, ``extraire_sujet``
+    doit en outre en extraire autre chose que le pronom de repli ``ça``.
+    """
+    texte = " ".join((question or "").split())
+    mots = _MOTS_QUESTION.findall(texte)
+    if len(texte) < _LONGUEUR_MIN_QUESTION or len(mots) < _NOMBRE_MIN_MOTS_QUESTION:
+        return False
+    if re.search(r"\b" + _NOMS + r"\b", texte, re.IGNORECASE):
+        sujet = extraire_sujet(texte)
+        if sujet == "ça":
+            return False
+        mots_sujet = _MOTS_QUESTION.findall(sujet)
+        return len(sujet) >= _LONGUEUR_MIN_QUESTION and len(mots_sujet) >= _NOMBRE_MIN_MOTS_QUESTION
+    return True
+
+
+def phrase_question_manquante(harnais: str) -> str:
+    return f"Que veux-tu que je demande à {harnais} ?"
+
+
 def phrase_accuse(harnais: str, sujet: str) -> str:
     return t("mandat.accuse", harnais=harnais, sujet=sujet)
+
+
+def phrase_depot(harnais: str) -> str:
+    """Accusé bref rendu par un outil harnais dans le tour vocal.
+
+    Ce texte est la réponse du handler, pas une amorce : le tour peut donc se
+    clore sans attendre le pont. L'arrivée de la réponse reste annoncée par
+    ``phrase_arrivee`` dans la veille des mandats.
+    """
+    return f"Je demande à {harnais}. Je te préviens dès qu'il répond."
 
 
 def phrase_rappel(harnais: str) -> str:
@@ -174,8 +257,11 @@ def phrase_arrivee(mandat: Mandat) -> str:
 
 async def _courir(mandat: Mandat, appel: Callable[[str], Awaitable[str]]) -> None:
     try:
-        question = envelopper(mandat.question)
-        texte = await asyncio.wait_for(appel(question), timeout=DELAI_EXPIRATION_S)
+        # Le pont Codex préfixe déjà une consigne parlable. Empiler
+        # PREFIXE_CONTRAT devant la question produit l'écho mesuré
+        # (« Je répondrai uniquement en français avec un objet JSON »).
+        # Le résumé vocal vient de la réponse du harnais, parsée ensuite.
+        texte = await asyncio.wait_for(appel(mandat.question), timeout=DELAI_EXPIRATION_S)
         mandat.reponse = analyser(texte)
         mandat.etat = "fini"
     except asyncio.CancelledError:
@@ -206,3 +292,23 @@ async def confier(
     registre.deposer(mandat)
     mandat.tache = asyncio.create_task(_courir(mandat, appel))
     return mandat
+
+
+async def deposer_depuis_outil(
+    registre: RegistreMandats,
+    harnais: str,
+    question: str,
+    appel: Callable[[str], Awaitable[str]],
+) -> str:
+    """Dépose un mandat depuis un handler et rend immédiatement l'accusé.
+
+    L'appel réseau n'est volontairement jamais attendu ici : ``confier`` le
+    place dans sa tâche de fond avant de rendre la main au tour vocal.
+    """
+    if not question_est_substantielle(question):
+        return phrase_question_manquante(harnais)
+    try:
+        await confier(registre, harnais, question, extraire_sujet(question), appel)
+    except PleinMandats as exc:
+        return exc.phrase
+    return phrase_depot(harnais)

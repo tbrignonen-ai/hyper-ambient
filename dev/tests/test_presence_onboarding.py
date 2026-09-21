@@ -249,6 +249,50 @@ def test_wizard_et_eclair_distant_sont_visibles(tmp_path):
         fond = " ".join(_textes_widgets(application.conteneur)).lower()
         for interdit in ("welcome", "continue", "skip", "settings", "speak", "hide"):
             assert interdit not in fond
+        assert "un retour" not in fond
+        assert "feedback" not in fond
+        assert getattr(application, "bouton_feedback", None) is None
+    finally:
+        application.fermer()
+
+
+def test_page_principale_sans_bouton_feedback(tmp_path):
+    _ouvrir_tk()
+
+    from native.presence.app import Application, analyser_arguments
+    from native.presence.onboarding import (
+        ConfigurationPresence,
+        enregistrer_configuration,
+    )
+
+    config = tmp_path / "presence.json"
+    enregistrer_configuration(
+        ConfigurationPresence(onboarding_termine=True),
+        config,
+    )
+    args = analyser_arguments(["--onboarding", "--config", str(config)])
+    try:
+        application = Application(args)
+    except Exception as exc:
+        if exc.__class__.__name__ == "TclError":
+            pytest.skip(f"Tk indisponible : {exc}")
+        raise
+    application.session_lancee = True
+    try:
+        application._afficher_application()
+        application.racine.withdraw()
+        application.racine.update_idletasks()
+        textes = " ".join(_textes_widgets(application.conteneur)).lower()
+        assert "un retour" not in textes
+        assert "feedback" not in textes
+        assert getattr(application, "bouton_feedback", None) is None
+        assert application.bouton_reglages is not None
+        assert application.bouton is not None
+        assert application.bouton_stop is not None
+        assert application.bouton_mains_libres is not None
+        assert "Français" not in textes
+        assert "English" not in textes
+        assert "Langue" not in textes
     finally:
         application.fermer()
 

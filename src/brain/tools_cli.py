@@ -16,6 +16,7 @@ import os
 from typing import Any, Optional
 
 from src.brain.tools import MAX_TOOL_CONTENT_CHARS, ToolRegistry, ToolSpec
+from src.brain.mandat import RegistreMandats, deposer_depuis_outil
 
 logger = logging.getLogger(__name__)
 
@@ -157,22 +158,42 @@ class CliBridge:
         return text
 
 
+class ClaudeMandat:
+    """Handler vocal : confie à Claude sans attendre son pont."""
+
+    def __init__(self, registre_mandats: RegistreMandats, pont: CliBridge):
+        self.registre_mandats = registre_mandats
+        self.pont = pont
+
+    async def __call__(self, question: str) -> str:
+        return await deposer_depuis_outil(
+            self.registre_mandats, "Claude", question, self.pont
+        )
+
+
 def register_ask_claude(
     registry: ToolRegistry,
     token: Optional[str] = None,
     client: Any = None,
+    registre_mandats: Optional[RegistreMandats] = None,
     **kwargs,
 ) -> ToolSpec:
     """Enregistre `ask_claude`. `danger="read"` : le pont epingle Claude en
     lecture seule."""
     kwargs.setdefault("agent", "claude")
+    pont = CliBridge(token=token, client=client, **kwargs)
+    handler = (
+        ClaudeMandat(registre_mandats, pont)
+        if registre_mandats is not None
+        else pont
+    )
     return registry.register(
         ToolSpec(
             name="ask_claude",
             description=ASK_CLAUDE_DESCRIPTION,
             parameters=ASK_CLAUDE_PARAMETERS,
             danger="read",
-            handler=CliBridge(token=token, client=client, **kwargs),
+            handler=handler,
         )
     )
 

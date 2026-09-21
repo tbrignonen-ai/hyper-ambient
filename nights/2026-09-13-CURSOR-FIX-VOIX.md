@@ -94,7 +94,7 @@ EARS  : "Peux-tu me dire en une phrase pourquoi le facteur temps réel doit rest
 HTTP Request: POST http://localhost:8080/completion "HTTP/1.1 200 OK"
 router: escalate (181 ms)
 BRAIN : filler — "Un instant."
-HTTP Request: POST https://api.commandcode.ai/provider/v1/chat/completions "HTTP/1.1 200 OK"
+HTTP Request: POST <endpoint du modele distant> "HTTP/1.1 200 OK"
 MOUTH : premier audio après 3923 ms
 BRAIN : "Pour qu'une simulation numérique reste stable, la distance parcourue par l'information pendant un pas de temps ne doit p..."
 BRAIN : TTFT 3206 ms

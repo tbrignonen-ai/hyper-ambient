@@ -82,7 +82,7 @@ _FR: dict[str, str] = {
     "ui.frames_sent": "{n} trames envoyées, attente de la réponse…",
     "ui.first_sound": "premier son : {ms:.0f} ms",
     "ui.replying": "Réponse en cours.",
-    "ui.feedback": "Un retour",
+    "ui.feedback": "Feedback",
     "ui.feedback_url": "https://github.com/tbrignonen-ai/hyper-ambient/issues/new",
     "ui.contrast": "Contraste élevé",
     "ui.language": "Langue",
@@ -210,6 +210,12 @@ _FR: dict[str, str] = {
         "Données envoyées au moteur dont vous avez posé la clé."
     ),
     "reglages.donnees.cles": "Données locales. Fichier sur cette machine.",
+    "reglages.donnees.voix": (
+        "Données locales. Rien ne quitte cette machine."
+    ),
+    "reglages.donnees.langue": (
+        "Données locales. Rien ne quitte cette machine."
+    ),
     "reglages.verifier_aide": (
         "Vérifier appelle réellement le service, avec un délai de cinq secondes."
     ),
@@ -222,14 +228,65 @@ _FR: dict[str, str] = {
     "reglages.modele_local_aide": (
         "Le modèle qui tourne ici. Rien de ce bloc ne quitte cette machine."
     ),
+    "reglages.voix_titre": "Voix",
+    "reglages.voix_aide": (
+        "Choisissez à l'oreille. La synthèse vocale reste sur cette machine. "
+        "Le changement prend effet au prochain redémarrage du moteur vocal."
+    ),
+    "reglages.voix_repli": "Liste de repli : le serveur vocal ne répond pas.",
+    "reglages.accent_titre": "Accent",
+    "reglages.accent_aucun": "Aucun accent",
+    "reglages.accent_compromis": (
+        "Un accent rend la voix plus charmante, un peu moins facile à comprendre."
+    ),
+    "reglages.accent.en": "Accent anglais",
+    "reglages.accent.es": "Accent espagnol",
+    "reglages.accent.de": "Accent allemand",
+    "reglages.accent.fr": "Accent français",
+    "reglages.accent.it": "Accent italien",
+    "reglages.accent.vi": "Accent vietnamien",
+    "reglages.accent.hi": "Accent hindi",
+    "reglages.accent.autre": "Accent ({code})",
+    "reglages.voix_ecouter": "Écouter",
+    "reglages.voix_extrait": "Bonjour, je suis là.",
+    "reglages.voix_ecouter_echec": (
+        "Le serveur vocal ne répond pas. L'extrait n'a pas pu être joué."
+    ),
+    "reglages.langue_titre": "Langue",
+    "reglages.langue_aide": (
+        "La langue de l'interface. On ne la change qu'une fois."
+    ),
+    "reglages.langue_delai": (
+        "Ce réglage ne change que l'interface. "
+        "La reconnaissance et la synthèse gardent leurs propres réglages ; "
+        "un rechargement des modèles peut être nécessaire."
+    ),
+    "reglages.langue_en_cours": "Changement de langue…",
+    "reglages.langue.fr": "Français",
+    "reglages.langue.en": "Anglais",
     "reglages.recherche_titre": "Recherche web",
     "reglages.recherche_aide": (
         "Optionnel. Si vous avez posé une clé, la requête part vers ce moteur."
+    ),
+    "reglages.recherche_tavily": (
+        "Tavily est recommandé pour démarrer : gratuit au début, sans carte bancaire. "
+        "Sans aucune clé, la recherche est possible mais peu fiable. "
+        "Créer un compte : https://app.tavily.com"
     ),
     "reglages.cles_titre": "Clés et réglages",
     "reglages.cles_aide": (
         "Elles restent dans votre fichier local, sur cette machine."
     ),
+    "reglages.menu": "Aide",
+    "reglages.invite.BRAIN_API_ENDPOINT": "ex. https://api.exemple/v1",
+    "reglages.invite.BRAIN_MODEL": "ex. gpt-4.1",
+    "reglages.invite.BRAIN_API_KEY": "coller une nouvelle clé",
+    "reglages.invite.CODEX_BRIDGE_URL": "ex. http://127.0.0.1:8765/ask",
+    "reglages.invite.CODEX_BRIDGE_TOKEN": "coller un nouveau jeton",
+    "reglages.invite.CLI_BRIDGE_URL": "ex. http://127.0.0.1:8766/ask",
+    "reglages.invite.CLI_BRIDGE_TOKEN": "coller un nouveau jeton",
+    "reglages.invite.TYPESAFE_MODEL": "ex. jev-latest",
+    "reglages.invite.TYPESAFE_API_KEY": "coller une nouvelle clé",
     "sondes.outil_absent": (
         "L'outil {nom} n'est pas installé. Dans PowerShell : {commande}"
     ),
@@ -316,7 +373,7 @@ _EN: dict[str, str] = {
     "ui.frames_sent": "{n} frames sent, waiting for a reply…",
     "ui.first_sound": "first sound: {ms:.0f} ms",
     "ui.replying": "Reply in progress.",
-    "ui.feedback": "Send feedback",
+    "ui.feedback": "Feedback",
     "ui.feedback_url": "https://github.com/tbrignonen-ai/hyper-ambient/issues/new",
     "ui.contrast": "High contrast",
     "ui.language": "Language",
@@ -444,6 +501,12 @@ _EN: dict[str, str] = {
         "Data is sent to the search engine whose key you set."
     ),
     "reglages.donnees.cles": "Data stays local. File on this machine.",
+    "reglages.donnees.voix": (
+        "Data stays local. Nothing leaves this machine."
+    ),
+    "reglages.donnees.langue": (
+        "Data stays local. Nothing leaves this machine."
+    ),
     "reglages.verifier_aide": (
         "Check actually calls the service, with a five-second timeout."
     ),
@@ -456,14 +519,65 @@ _EN: dict[str, str] = {
     "reglages.modele_local_aide": (
         "The model that runs here. Nothing in this block leaves this machine."
     ),
+    "reglages.voix_titre": "Voice",
+    "reglages.voix_aide": (
+        "Choose by ear. Speech synthesis stays on this machine. "
+        "The change takes effect the next time the voice engine restarts."
+    ),
+    "reglages.voix_repli": "Fallback list: the voice server is not answering.",
+    "reglages.accent_titre": "Voice accent",
+    "reglages.accent_aucun": "No accent",
+    "reglages.accent_compromis": (
+        "An accent makes the voice more charming, and a little harder to understand."
+    ),
+    "reglages.accent.en": "English accent",
+    "reglages.accent.es": "Spanish accent",
+    "reglages.accent.de": "German accent",
+    "reglages.accent.fr": "French accent",
+    "reglages.accent.it": "Italian accent",
+    "reglages.accent.vi": "Vietnamese accent",
+    "reglages.accent.hi": "Hindi accent",
+    "reglages.accent.autre": "{code} accent",
+    "reglages.voix_ecouter": "Listen",
+    "reglages.voix_extrait": "Hello, I am here.",
+    "reglages.voix_ecouter_echec": (
+        "The voice server is not answering. The sample could not be played."
+    ),
+    "reglages.langue_titre": "Language",
+    "reglages.langue_aide": (
+        "The interface language. You only change it once."
+    ),
+    "reglages.langue_delai": (
+        "This setting only changes the interface. "
+        "Recognition and speech keep their own settings; "
+        "the models may need to reload."
+    ),
+    "reglages.langue_en_cours": "Changing language…",
+    "reglages.langue.fr": "French",
+    "reglages.langue.en": "English",
     "reglages.recherche_titre": "Web search",
     "reglages.recherche_aide": (
         "Optional. If you set a key, the query goes to that search engine."
+    ),
+    "reglages.recherche_tavily": (
+        "Tavily is recommended to start: free at first, no credit card. "
+        "Without any key, search is possible but unreliable. "
+        "Create an account: https://app.tavily.com"
     ),
     "reglages.cles_titre": "Keys and settings",
     "reglages.cles_aide": (
         "They stay in your local file, on this machine."
     ),
+    "reglages.menu": "Help",
+    "reglages.invite.BRAIN_API_ENDPOINT": "e.g. https://api.example/v1",
+    "reglages.invite.BRAIN_MODEL": "e.g. gpt-4.1",
+    "reglages.invite.BRAIN_API_KEY": "paste a new key",
+    "reglages.invite.CODEX_BRIDGE_URL": "e.g. http://127.0.0.1:8765/ask",
+    "reglages.invite.CODEX_BRIDGE_TOKEN": "paste a new token",
+    "reglages.invite.CLI_BRIDGE_URL": "e.g. http://127.0.0.1:8766/ask",
+    "reglages.invite.CLI_BRIDGE_TOKEN": "paste a new token",
+    "reglages.invite.TYPESAFE_MODEL": "e.g. jev-latest",
+    "reglages.invite.TYPESAFE_API_KEY": "paste a new key",
     "sondes.outil_absent": (
         "The {nom} tool is not installed. In PowerShell: {commande}"
     ),

@@ -4,6 +4,9 @@
 # Remplace /tmp/relance_hostagent.sh de dégustation.
 # Jetons d'outils : lus de .env.local (jamais affichés).
 # Modèles : lus de carte_figee.env (aucun secret).
+# Voix : carte figée par défaut ; MOUTH_VOICE_NAME dans .env.local surcharge.
+# Langue : HA_LANG aligne cerveau/oreille/bouche. MOUTH_ACCENT (ou une
+# MOUTH_LANGUAGE_FORCE déjà fournie) est la surcharge phonétique explicite.
 #
 # Ce fichier doit rester en fins de ligne UNIX.
 set -eu
@@ -59,7 +62,19 @@ export EARS_DEVICE="${EARS_DEVICE_FORCE:-$(lire_carte EARS_DEVICE)}"
 export EARS_COMPUTE_TYPE="${EARS_COMPUTE_TYPE_FORCE:-$(lire_carte EARS_COMPUTE_TYPE)}"
 export EARS_HOTWORDS="${EARS_HOTWORDS_FORCE:-$(lire_carte EARS_HOTWORDS)}"
 export MOUTH_BACKEND="${MOUTH_BACKEND_FORCE:-$(lire_carte MOUTH_BACKEND)}"
+# serve_hostagent.charger_carte_figee écrase MOUTH_VOICE_NAME / MOUTH_LANGUAGE
+# sauf *_FORCE. La surcharge de voix passe donc par *_FORCE ; l'accent, lui,
+# a sa clé dédiée pour que MOUTH_LANGUAGE historique ne fige plus la langue.
+# Sans la clé dans .env.local, la carte figée reste le défaut.
+voix_locale="$(lire_env_local MOUTH_VOICE_NAME)"
+if [ -z "${MOUTH_VOICE_NAME_FORCE:-}" ] && [ -n "$voix_locale" ]; then
+  export MOUTH_VOICE_NAME_FORCE="$voix_locale"
+fi
 export MOUTH_VOICE_NAME="${MOUTH_VOICE_NAME_FORCE:-$(lire_carte MOUTH_VOICE_NAME)}"
+accent_locale="$(lire_env_local MOUTH_ACCENT)"
+if [ -z "${MOUTH_LANGUAGE_FORCE:-}" ] && [ -n "$accent_locale" ]; then
+  export MOUTH_LANGUAGE_FORCE="$accent_locale"
+fi
 export MOUTH_LANGUAGE="${MOUTH_LANGUAGE_FORCE:-$(lire_carte MOUTH_LANGUAGE)}"
 export MOUTH_DEVICE="${MOUTH_DEVICE_FORCE:-$(lire_carte MOUTH_DEVICE)}"
 

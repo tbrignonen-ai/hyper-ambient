@@ -92,6 +92,23 @@ def test_la_poignee_de_main_exige_le_secret_partage():
             assert ws.receive_json() == {"type": "ready"}
 
 
+def test_la_sonde_http_racine_confirme_que_le_transport_est_pret():
+    """Une sonde HTTP ne doit pas prendre le WebSocket vivant pour un 404.
+
+    Reproduction du 20 septembre : le journal du conteneur contient une
+    succession de ``GET / HTTP/1.1\" 404`` autour des redémarrages 1012.
+    Une sonde de disponibilité doit donc pouvoir vérifier le transport sans
+    ouvrir une session audio.
+    """
+    from fastapi.testclient import TestClient
+
+    with TestClient(_create_app()) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready", "transport": "hostagent"}
+
+
 def test_un_message_avant_la_poignee_de_main_est_refuse():
     """Un invoke sans hello préalable est refusé et la connexion est fermée."""
     from fastapi.testclient import TestClient
@@ -334,3 +351,23 @@ def test_un_message_options_n_est_pas_une_fermeture():
 
     assert recues[0].get("mains_libres") is True
     assert recues[1] == {"type": "options", "mains_libres": False}
+
+
+def test_une_option_peut_confirmer_la_langue_appliquee():
+    """Le statut de langue revient sur le même WS, sans restart ni reconnexion."""
+    from fastapi.testclient import TestClient
+
+    def on_options(message):
+        if message.get("language") == "en":
+            return {"type": "language_status", "state": "ready", "language": "en"}
+        return None
+
+    app = _create_app(on_options=on_options)
+    with TestClient(app) as client:
+        with client.websocket_connect(VOIE) as ws:
+            ws.send_json({"type": "hello", "secret": SECRET})
+            assert ws.receive_json() == {"type": "ready"}
+            ws.send_json({"type": "options", "language": "en"})
+            assert ws.receive_json() == {
+                "type": "language_status", "state": "ready", "language": "en"
+            }

@@ -129,7 +129,27 @@ def test_cloture_code_est_retiree_dans_resume():
     )
     rep = analyser(charge)
     assert "```" not in rep.resume_voix
-    assert "print" not in rep.resume_voix
+    assert "print" in rep.resume_voix
+    assert "resultat" in rep.resume_voix
+
+
+def test_balisage_inline_garde_tous_les_mots():
+    """Retirer les accents graves, jamais le texte qu'ils entourent.
+
+    Mesure du 21/09 : « Le Dockerfile installe , le définit comme et par
+    défaut. » — trois fragments entre backticks avaient disparu, la phrase
+    restait grammaticale et donc fausse à l'oreille.
+    """
+    from src.brain.contrat_harnais import _nettoyer_voix
+
+    brut = (
+        "Le Dockerfile installe `python:3.11`, le définit comme `python3` "
+        "et `3.11` par défaut."
+    )
+    propre = _nettoyer_voix(brut)
+    for mot in ("Dockerfile", "installe", "python:3.11", "définit", "python3", "3.11", "défaut"):
+        assert mot in propre, f"mot perdu : {mot!r} dans {propre!r}"
+    assert "`" not in propre
 
 
 def test_liste_a_puces_est_neutralisee_dans_resume():

@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import functools
 
-from src.brain.router import FILLERS, RouterBrain
+from src.brain.router import FILLERS, RouterBrain, est_une_suite_d_outil
 
 
 def runs_async(fn):
@@ -104,6 +104,37 @@ MESSAGES_TOUR_NEUF = [
     {"role": "system", "content": "consigne"},
     {"role": "user", "content": "Quelle est la capitale de la Norvège ?"},
 ]
+
+
+def test_est_une_suite_d_outil_est_faux_au_premier_tour():
+    """Pourquoi le garde du 13/09 ne couvre pas les trois annonces empilées.
+
+    Les trois phrases (amorce, phrase du modèle, accusé du mandat) naissent
+    pendant le premier `query_streaming`, avant qu'un message `role=tool`
+    existe. `est_une_suite_d_outil` ne voit donc rien à couper.
+    """
+    premier = [
+        {"role": "system", "content": "consigne"},
+        {"role": "user", "content": "Demande a Claude Code la version de Python."},
+    ]
+    assert est_une_suite_d_outil(premier) is False
+    assert est_une_suite_d_outil(MESSAGES_SUITE) is True
+    assert est_une_suite_d_outil(MESSAGES_TOUR_NEUF) is False
+
+
+@runs_async
+async def test_un_tour_qui_nomme_un_harnais_n_emet_pas_d_amorce():
+    """L'accusé du mandat porte l'attente ; l'amorce dirait la même chose."""
+    r = _router()
+    r._client = FakeClassify("ESCALADE")
+    chunks = [
+        c
+        async for c in r.query_streaming(
+            "Demande a Claude Code de me dire la version de Python."
+        )
+    ]
+    amorces = [c for c in chunks if c.get("channel") == "filler"]
+    assert amorces == [], f"amorce en trop sur un harnais nommé : {[c['delta'] for c in amorces]}"
 
 
 @runs_async
@@ -232,3 +263,70 @@ async def test_query_non_stream_reflexe_sans_outils():
     assert "tools" not in reflex.calls[0]
     assert "tool_choice" not in reflex.calls[0]
     assert deep.calls == []
+
+
+# Un tour qui nomme un harnais ne doit jamais partir en REFLEXE : la voie
+# reflexe est la seule sans outils, donc la seule ou le mandat ne peut pas
+# aboutir. Court-circuit avant le classifieur.
+
+
+@runs_async
+async def test_enonce_nommant_codex_escalade_sans_classifieur():
+    r = _router()
+    r._client = FakeClassify("REFLEXE")
+    decision = await r.classify(
+        "Envoie une requete a Codex qui ouvre le programme calque.exe sur le bureau."
+    )
+    assert decision["route"] == "escalate"
+    assert decision["verdict"] == "HARNAIS"
+    assert r._client.appels == 0
+
+
+@runs_async
+async def test_enonce_nommant_claude_escalade_sans_classifieur():
+    r = _router()
+    r._client = FakeClassify("REFLEXE")
+    decision = await r.classify("Demande a Claude de relire transport.py.")
+    assert decision["route"] == "escalate"
+    assert decision["verdict"] == "HARNAIS"
+    assert r._client.appels == 0
+
+
+@runs_async
+async def test_enonce_nommant_cursor_escalade_sans_classifieur():
+    r = _router()
+    r._client = FakeClassify("REFLEXE")
+    decision = await r.classify("Demande a Cursor d'ouvrir le fichier.")
+    assert decision["route"] == "escalate"
+    assert decision["verdict"] == "HARNAIS"
+    assert r._client.appels == 0
+
+
+@runs_async
+async def test_enonce_nommant_muse_escalade_sans_classifieur():
+    r = _router()
+    r._client = FakeClassify("REFLEXE")
+    decision = await r.classify("Demande a Muse un plan pour la soutenance.")
+    assert decision["route"] == "escalate"
+    assert decision["verdict"] == "HARNAIS"
+    assert r._client.appels == 0
+
+
+@runs_async
+async def test_bonjour_passe_encore_par_le_classifieur_et_reste_reflexe():
+    r = _router()
+    r._client = FakeClassify("REFLEXE")
+    decision = await r.classify("Bonjour.")
+    assert decision["route"] == "reflex"
+    assert decision["verdict"] == "REFLEXE"
+    assert r._client.appels == 1
+
+
+@runs_async
+async def test_casse_et_ponctuation_ne_comptent_pas_pour_un_harnais():
+    r = _router()
+    r._client = FakeClassify("REFLEXE")
+    decision = await r.classify("demande a CODEX, stp")
+    assert decision["route"] == "escalate"
+    assert decision["verdict"] == "HARNAIS"
+    assert r._client.appels == 0

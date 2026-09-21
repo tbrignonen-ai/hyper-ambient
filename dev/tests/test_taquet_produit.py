@@ -28,7 +28,9 @@ def test_carte_figee_charge_granite_whisper_magpie_sofia():
         environ=env,
     )
     assert "BRAIN_SERVICE" in injectees
-    assert env["BRAIN_SERVICE"] == "llamacpp"
+    assert env["BRAIN_SERVICE"] == "router"
+    assert env["BRAIN_MODEL"] == "MiniMaxAI/MiniMax-M3"
+    assert env["BRAIN_MODEL_LOCAL"] == "mother-local"
     assert env["MODEL"].endswith("granite-4.2-3b-Q4_K_M.gguf")
     assert env["EARS_BACKEND"] == "faster-whisper"
     assert env["EARS_MODEL"] == "large-v3"

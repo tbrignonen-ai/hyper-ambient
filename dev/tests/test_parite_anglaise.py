@@ -18,7 +18,7 @@ from src.mouth.secours import phrase_de_secours
 LANGUES = ("fr", "en", "es")
 _ACCENT_FR = re.compile(r"[àâäéèêëïîôùûüçÀÂÄÉÈÊËÏÎÔÙÛÜÇ]")
 # Identiques par nature (URL, mot international), pas des reliquats.
-_EN_IDENTIQUE_FR_OK = frozenset({"ui.feedback_url", "ui.stop"})
+_EN_IDENTIQUE_FR_OK = frozenset({"ui.feedback_url", "ui.stop", "ui.feedback"})
 
 
 @pytest.fixture
