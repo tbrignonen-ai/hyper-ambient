@@ -13,8 +13,7 @@ For heavy development work it is not the right tool, and it says so itself: it h
 visual interface for reading or editing a detailed result. It gives you the summary, then
 invites you to open the tool in question.
 
-French version: [README.md](README.md) · What data moves:
-[DONNEES.en.md](DONNEES.en.md) ([Français](DONNEES.md))
+Version française : [README.md](README.md)
 
 ## What it plugs into
 
@@ -37,7 +36,7 @@ reason — an open session, a context already loaded, a subscription.
 
 The local model handles short turns. A local classifier decides on every turn, and sends
 to the remote model only what needs it: a complex request, or one that names a development
-tool. What travels, and how to turn it off, is in [DONNEES.en.md](DONNEES.en.md).
+tool. Details in [DONNEES.en.md](DONNEES.en.md).
 
 ## Requirements
 

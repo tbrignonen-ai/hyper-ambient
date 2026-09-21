@@ -14,8 +14,7 @@ Pour du développement intensif, ce n'est pas l'outil adapté, et elle le dit el
 elle n'a pas d'interface visuelle pour lire ou modifier un résultat détaillé. Elle vous
 en donne le résumé, puis vous invite à ouvrir l'outil concerné.
 
-Version anglaise : [README.en.md](README.en.md) · Données qui circulent :
-[DONNEES.md](DONNEES.md) ([English](DONNEES.en.md))
+English version: [README.en.md](README.en.md)
 
 ## Ce à quoi elle se branche
 
@@ -40,8 +39,7 @@ abonnement.
 
 Le modèle local tient les tours brefs. Un classifieur local décide à chaque tour, et
 n'envoie au modèle distant que ce qui le nécessite : une demande complexe, ou une demande
-qui nomme un outil de développement. Le détail de ce qui circule, y compris comment le
-désactiver, est dans [DONNEES.md](DONNEES.md).
+qui nomme un outil de développement. Détail dans [DONNEES.md](DONNEES.md).
 
 ## Prérequis
 
