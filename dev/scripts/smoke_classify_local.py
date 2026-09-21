@@ -44,7 +44,7 @@ N_PREDICT = 4
 DEFAULT_NIGHTS = Path(
     os.environ.get(
         "NIGHTS_DIR",
-        r"C:\Users\thoma\obsidian-vault\10-Projects\MOTHER\nights",
+        str(Path.home() / "hyper-ambient" / "nights"),
     )
 )
 DEFAULT_REPORT = DEFAULT_NIGHTS / "2026-09-02-LFM-CLASSIFY-SMOKE.md"

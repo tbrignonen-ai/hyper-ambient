@@ -80,3 +80,16 @@ Capture d'écran*.png
 .env.local.sauvegarde*
 .env.*.sauvegarde*
 *.sauvegarde-*
+
+# Scripts ponctuels d une nuit de recette : chemins personnels en dur et
+# consignes adressees a un agent. Sans interet hors de cette machine.
+scripts/night-2026-08-31/
+
+# Journal de chantier interne : briefs aux agents et comptes rendus de nuit.
+# Utile au developpement, sans interet pour qui decouvre le projet, et contient
+# des echanges de travail. Reste en local.
+nights/
+
+# Scripts ponctuels d une nuit de recette : chemins personnels en dur et
+# consignes adressees a un agent. Sans interet hors de cette machine.
+scripts/night-2026-08-31/

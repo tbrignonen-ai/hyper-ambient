@@ -14,7 +14,11 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from handlers import handle_health_check, handle_vault_note
+from handlers import (
+    dossier_notes_par_defaut,
+    handle_health_check,
+    handle_vault_note,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -212,7 +216,7 @@ if __name__ == "__main__":
     parser.add_argument("--night-date", default=time.strftime("%Y-%m-%d"))
     parser.add_argument(
         "--vault-dir",
-        default=r"C:\Users\thoma\obsidian-vault\10-Projects\MOTHER\nights",
+        default=str(dossier_notes_par_defaut()),
     )
     parser.add_argument(
         "--topology-url",

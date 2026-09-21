@@ -5,6 +5,7 @@ Sonde les ponts et services locaux ; Camunda est optionnel (mode dégradé).
 """
 
 import json
+import os
 import time
 import urllib.error
 import urllib.request
@@ -202,13 +203,27 @@ def handle_health_check(variables: Dict[str, Any]) -> Dict[str, Any]:
     return resultat
 
 
+def dossier_notes_par_defaut() -> Path:
+    """Ou deposer les notes quand l'appelant n'impose rien.
+
+    Un chemin en dur vers le coffre d'un poste precis ne vaut que sur ce poste,
+    et il y expose le nom de son proprietaire. La variable d'environnement
+    ``HA_VAULT_DIR`` prend le pas ; sinon on retombe sous le dossier personnel,
+    qui existe sur les trois systemes.
+    """
+    impose = os.environ.get("HA_VAULT_DIR", "").strip()
+    if impose:
+        return Path(impose)
+    return Path.home() / "hyper-ambient" / "nights"
+
+
 def handle_vault_note(variables: Dict[str, Any]) -> Dict[str, Any]:
     """
     Écrit la note de santé dans le coffre Obsidian et la relit avant complétion.
     """
     night_date = variables.get("nightDate", "2026-08-31")
     vault_dir_raw = variables.get(
-        "vaultDir", r"C:\Users\thoma\obsidian-vault\10-Projects\MOTHER\nights"
+        "vaultDir", str(dossier_notes_par_defaut())
     )
 
     vault_dir = Path(vault_dir_raw)
