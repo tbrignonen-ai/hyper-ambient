@@ -1574,10 +1574,7 @@ class HostPipeline:
         maintenant = time.monotonic()
         for mandat in list(self._mandats.prets()):
             phrase = phrase_arrivee(mandat)
-            resume = ""
-            if mandat.reponse is not None:
-                resume = (getattr(mandat.reponse, "resume_voix", None) or "").strip()
-            self._noter_conversation(f"← {mandat.harnais}", resume or phrase)
+            self._noter_conversation(f"← {mandat.harnais}", phrase)
             print(
                 f"MANDAT: arrivee {mandat.harnais} id={mandat.identifiant} — {phrase!r}",
                 flush=True,

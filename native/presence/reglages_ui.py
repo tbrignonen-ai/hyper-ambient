@@ -318,6 +318,12 @@ def voix_courante(chemin: Path, carte: Path | None = None) -> str:
     return (lire_reglages(fichier).get("MOUTH_VOICE_NAME") or "").strip()
 
 
+def renvoi_outil_depuis(champs: dict[str, str] | None) -> bool:
+    """Absent du fichier = active. Seuls 0 / off / false / non desactivent."""
+    brut = ((champs or {}).get("VOIX_RENVOI_OUTIL") or "1").strip().lower()
+    return brut not in {"0", "off", "false", "non"}
+
+
 def accent_courant(chemin: Path, carte: Path | None = None) -> str:
     """Phonétique choisie dans `.env.local`, sinon celle de la carte figée."""
     champs, _secrets = precharger(Path(chemin))
@@ -466,6 +472,19 @@ class ChampMenu:
         if self._codes:
             return (self._codes.get(brut) or brut).strip()
         return brut
+
+
+class ChampCase:
+    """Adapter `.get()` pour une case : rend « 1 » ou « 0 »."""
+
+    def __init__(self, variable: Any) -> None:
+        self._variable = variable
+
+    def get(self) -> str:
+        try:
+            return "1" if int(self._variable.get()) else "0"
+        except (TypeError, ValueError):
+            return "1"
 
 
 def quatre_derniers(valeur: str | None) -> str:
@@ -758,6 +777,8 @@ class FenetreReglages:
         self.var_voix: Any = None
         self.combo_voix: Any = None
         self.ligne_voix_repli: Any = None
+        self.var_renvoi: Any = None
+        self.case_renvoi: Any = None
         self.var_accent: Any = None
         self.combo_accent: Any = None
         self.corps_voix: Any = None
@@ -963,7 +984,7 @@ class FenetreReglages:
             anchor="w",
         ).pack(fill=tk.X, pady=(4, 8))
         if bloc.get("menu"):
-            self._monter_menu_voix(parent)
+            self._monter_menu_voix(parent, champs)
             if bloc.get("info"):
                 return
         if bloc.get("menu_langue"):
@@ -1104,7 +1125,7 @@ class FenetreReglages:
             anchor="w",
         ).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-    def _monter_menu_voix(self, parent: tk.Misc) -> None:
+    def _monter_menu_voix(self, parent: tk.Misc, champs: dict[str, str] | None = None) -> None:
         from src.onboarding.sondes import LANGUES_TTS_REPLI, VOIX_TTS_REPLI
 
         courante = voix_courante(self.chemin)
@@ -1222,6 +1243,25 @@ class FenetreReglages:
             anchor="w",
         )
         self.ligne_voix_repli.pack(fill=tk.X, pady=(0, 4))
+        self.var_renvoi = tk.IntVar(
+            self.fenetre,
+            value=1 if renvoi_outil_depuis(champs) else 0,
+        )
+        self.case_renvoi = tk.Checkbutton(
+            parent,
+            text=t("reglages.renvoi_outil"),
+            variable=self.var_renvoi,
+            bg=FOND_VITRE,
+            fg=ENCRE,
+            activebackground=FOND_VITRE,
+            activeforeground=ENCRE,
+            selectcolor="#142028",
+            font=("Segoe UI", 11),
+            anchor="w",
+            takefocus=1,
+        )
+        self.case_renvoi.pack(fill=tk.X, pady=(4, 0))
+        self.champs["VOIX_RENVOI_OUTIL"] = ChampCase(self.var_renvoi)
         self._rafraichir_voix()
 
     def _monter_menu_langue(self, parent: tk.Misc) -> None:
@@ -1773,7 +1813,8 @@ class FenetreReglages:
         self.champs.clear()
         self._champ_accent = None
         self._champ_langue = None
-        for nom in ("var_voix", "var_accent", "var_langue"):
+        self.case_renvoi = None
+        for nom in ("var_voix", "var_accent", "var_langue", "var_renvoi"):
             setattr(self, nom, None)
 
     def fermer(self, _event: object | None = None) -> None:

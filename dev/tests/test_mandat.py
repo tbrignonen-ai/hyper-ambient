@@ -368,10 +368,10 @@ def test_arrivee_lit_le_resume_pas_le_detail():
     phrase = phrase_arrivee(m)
     assert phrase.startswith("Codex a fini")
     assert "Le fichier est propre." in phrase
-    assert "Tu veux le détail" in phrase or "Tu veux le detail" in phrase
+    assert "Le détail est dans Codex" in phrase or "Le detail est dans Codex" in phrase
     assert "X" * 20 not in phrase
     assert "Detail long" not in phrase
-    assert phrase.count("?") == 1
+    assert "?" not in phrase
 
 
 def test_arrivee_sans_resume_offre_quand_meme():
@@ -390,6 +390,71 @@ def test_arrivee_sans_resume_offre_quand_meme():
     assert "X" * 20 not in phrase
 
 
+def _mandat_fini(harnais="Codex", **reponse_kw):
+    return Mandat(
+        identifiant="m",
+        harnais=harnais,
+        question="q",
+        sujet="s",
+        depose_a=0.0,
+        etat="fini",
+        reponse=_reponse(**reponse_kw),
+    )
+
+
+def test_resultat_riche_produit_l_invitation():
+    """Un resultat_complet nettement plus long que le resume : elle renvoie."""
+    phrase = phrase_arrivee(_mandat_fini())
+    assert "Le fichier est propre." in phrase
+    assert "Le détail est dans Codex" in phrase or "Le detail est dans Codex" in phrase
+    assert phrase.count(".") >= 2
+    assert "n'hésite" not in phrase.lower()
+    assert "n'hesite" not in phrase.lower()
+
+
+def test_resultat_court_ne_produit_pas_l_invitation():
+    """Le complet tient dans le resume : renvoyer vers l'outil serait absurde."""
+    resume = "Le dossier src/brain contient seize fichiers Python."
+    phrase = phrase_arrivee(
+        _mandat_fini(resume_voix=resume, resultat_complet=resume)
+    )
+    assert resume in phrase
+    assert "détail est dans" not in phrase.lower()
+    assert "detail est dans" not in phrase.lower()
+    assert "Tu veux le détail" not in phrase
+    assert "Tu veux le detail" not in phrase
+
+
+def test_explication_libre_produit_l_invitation():
+    """Pont vocal : resume ~= complet, mais le texte est deja une reduction."""
+    texte = (
+        "Le routeur classe d'abord chaque demande en local : les salutations "
+        "ou ordres tres simples vont au canal reflexe, tandis que toute "
+        "question, ambiguite ou demande d'action est envoyee au modele distant."
+    )
+    assert len(texte) >= 160
+    phrase = phrase_arrivee(
+        _mandat_fini(resume_voix=texte, resultat_complet=texte)
+    )
+    assert "Le détail est dans Codex" in phrase or "Le detail est dans Codex" in phrase
+
+
+def test_invitation_nomme_le_harnais_qui_a_travaille():
+    phrase = phrase_arrivee(_mandat_fini(harnais="Claude"))
+    assert "Le détail est dans Claude" in phrase or "Le detail est dans Claude" in phrase
+    assert "Codex" not in phrase
+
+
+def test_invitation_absente_quand_le_reglage_est_desactive(monkeypatch):
+    monkeypatch.setenv("VOIX_RENVOI_OUTIL", "0")
+    phrase = phrase_arrivee(_mandat_fini())
+    assert "Le fichier est propre." in phrase
+    assert "détail est dans" not in phrase.lower()
+    assert "detail est dans" not in phrase.lower()
+    assert "Tu veux le détail" not in phrase
+    assert "Tu veux le detail" not in phrase
+
+
 def test_i18n_trois_temps_fr_et_en(monkeypatch):
     monkeypatch.delenv("HA_LANG", raising=False)
     monkeypatch.delenv("HYPER_AMBIENT_LANG", raising=False)
@@ -400,6 +465,7 @@ def test_i18n_trois_temps_fr_et_en(monkeypatch):
     assert t("mandat.rappel", harnais="Codex")
     assert t("mandat.fini", harnais="Codex")
     assert t("mandat.offre")
+    assert "Codex" in t("mandat.renvoi_outil", harnais="Codex")
     monkeypatch.setenv("HA_LANG", "en")
     accuse_en = t("mandat.accuse", harnais="Codex", sujet="review transport.py")
     assert "Codex" in accuse_en

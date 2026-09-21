@@ -378,3 +378,60 @@ def test_recoller_prononce_ajoute_l_espace_a_la_couture():
     )
     assert recoller(["Hel", "lo"]) == "Hello"
     assert recoller(["Déjà un espace. ", "Suite."]) == "Déjà un espace. Suite."
+
+
+@runs_async
+async def test_tour_sans_mandat_n_est_pas_affecte(tmp_path, capsys):
+    from src.brain.tools import ToolRegistry
+    from src.gate.permission import Gate
+    from src.brain.mandat import RegistreMandats
+
+    pieces = {
+        "brain": _Brain(),
+        "registre": ToolRegistry(),
+        "porte": Gate(mode="auto"),
+        "mandats": RegistreMandats(),
+        "historique": [],
+        "journal": tmp_path / "convo.md",
+    }
+    pieces["journal"].write_text("# test\n\n", encoding="utf-8")
+    compte = await parler_ecrit.jouer_tour_ecrit("Bonjour, comment vas-tu ?", pieces)
+    sortie = capsys.readouterr().out
+    assert compte["texte"] == "Je vais bien."
+    assert "détail est dans" not in sortie.lower()
+    assert "detail est dans" not in sortie.lower()
+    assert pieces["mandats"].en_cours() == []
+    assert pieces["mandats"].prets() == []
+
+
+@runs_async
+async def test_annonce_mandat_riche_prononce_l_invitation(tmp_path, capsys):
+    from src.brain.contrat_harnais import ReponseHarnais
+    from src.brain.mandat import Mandat, RegistreMandats, phrase_arrivee
+
+    pieces = {
+        "mandats": RegistreMandats(),
+        "journal": tmp_path / "convo.md",
+    }
+    pieces["journal"].write_text("# test\n\n", encoding="utf-8")
+    mandat = Mandat(
+        identifiant="m1",
+        harnais="Codex",
+        question="q",
+        sujet="s",
+        depose_a=0.0,
+        etat="fini",
+        reponse=ReponseHarnais(
+            verdict="fait",
+            resume_voix="Le routeur departage local et distant.",
+            detail_voix="d",
+            resultat_complet="Y" * 4000,
+            conforme=True,
+        ),
+    )
+    pieces["mandats"].deposer(mandat)
+    await parler_ecrit._annoncer_mandat(pieces, mandat)
+    sortie = capsys.readouterr().out
+    attendue = phrase_arrivee(mandat)
+    assert attendue in sortie
+    assert "Le détail est dans Codex" in attendue or "Le detail est dans Codex" in attendue

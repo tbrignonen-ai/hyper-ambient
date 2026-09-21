@@ -1139,6 +1139,7 @@ def test_libelles_invite_et_feedback_francais(monkeypatch):
     assert "charmante" in t("reglages.accent_compromis").lower()
     assert "comprendre" in t("reglages.accent_compromis").lower()
     assert t("reglages.voix_ecouter") == "Écouter"
+    assert t("reglages.renvoi_outil").startswith("Renvoyer vers l'outil")
     assert t("reglages.langue_titre") == "Langue"
     assert "interface" in t("reglages.langue_aide").lower()
     assert "rechargement" in t("reglages.langue_delai").lower()
@@ -1178,6 +1179,7 @@ def test_libelles_invite_et_feedback_anglais(monkeypatch):
     assert "charming" in t("reglages.accent_compromis").lower()
     assert "understand" in t("reglages.accent_compromis").lower()
     assert t("reglages.voix_ecouter") == "Listen"
+    assert "tool" in t("reglages.renvoi_outil").lower()
     assert t("reglages.langue_titre") == "Language"
     assert "interface" in t("reglages.langue_aide").lower()
     assert "reload" in t("reglages.langue_delai").lower()
@@ -1765,3 +1767,40 @@ def test_ouvrir_et_fermer_reglages_depuis_l_application(tmp_path):
         assert application.racine.winfo_exists()
     finally:
         application.fermer()
+
+
+def test_case_renvoi_outil_activee_par_defaut(tmp_path, racine_tk):
+    tk, racine = racine_tk
+
+    from native.presence.reglages_ui import FenetreReglages
+
+    chemin = tmp_path / ".env.local"
+    try:
+        fenetre = FenetreReglages(racine, chemin)
+        racine.update_idletasks()
+        assert fenetre.champs["VOIX_RENVOI_OUTIL"].get() == "1"
+        assert int(fenetre.var_renvoi.get()) == 1
+        textes = " ".join(_textes_widgets(fenetre.fenetre))
+        assert "Renvoyer vers l'outil" in textes or "outil pour le détail" in textes
+    finally:
+        fenetre.fermer()
+
+
+def test_enregistrer_desactive_le_renvoi_outil(tmp_path, racine_tk):
+    tk, racine = racine_tk
+
+    from native.presence.reglages_ui import FenetreReglages
+
+    chemin = _env(tmp_path, "BRAIN_MODEL=avant\n")
+    try:
+        fenetre = FenetreReglages(racine, chemin)
+        racine.update_idletasks()
+        fenetre.var_renvoi.set(0)
+        fenetre.bouton_enregistrer.invoke()
+        racine.update_idletasks()
+        lus = module_reglages.lire_reglages(chemin)
+        assert lus["VOIX_RENVOI_OUTIL"] == "0"
+        assert lus["BRAIN_MODEL"] == "avant"
+    finally:
+        fenetre.fermer()
+

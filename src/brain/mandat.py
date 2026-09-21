@@ -6,6 +6,7 @@ Le texte long n'est jamais lu : seulement un resume court, plus un pointeur.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import time
 import uuid
@@ -269,18 +270,75 @@ def _deux_phrases(texte: str) -> str:
     return " ".join(morceaux[:2]).strip()
 
 
+# Deux seuils, le premier est le plus honnete.
+#
+# SEUIL_ECART_RENVOI = 400 : surplus du resultat_complet sur le
+# resume_voix. Quand le contrat JSON est tenu, c'est le signal
+# d'une reduction (diff, analyse). Un decompte de fichiers, meme
+# avec la liste des noms, reste sous 400 de surplus.
+#
+# SEUIL_COMPLET_RICHE = 160 : le pont Codex ne renvoie aujourd'hui
+# que le texte parlable, donc resume ~= complet et l'ecart est nul.
+# On mesure alors la taille du complet — pas le nombre de mots
+# prononces. Un fait clos ( « 16 », un decompte d'une phrase, ~80
+# caracteres observes ) tient dessous ; une explication du routeur
+# (~200) passe dessus. 160 est a mi-chemin de la borne resume_voix
+# (220), assez haut pour un fait, assez bas pour une analyse.
+SEUIL_ECART_RENVOI = 400
+SEUIL_COMPLET_RICHE = 160
+CLE_RENVOI_OUTIL = "VOIX_RENVOI_OUTIL"
+
+
+def renvoi_outil_actif() -> bool:
+    brut = (os.getenv(CLE_RENVOI_OUTIL) or "1").strip().lower()
+    return brut not in {"0", "off", "false", "non"}
+
+
+def resultat_est_une_reduction(resume: str, complet: str) -> bool:
+    """Vrai si le resume est une reduction d'un resultat plus riche."""
+    resume = (resume or "").strip()
+    complet = (complet or "").strip()
+    if not resume or not complet:
+        return False
+    if len(complet) - len(resume) >= SEUIL_ECART_RENVOI:
+        return True
+    return len(complet) >= SEUIL_COMPLET_RICHE
+
+
+def phrase_renvoi_outil(mandat: Mandat) -> str:
+    """Une phrase courte si le resume reduit un resultat plus riche.
+
+    Le contrat de sortie porte resume_voix et resultat_complet. Quand
+    le second tient dans le premier, il n'y a rien de plus a montrer.
+    """
+    if not renvoi_outil_actif():
+        return ""
+    reponse = mandat.reponse
+    if reponse is None:
+        return ""
+    resume = (getattr(reponse, "resume_voix", None) or "").strip()
+    complet = (getattr(reponse, "resultat_complet", None) or "").strip()
+    if not resultat_est_une_reduction(resume, complet):
+        return ""
+    return t("mandat.renvoi_outil", harnais=mandat.harnais)
+
+
 def phrase_arrivee(mandat: Mandat) -> str:
     if mandat.etat == "echoue":
         return t("mandat.echoue", harnais=mandat.harnais)
     fini = t("mandat.fini", harnais=mandat.harnais)
-    offre = t("mandat.offre")
     resume = ""
     if mandat.reponse is not None:
         resume = (getattr(mandat.reponse, "resume_voix", None) or "").strip()
     if not resume:
-        return t("mandat.sans_resume", harnais=mandat.harnais)
+        if renvoi_outil_actif():
+            return t("mandat.sans_resume", harnais=mandat.harnais)
+        return fini
     resume = _deux_phrases(resume)
-    return f"{fini} {resume} {offre}".strip()
+    invitation = phrase_renvoi_outil(mandat)
+    if invitation:
+        return f"{fini} {resume} {invitation}".strip()
+    return f"{fini} {resume}".strip()
 
 
 async def _courir(mandat: Mandat, appel: Callable[[str], Awaitable[str]]) -> None:

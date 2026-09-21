@@ -109,6 +109,7 @@ _FR: dict[str, str] = {
     "mandat.rappel": "{harnais} prend du temps, je te préviens dès que c'est prêt.",
     "mandat.fini": "{harnais} a fini.",
     "mandat.offre": "Tu veux le détail, ou que je te l'ouvre ?",
+    "mandat.renvoi_outil": "Le détail est dans {harnais} si tu veux le lire.",
     "mandat.echoue": "{harnais} n'a pas répondu. J'arrête d'attendre.",
     "mandat.plein": "J'ai déjà trois mandats en cours. Je ne peux pas en prendre un de plus.",
     "mandat.sans_resume": (
@@ -252,6 +253,7 @@ _FR: dict[str, str] = {
     "reglages.voix_ecouter_echec": (
         "Le serveur vocal ne répond pas. L'extrait n'a pas pu être joué."
     ),
+    "reglages.renvoi_outil": "Renvoyer vers l'outil pour le détail",
     "reglages.langue_titre": "Langue",
     "reglages.langue_aide": (
         "La langue de l'interface. On ne la change qu'une fois."
@@ -400,6 +402,7 @@ _EN: dict[str, str] = {
     "mandat.rappel": "{harnais} is taking a while — I'll let you know as soon as it's ready.",
     "mandat.fini": "{harnais} is done.",
     "mandat.offre": "Want the detail, or shall I open it?",
+    "mandat.renvoi_outil": "The detail is in {harnais} if you want to read it.",
     "mandat.echoue": "{harnais} didn't answer. I'll stop waiting.",
     "mandat.plein": "I already have three mandates in progress. I can't take another.",
     "mandat.sans_resume": (
@@ -543,6 +546,7 @@ _EN: dict[str, str] = {
     "reglages.voix_ecouter_echec": (
         "The voice server is not answering. The sample could not be played."
     ),
+    "reglages.renvoi_outil": "Point to the tool for the detail",
     "reglages.langue_titre": "Language",
     "reglages.langue_aide": (
         "The interface language. You only change it once."

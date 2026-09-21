@@ -113,15 +113,12 @@ async def jouer_tour_ecrit(prompt: str, pieces: dict) -> dict:
 
 
 async def _annoncer_mandat(pieces: dict, mandat) -> None:
-    resume = ""
-    if mandat.reponse is not None:
-        resume = (getattr(mandat.reponse, "resume_voix", None) or "").strip()
     from src.brain.mandat import phrase_arrivee
 
-    ligne = resume or phrase_arrivee(mandat)
+    ligne = phrase_arrivee(mandat)
     print(f"← {mandat.harnais} : {ligne}", flush=True)
     ecrire_ligne_conversation(
-        pieces.get("journal"), f"← {mandat.harnais}", resume or ligne,
+        pieces.get("journal"), f"← {mandat.harnais}", ligne,
     )
     pieces["mandats"].marquer_annonce(mandat.identifiant)
 
