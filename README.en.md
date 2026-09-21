@@ -1,5 +1,7 @@
 # hyper-ambient
 
+[Français](README.md) · **English**
+
 hyper-ambient is a local, ambient voice presence. It listens, answers out loud, and keeps
 real time on the machine: an ordinary turn comes back in 650 milliseconds without leaving
 the computer.
@@ -12,8 +14,6 @@ machine, under your account and your sessions, then reports back by voice.
 For heavy development work it is not the right tool, and it says so itself: it has no
 visual interface for reading or editing a detailed result. It gives you the summary, then
 invites you to open the tool in question.
-
-Version française : [README.md](README.md)
 
 ## What it plugs into
 

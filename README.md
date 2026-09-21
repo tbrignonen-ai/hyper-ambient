@@ -1,5 +1,7 @@
 # hyper-ambient
 
+**Français** · [English — full description in English](README.en.md)
+
 hyper-ambient est une présence vocale ambiante et locale. Elle écoute, répond à voix
 haute, et garde le temps réel sur la machine : un tour ordinaire revient en 650
 millisecondes, sans quitter le poste.
@@ -13,8 +15,6 @@ résultat à la voix.
 Pour du développement intensif, ce n'est pas l'outil adapté, et elle le dit elle-même :
 elle n'a pas d'interface visuelle pour lire ou modifier un résultat détaillé. Elle vous
 en donne le résumé, puis vous invite à ouvrir l'outil concerné.
-
-English version: [README.en.md](README.en.md)
 
 ## Ce à quoi elle se branche
 
