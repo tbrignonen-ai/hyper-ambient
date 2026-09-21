@@ -26,7 +26,7 @@ async def main() -> None:
     print(f"{'intervalle':>10} {'f0':>8} {'TTFA':>8} {'duree':>8} {'WER':>7}  transcription")
     print("-" * 100)
     for demi_tons in INTERVALLES:
-        tts = PiperTTS(model_path=MODELE, profile="mother", demi_tons=demi_tons)
+        tts = PiperTTS(model_path=MODELE, profile="ambiante", demi_tons=demi_tons)
         if not await tts.load_model():
             continue
         out = await tts.synthesize(PHRASE)

@@ -1,5 +1,5 @@
 """
-Pont hote : MOTHER (conteneur) -> Codex CLI (hote), en lecture seule.
+Pont hote : hyper-ambient (conteneur) -> Codex CLI (hote), en lecture seule.
 
     POST /ask  {"question": "..."}   Authorization: Bearer $CODEX_BRIDGE_TOKEN
     -> {"ok": true, "answer": "..."} | {"ok": false, "error": "..."}

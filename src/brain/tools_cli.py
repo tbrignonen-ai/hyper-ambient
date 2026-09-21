@@ -1,7 +1,7 @@
 """
 BRAIN: `ask_claude` et `ask_hermes`, meme geste que `ask_codex`.
 
-MOTHER ne pilote pas les CLI elle-meme : elle pose une question a un **pont**
+hyper-ambient ne pilote pas les CLI elle-meme : elle pose une question a un **pont**
 qui tourne sur l'hote (`native/clibridge/bridge.py`). Claude est lance en
 lecture seule (`-p --restricted --permission-mode plan`). Hermes a le chemin
 ecrit, mais le pont refuse de l'allumer tant que `CLI_BRIDGE_HERMES=1` n'arme

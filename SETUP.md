@@ -28,7 +28,7 @@ deploy:
 ### 1. Build the container
 
 ```bash
-cd D:\BGB Training\MOTHER-dev
+cd C:\chemin\vers\hyper-ambient
 make build
 ```
 

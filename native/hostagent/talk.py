@@ -36,11 +36,11 @@ NOM_MICRO_PREFERE: str | tuple[str, ...] = NOMS_MICRO_PREFERES
 
 def lire_secret() -> str:
     """Secret d'installation, ou valeur de développement si la variable manque."""
-    secret = os.environ.get("MOTHER_HOSTAGENT_SECRET")
+    secret = os.environ.get("HA_HOSTAGENT_SECRET") or os.environ.get("MOTHER_HOSTAGENT_SECRET")
     if secret:
         return secret
     print(
-        "ATTENTION : MOTHER_HOSTAGENT_SECRET est absent. "
+        "ATTENTION : HA_HOSTAGENT_SECRET est absent. "
         "Secret de développement utilisé (« partage-installation »). "
         "Ne pas exposer ce service hors de la machine.",
         file=sys.stderr,

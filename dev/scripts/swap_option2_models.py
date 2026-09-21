@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-MODELS = Path(os.environ.get("MOTHER_MODELS", REPO / "models"))
+MODELS = Path(os.environ.get("HA_MODELS") or os.environ.get("MOTHER_MODELS") or (REPO / "models"))
 GGUF_DIR = MODELS / "gguf"
 HF_CACHE = MODELS / "hf-cache"
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Accountability MOTHER — circuit ferme.
+"""Accountability hyper-ambient — circuit ferme.
 
 Regle Thomas 20/09 :
   - tache simple  -> OC seul + ponts (Cursor/Codex/Qwen/Claude), comme hier

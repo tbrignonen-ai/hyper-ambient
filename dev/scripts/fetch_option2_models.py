@@ -21,7 +21,7 @@ os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 REPO = Path(__file__).resolve().parents[2]
-MODELS = Path(os.environ.get("MOTHER_MODELS", REPO / "models"))
+MODELS = Path(os.environ.get("HA_MODELS") or os.environ.get("MOTHER_MODELS") or (REPO / "models"))
 GGUF_DIR = MODELS / "gguf"
 HF_CACHE = MODELS / "hf-cache"
 # HF_HOME=/workspace/models/hf-cache → blobs dans $HF_HOME/hub (comme faster-whisper).

@@ -1,7 +1,7 @@
 """
 BRAIN: `ask_codex`, premier outil du harnais local.
 
-MOTHER ne pilote pas Codex elle-meme : elle pose une question a un **pont**
+hyper-ambient ne pilote pas Codex elle-meme : elle pose une question a un **pont**
 qui tourne sur l'hote (`native/codexbridge/bridge.py`), lequel lance
 `codex exec` en bac a sable **lecture seule**. D'ou `danger="read"` : Codex
 lit le depot et repond, il n'ecrit rien.

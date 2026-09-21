@@ -1,5 +1,5 @@
 """
-Pont hote : MOTHER (conteneur) -> Claude CLI / Hermes CLI (hote), lecture seule.
+Pont hote : hyper-ambient (conteneur) -> Claude CLI / Hermes CLI (hote), lecture seule.
 
     POST /ask  {"question": "...", "agent": "claude"|"hermes"}
     Authorization: Bearer $CLI_BRIDGE_TOKEN

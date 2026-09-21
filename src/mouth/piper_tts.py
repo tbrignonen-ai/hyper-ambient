@@ -125,7 +125,7 @@ class PiperTTS:
         Args:
             profile: voice character from src.mouth.voice_design.PROFILES.
                 "flat" is the raw voice; "aurora" is the close-mic profile
-                validated in production. "mother" is the hull treatment.
+                validated in production. "ambiante" is the hull treatment.
             length_scale: overrides the profile's rate if given.
             speaker_id: for multi-speaker voices (upmc, mls).
             demi_tons: transposition de la voix, en demi-tons. Les voix

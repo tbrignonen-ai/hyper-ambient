@@ -457,7 +457,7 @@ def dry_run(
 
 
 def jev_ignore_tour(evaluation) -> bool:
-    """True seulement si JeV a tranché : la phrase n'est pas adressée à MOTHER.
+    """True seulement si JeV a tranché : la phrase n'est pas adressée à l'assistante.
 
     ``None`` (pas de clé, timeout, erreur) = repli bouton : on n'ignore pas.
     Un harnais nommé n'a aucun effet ici : aucun modèle n'envoie une tâche.
@@ -828,11 +828,11 @@ def construire_ears():
 
 def lire_secret() -> str:
     """Secret d'installation, ou valeur de développement si la variable manque."""
-    secret = os.environ.get("MOTHER_HOSTAGENT_SECRET")
+    secret = os.environ.get("HA_HOSTAGENT_SECRET") or os.environ.get("MOTHER_HOSTAGENT_SECRET")
     if secret:
         return secret
     print(
-        "ATTENTION : MOTHER_HOSTAGENT_SECRET est absent. "
+        "ATTENTION : HA_HOSTAGENT_SECRET est absent. "
         "Secret de développement utilisé (« partage-installation »). "
         "Ne pas exposer ce service hors de la machine.",
         file=sys.stderr,
@@ -1902,7 +1902,7 @@ class HostPipeline:
                 evaluation = await jev.evaluate(prompt)
                 if jev_doit_ignorer(evaluation, mains_libres=True):
                     print(
-                        "JEV   : pas adressée à MOTHER — tour ignoré",
+                        "JEV   : pas adressée à l'assistante — tour ignoré",
                         flush=True,
                     )
                     self._tampon_ambiant.deposer(prompt, time.monotonic())

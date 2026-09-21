@@ -71,7 +71,7 @@ async def run_one(router, tts, prompt, out_path):
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-filler", action="store_true")
-    ap.add_argument("--profile", default="mother")
+    ap.add_argument("--profile", default="ambiante")
     args = ap.parse_args()
 
     from src.brain.factory import build_router

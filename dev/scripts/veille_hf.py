@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 API_MODELS = "https://huggingface.co/api/models"
-USER_AGENT = "MOTHER-veille-hf/1.0 (stdlib; no-token)"
+USER_AGENT = "hyper-ambient-veille-hf/1.0 (stdlib; no-token)"
 WINDOW_DAYS = 120
 PRIORITY_DAYS = 30
 LIMIT = 100

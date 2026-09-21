@@ -11,8 +11,15 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "workers" / "night_health_vault_note"))
+_WORKER = ROOT / "workers" / "night_health_vault_note"
+# Le conteneur ne monte que src/, dev/ et native/ : les sondes y sont hors
+# d'atteinte. On saute plutot que d'echouer a la collecte.
+if not _WORKER.is_dir():
+    pytest.skip("sondes absentes de ce montage", allow_module_level=True)
+sys.path.insert(0, str(_WORKER))
 
 from handlers import handle_health_check, handle_vault_note  # noqa: E402
 

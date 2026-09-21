@@ -93,3 +93,9 @@ nights/
 # Scripts ponctuels d une nuit de recette : chemins personnels en dur et
 # consignes adressees a un agent. Sans interet hors de cette machine.
 scripts/night-2026-08-31/
+
+# Journaux de chantier et notes internes, non destines au depot public
+STATUS.md
+prompt.md
+dev/sessions/
+automation/n8n/COMPTE-RENDU.md

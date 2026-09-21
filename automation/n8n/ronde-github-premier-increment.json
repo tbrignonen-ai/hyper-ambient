@@ -28,6 +28,17 @@
       ]
     },
     {
+      "parameters": {},
+      "id": "a1e0b960-2d54-4a9a-8d70-000000000015",
+      "name": "Déclenchement par un autre flux",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1760,
+        420
+      ]
+    },
+    {
       "parameters": {
         "assignments": {
           "assignments": [
@@ -60,6 +71,12 @@
               "name": "libelles_eligibles",
               "value": "doc, typo, auto",
               "type": "string"
+            },
+            {
+              "id": "b1e0b960-2d54-4a9a-8d70-000000000006",
+              "name": "activer_github",
+              "value": false,
+              "type": "boolean"
             }
           ]
         },
@@ -85,7 +102,7 @@
           "conditions": [
             {
               "id": "c1e0b960-2d54-4a9a-8d70-000000000001",
-              "leftValue": "={{ $env.GITHUB_TOKEN !== undefined && $env.GITHUB_TOKEN !== '' }}",
+              "leftValue": "={{ $json.activer_github }}",
               "rightValue": true,
               "operator": {
                 "type": "boolean",
@@ -99,7 +116,7 @@
         "options": {}
       },
       "id": "a1e0b960-2d54-4a9a-8d70-000000000003",
-      "name": "Jeton GitHub disponible ?",
+      "name": "Accès GitHub activé ?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
@@ -111,16 +128,14 @@
       "parameters": {
         "method": "GET",
         "url": "https://api.github.com/rate_limit",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "Accept",
               "value": "application/vnd.github+json"
-            },
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $env.GITHUB_TOKEN }}"
             },
             {
               "name": "X-GitHub-Api-Version",
@@ -183,6 +198,8 @@
       "parameters": {
         "method": "GET",
         "url": "=https://api.github.com/repos/{{ $('Paramètres').first().json.depot }}/issues",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
@@ -210,10 +227,6 @@
             {
               "name": "Accept",
               "value": "application/vnd.github+json"
-            },
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $env.GITHUB_TOKEN }}"
             },
             {
               "name": "X-GitHub-Api-Version",
@@ -510,18 +523,29 @@
         ]
       ]
     },
-    "Paramètres": {
+    "Déclenchement par un autre flux": {
       "main": [
         [
           {
-            "node": "Jeton GitHub disponible ?",
+            "node": "Paramètres",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Jeton GitHub disponible ?": {
+    "Paramètres": {
+      "main": [
+        [
+          {
+            "node": "Accès GitHub activé ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accès GitHub activé ?": {
       "main": [
         [
           {

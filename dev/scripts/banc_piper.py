@@ -83,7 +83,7 @@ async def main() -> None:
     print(f"{'voix':16} {'f0':>8} {'TTFA':>8} {'RTF':>6} {'WER':>7}  transcription")
     print("-" * 104)
     for nom, fichier, locuteur in CANDIDATES:
-        for profil in ("flat", "mother"):
+        for profil in ("flat", "ambiante"):
             tts = PiperTTS(
                 model_path=f"/workspace/models/piper/{fichier}.onnx",
                 speaker_id=locuteur,

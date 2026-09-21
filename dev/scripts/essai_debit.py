@@ -24,7 +24,7 @@ async def main() -> None:
 
     # Un seul chargement du modele : la transposition est un post-traitement,
     # elle n'a aucune raison de repayer 1,5 Go de VRAM par variante.
-    tts = PocketTTS(voice="estelle", profile="mother")
+    tts = PocketTTS(voice="estelle", profile="ambiante")
     if not await tts.load_model():
         raise SystemExit("pocket-tts indisponible")
 

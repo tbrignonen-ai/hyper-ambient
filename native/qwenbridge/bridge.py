@@ -1,5 +1,5 @@
 """
-Pont hote : MOTHER -> Qwen Code CLI (Token Plan).
+Pont hote : hyper-ambient -> Qwen Code CLI (Token Plan).
 
     GET  /pong|/health
     POST /ask  {"question": "...", "model": "qwen3.6-flash"}

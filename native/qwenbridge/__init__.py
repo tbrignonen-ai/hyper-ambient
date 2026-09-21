@@ -1,1 +1,1 @@
-# Pont hote MOTHER -> Qwen Code (Token Plan).
+# Pont hote hyper-ambient -> Qwen Code (Token Plan).

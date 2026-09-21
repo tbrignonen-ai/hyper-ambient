@@ -58,7 +58,7 @@ FLAT = VoiceProfile()
 # Band limits are deliberately wide: a telephone band (300–3400) reads as
 # "phone call", not "ship". Keeping lows to 90 Hz preserves the chest weight
 # that makes it feel like it comes from the walls.
-MOTHER = VoiceProfile(
+AMBIANTE = VoiceProfile(
     length_scale=1.16,
     # Pas d'etirement : essaye a 1.10 sur pocket-tts, la retouche s'entend
     # (vocodeur de phase applique par chunk). Le mecanisme reste disponible
@@ -76,7 +76,7 @@ MOTHER = VoiceProfile(
 )
 
 # Colder and further away — for alerts rather than conversation.
-MOTHER_ALERT = VoiceProfile(
+AMBIANTE_ALERTE = VoiceProfile(
     length_scale=1.08,
     noise_scale=0.35,
     noise_w_scale=0.45,
@@ -106,7 +106,15 @@ AURORA = VoiceProfile(
     deess_db=-3.0,
 )
 
-PROFILES = {"flat": FLAT, "mother": MOTHER, "alert": MOTHER_ALERT, "aurora": AURORA}
+# « mother » reste accepte : c'est l'ancien nom du produit, et des reglages
+# enregistres avant le renommage le portent encore.
+PROFILES = {
+    "flat": FLAT,
+    "ambiante": AMBIANTE,
+    "mother": AMBIANTE,
+    "alert": AMBIANTE_ALERTE,
+    "aurora": AURORA,
+}
 
 
 def _peaking_sos(freq: float, q: float, gain_db: float, sample_rate: int) -> np.ndarray:
