@@ -2356,6 +2356,17 @@ class Application:
         self._annuler_repli_jev_pret()
         self._sondes_stop.set()
         self.session.demander_arret()
+        existante = getattr(self, "fenetre_reglages", None)
+        if existante is not None:
+            try:
+                existante.fermer()
+            except tk.TclError:
+                pass
+            self.fenetre_reglages = None
+        # PhotoImage + iconphoto(-default) : lâcher sur le fil Tk avant
+        # destroy, sinon l'image survit à l'interpréteur et le prochain
+        # Tk() du processus (suite de tests, relance interne) plante.
+        self._icone_photo = None
         try:
             self.racine.destroy()
         except tk.TclError:

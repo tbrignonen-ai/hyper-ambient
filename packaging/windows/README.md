@@ -1,10 +1,18 @@
 # Installation Windows
 
+```powershell
+& "C:\path\to\hyper-ambient\packaging\windows\installer.ps1" -Diagnostic
+& "C:\path\to\hyper-ambient\packaging\windows\installer.ps1"
+& "C:\path\to\hyper-ambient\packaging\windows\lancer.ps1"
+& "C:\path\to\hyper-ambient\packaging\windows\installer_raccourcis.ps1"
+& "C:\path\to\hyper-ambient\packaging\windows\installer_raccourcis.ps1" -Supprimer
+```
+
+## Start with a diagnostic
+
 The scripts locate the repository from their own location, so they can be called from
 any PowerShell directory. Keep the script path in quotes: clone paths may contain
 spaces.
-
-## Start with a diagnostic
 
 Replace `C:\path\to\hyper-ambient` with your clone path, then type exactly this in
 PowerShell:

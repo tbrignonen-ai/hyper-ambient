@@ -153,6 +153,12 @@ def test_a11y_contraste_persiste_dans_presence_json(tmp_path: Path):
 def test_palettes_a11y_respectent_wcag_non_textuel():
     from native.presence.overlay import FOND_CHAMP, palettes
     from native.presence.onboarding import couleurs_eclair
+    from native.presence.reglages_ui import (
+        FOND_VITRE,
+        PASTILLE_KO,
+        PASTILLE_MUET,
+        PASTILLE_OK,
+    )
     from native.presence.sante import contraste_relatif
 
     for etat, palette in palettes(True).items():
@@ -162,3 +168,11 @@ def test_palettes_a11y_respectent_wcag_non_textuel():
     fill_off, contour_off = couleurs_eclair(False, a11y=True)
     assert contraste_relatif(fill_off, "#102028") >= 3.0
     assert contraste_relatif(contour_off, "#102028") >= 3.0
+    for nom, couleur in (
+        ("ok", PASTILLE_OK),
+        ("muet", PASTILLE_MUET),
+        ("ko", PASTILLE_KO),
+    ):
+        ratio = contraste_relatif(couleur, FOND_VITRE)
+        assert ratio >= 3.0, f"pastille {nom}={couleur} ratio={ratio:.2f}"
+    assert len({PASTILLE_OK, PASTILLE_MUET, PASTILLE_KO}) == 3

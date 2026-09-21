@@ -83,10 +83,16 @@ def _application(tmp_path: Path):
     args = analyser_arguments(
         ["--onboarding", "--config", str(tmp_path / "presence.json")]
     )
-    try:
-        application = Application(args)
-    except tk.TclError as exc:
-        pytest.skip(f"Tk indisponible : {exc}")
+    derniere: Exception | None = None
+    application = None
+    for _ in range(3):
+        try:
+            application = Application(args)
+            break
+        except tk.TclError as exc:
+            derniere = exc
+    if application is None:
+        pytest.skip(f"Tk indisponible : {derniere}")
     application.session_lancee = True
     application._afficher_application()
     application.racine.withdraw()

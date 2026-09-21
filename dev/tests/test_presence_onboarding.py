@@ -150,35 +150,38 @@ def _textes_widgets(widget) -> list[str]:
 
 
 def _ouvrir_tk():
+    """Importe tkinter. Pas de racine jetable : Tk()+destroy puis un second
+    Tk() casse Tcl 8.6 sous Python 3.13 (init.tcl introuvable, 0x80000003).
+    """
     try:
         import tkinter as tk
     except ModuleNotFoundError as exc:
         pytest.skip(f"Tk indisponible : {exc}")
-
-    try:
-        racine = tk.Tk()
-        racine.withdraw()
-        racine.destroy()
-    except tk.TclError as exc:
-        pytest.skip(f"Tk indisponible : {exc}")
+    return tk
 
 
-def test_dessiner_eclair_pose_un_polygone_allume():
-    _ouvrir_tk()
-    import tkinter as tk
+def _application_tk(args):
+    tk = _ouvrir_tk()
+    from native.presence.app import Application
 
+    derniere: Exception | None = None
+    for _ in range(3):
+        try:
+            return Application(args)
+        except tk.TclError as exc:
+            derniere = exc
+    pytest.skip(f"Tk indisponible : {derniere}")
+
+
+def test_dessiner_eclair_pose_un_polygone_allume(racine_tk):
     from native.presence.overlay import dessiner_eclair
 
-    racine = tk.Tk()
-    racine.withdraw()
-    try:
-        toile = tk.Canvas(racine, width=80, height=80)
-        dessiner_eclair(toile, cx=40, cy=40, taille=50, allume=True, maintenant=0.8)
-        ids = toile.find_withtag("eclair")
-        assert ids
-        assert "polygon" in {toile.type(i) for i in ids}
-    finally:
-        racine.destroy()
+    tk, racine = racine_tk
+    toile = tk.Canvas(racine, width=80, height=80)
+    dessiner_eclair(toile, cx=40, cy=40, taille=50, allume=True, maintenant=0.8)
+    ids = toile.find_withtag("eclair")
+    assert ids
+    assert "polygon" in {toile.type(i) for i in ids}
 
 
 def test_wizard_et_eclair_distant_sont_visibles(tmp_path):
@@ -186,12 +189,12 @@ def test_wizard_et_eclair_distant_sont_visibles(tmp_path):
     import tkinter as tk
 
     from native.presence import overlay as visuel
-    from native.presence.app import Application, analyser_arguments
+    from native.presence.app import analyser_arguments
 
     args = analyser_arguments(
         ["--onboarding", "--config", str(tmp_path / "presence.json")]
     )
-    application = Application(args)
+    application = _application_tk(args)
     application.session_lancee = True
     try:
         application.racine.withdraw()
@@ -258,8 +261,7 @@ def test_wizard_et_eclair_distant_sont_visibles(tmp_path):
 
 def test_page_principale_sans_bouton_feedback(tmp_path):
     _ouvrir_tk()
-
-    from native.presence.app import Application, analyser_arguments
+    from native.presence.app import analyser_arguments
     from native.presence.onboarding import (
         ConfigurationPresence,
         enregistrer_configuration,
@@ -271,12 +273,7 @@ def test_page_principale_sans_bouton_feedback(tmp_path):
         config,
     )
     args = analyser_arguments(["--onboarding", "--config", str(config)])
-    try:
-        application = Application(args)
-    except Exception as exc:
-        if exc.__class__.__name__ == "TclError":
-            pytest.skip(f"Tk indisponible : {exc}")
-        raise
+    application = _application_tk(args)
     application.session_lancee = True
     try:
         application._afficher_application()
@@ -297,96 +294,82 @@ def test_page_principale_sans_bouton_feedback(tmp_path):
         application.fermer()
 
 
-def test_dessiner_orbe_pose_des_formes_qui_bougent():
-    _ouvrir_tk()
-    import tkinter as tk
-
+def test_dessiner_orbe_pose_des_formes_qui_bougent(racine_tk):
     from native.presence import overlay as visuel
 
-    racine = tk.Tk()
-    racine.withdraw()
-    try:
-        toile = tk.Canvas(racine, width=200, height=200)
-        visuel.dessiner_orbe(
-            toile,
-            cx=100,
-            cy=100,
-            taille=180,
-            etat="reflexion",
-            palette=visuel.PALETTES["reflexion"],
-            angle=40.0,
-            souffle=0.6,
-            maintenant=1.25,
-        )
-        ids = toile.find_withtag("orbe")
-        types = {toile.type(i) for i in ids}
-        assert "polygon" in types
-        assert "oval" in types
-        assert "arc" in types
-        visuel.dessiner_nappe(
-            toile,
-            largeur=200,
-            hauteur=200,
-            palette=visuel.PALETTES["repos"],
-            maintenant=2.4,
-            etat="repos",
-        )
-        assert toile.find_withtag("nappe")
-        assert toile.find_withtag("souffle")
-        ids_souffle = toile.find_withtag("souffle")
-        assert "oval" in {toile.type(i) for i in ids_souffle}
-        remplis = [
-            toile.itemcget(i, "fill")
-            for i in toile.find_withtag("nappe")
-            if toile.itemcget(i, "fill") not in ("", visuel.COULEUR_TRANSPARENTE)
-        ]
-        assert remplis, "la nappe doit avoir un corps rempli, pas seulement des contours"
-        for fill in remplis:
-            r, g, b = visuel.vers_rgb(fill)
-            assert (r + g + b) / 3.0 >= 40, fill
-    finally:
-        racine.destroy()
+    tk, racine = racine_tk
+    toile = tk.Canvas(racine, width=200, height=200)
+    visuel.dessiner_orbe(
+        toile,
+        cx=100,
+        cy=100,
+        taille=180,
+        etat="reflexion",
+        palette=visuel.PALETTES["reflexion"],
+        angle=40.0,
+        souffle=0.6,
+        maintenant=1.25,
+    )
+    ids = toile.find_withtag("orbe")
+    types = {toile.type(i) for i in ids}
+    assert "polygon" in types
+    assert "oval" in types
+    assert "arc" in types
+    visuel.dessiner_nappe(
+        toile,
+        largeur=200,
+        hauteur=200,
+        palette=visuel.PALETTES["repos"],
+        maintenant=2.4,
+        etat="repos",
+    )
+    assert toile.find_withtag("nappe")
+    assert toile.find_withtag("souffle")
+    ids_souffle = toile.find_withtag("souffle")
+    assert "oval" in {toile.type(i) for i in ids_souffle}
+    remplis = [
+        toile.itemcget(i, "fill")
+        for i in toile.find_withtag("nappe")
+        if toile.itemcget(i, "fill") not in ("", visuel.COULEUR_TRANSPARENTE)
+    ]
+    assert remplis, "la nappe doit avoir un corps rempli, pas seulement des contours"
+    for fill in remplis:
+        r, g, b = visuel.vers_rgb(fill)
+        assert (r + g + b) / 3.0 >= 40, fill
 
 
-def test_geste_souffle_respire_avec_le_niveau():
-    _ouvrir_tk()
-    import tkinter as tk
-
+def test_geste_souffle_respire_avec_le_niveau(racine_tk):
     from native.presence import overlay as visuel
 
-    racine = tk.Tk()
-    racine.withdraw()
-    try:
-        toile = tk.Canvas(racine, width=200, height=200)
-        visuel.dessiner_souffle(
-            toile,
-            cx=100,
-            cy=100,
-            rayon=40,
-            palette=visuel.PALETTES["ecoute"],
-            maintenant=0.4,
-            etat="ecoute",
-            souffle=0.2,
-        )
-        visuel.dessiner_souffle(
-            toile,
-            cx=100,
-            cy=100,
-            rayon=40,
-            palette=visuel.PALETTES["ecoute"],
-            maintenant=0.4,
-            etat="ecoute",
-            souffle=0.95,
-        )
-        ids = toile.find_withtag("souffle")
-        assert len(ids) >= 4
-        rayons = []
-        for i in ids:
-            x0, y0, x1, y1 = toile.coords(i)
-            rayons.append((x1 - x0) / 2.0)
-        assert max(rayons) > min(rayons) + 8
-    finally:
-        racine.destroy()
+    tk, racine = racine_tk
+    toile = tk.Canvas(racine, width=200, height=200)
+    visuel.dessiner_souffle(
+        toile,
+        cx=100,
+        cy=100,
+        rayon=40,
+        palette=visuel.PALETTES["ecoute"],
+        maintenant=0.4,
+        etat="ecoute",
+        souffle=0.2,
+    )
+    visuel.dessiner_souffle(
+        toile,
+        cx=100,
+        cy=100,
+        rayon=40,
+        palette=visuel.PALETTES["ecoute"],
+        maintenant=0.4,
+        etat="ecoute",
+        souffle=0.95,
+    )
+    ids = toile.find_withtag("souffle")
+    assert len(ids) >= 4
+    rayons = []
+    for i in ids:
+        x0, y0, x1, y1 = toile.coords(i)
+        rayons.append((x1 - x0) / 2.0)
+    assert max(rayons) > min(rayons) + 8
 
 
 def test_orbe_repos_reste_lisible():
@@ -400,11 +383,24 @@ def test_orbe_repos_reste_lisible():
 
 def test_overlay_forme_opaque_sur_chroma_key():
     _ouvrir_tk()
+    import tkinter as tk
+
     from native.presence import overlay as visuel
 
-    presence = visuel.Presence(
-        visuel.analyser_arguments(["--demo", "--taille", "160", "--coin", "haut-gauche"])
-    )
+    derniere: Exception | None = None
+    presence = None
+    for _ in range(3):
+        try:
+            presence = visuel.Presence(
+                visuel.analyser_arguments(
+                    ["--demo", "--taille", "160", "--coin", "haut-gauche"]
+                )
+            )
+            break
+        except tk.TclError as exc:
+            derniere = exc
+    if presence is None:
+        pytest.skip(f"Tk indisponible : {derniere}")
     try:
         presence.racine.withdraw()
         presence.appliquer_etat("parole", niveau=0.7, source="demo")
@@ -421,12 +417,12 @@ def test_overlay_forme_opaque_sur_chroma_key():
 def test_nappe_du_champ_reste_visible_autour_de_l_ui(tmp_path):
     """La nappe n'est plus recouverte : une marge vivante autour de la vitre."""
     _ouvrir_tk()
-    from native.presence.app import MARGE_NAPPE, Application, analyser_arguments
+    from native.presence.app import MARGE_NAPPE, analyser_arguments
 
     args = analyser_arguments(
         ["--onboarding", "--config", str(tmp_path / "presence.json")]
     )
-    application = Application(args)
+    application = _application_tk(args)
     application.session_lancee = True
     try:
         application.racine.geometry("520x800+80+40")

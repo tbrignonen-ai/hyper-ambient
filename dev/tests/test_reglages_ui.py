@@ -54,27 +54,28 @@ def _env(tmp_path: Path, texte: str) -> Path:
 
 
 def _ouvrir_tk():
+    """Importe tkinter. Ne crée pas de racine jetable : Tk()+destroy avant
+    le vrai ``Tk()`` corrompt Tcl 8.6 sous Python 3.13 (init.tcl, 0x80000003).
+    """
     try:
         import tkinter as tk
     except ModuleNotFoundError as exc:
         pytest.skip(f"Tk indisponible : {exc}")
-    try:
-        racine = tk.Tk()
-        racine.withdraw()
-        racine.destroy()
-    except tk.TclError as exc:
-        pytest.skip(f"Tk indisponible : {exc}")
     return tk
 
 
-def _racine_tk():
+def _application_tk(args):
+    """Construit ``Application`` sans racine sonde. Retry du premier init.tcl."""
     tk = _ouvrir_tk()
-    try:
-        racine = tk.Tk()
-        racine.withdraw()
-    except tk.TclError as exc:
-        pytest.skip(f"Tk indisponible : {exc}")
-    return tk, racine
+    from native.presence.app import Application
+
+    derniere: Exception | None = None
+    for _ in range(3):
+        try:
+            return Application(args)
+        except tk.TclError as exc:
+            derniere = exc
+    pytest.skip(f"Tk indisponible : {derniere}")
 
 
 def _textes_widgets(widget) -> list[str]:
@@ -402,8 +403,8 @@ def test_poser_reglages_ecrit_typesafe_model(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_fenetre_a_quatre_blocs_et_champs_masques(tmp_path):
-    tk, racine = _racine_tk()
+def test_fenetre_a_quatre_blocs_et_champs_masques(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from native.presence.reglages_ui import FenetreReglages
 
@@ -500,11 +501,11 @@ def test_fenetre_a_quatre_blocs_et_champs_masques(tmp_path):
         assert _idx("JeV (TypeSafe AI)") < _idx("Nom du modèle (TYPESAFE_MODEL)")
         assert _idx("Nom du modèle (TYPESAFE_MODEL)") < _idx("Clé JeV")
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_verifier_desactive_le_bouton_et_rend_la_pastille(tmp_path):
-    tk, racine = _racine_tk()
+def test_verifier_desactive_le_bouton_et_rend_la_pastille(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from native.presence.reglages_ui import FenetreReglages
 
@@ -544,11 +545,11 @@ def test_verifier_desactive_le_bouton_et_rend_la_pastille(tmp_path):
         assert fenetre.pastilles["codex"]["ok"] is True
     finally:
         go.set()
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_verifier_pastille_rouge_sur_echec(tmp_path):
-    tk, racine = _racine_tk()
+def test_verifier_pastille_rouge_sur_echec(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from native.presence.reglages_ui import FenetreReglages
 
@@ -570,7 +571,7 @@ def test_verifier_pastille_rouge_sur_echec(tmp_path):
         assert fenetre.pastilles["jev"]["ok"] is False
         assert ".env.local" in fenetre.ligne_statut.cget("text")
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
 # ---------------------------------------------------------------------------
@@ -585,7 +586,7 @@ def _couleur_pastille(fenetre, service):
     return str(toile.itemcget(items[-1], "fill"))
 
 
-def test_les_trois_etats_ont_trois_couleurs_differents(tmp_path):
+def test_les_trois_etats_ont_trois_couleurs_differents(tmp_path, racine_tk):
     """Joignable-et-muet n'est ni un vert ni un rouge : c'est un troisième
     état, et l'œil doit le distinguer sans lire le libellé."""
     from src.onboarding.sondes import (
@@ -596,7 +597,7 @@ def test_les_trois_etats_ont_trois_couleurs_differents(tmp_path):
 
     from native.presence.reglages_ui import FenetreReglages
 
-    tk, racine = _racine_tk()
+    tk, racine = racine_tk
     cas = {
         "codex": Sonde("codex", True, "Codex a repondu.", 1.0, ETAT_REPOND),
         "claude": Sonde(
@@ -624,21 +625,27 @@ def test_les_trois_etats_ont_trois_couleurs_differents(tmp_path):
         orange = _couleur_pastille(fenetre, "claude")
         rouge = _couleur_pastille(fenetre, "jev")
         assert len({vert, orange, rouge}) == 3, (vert, orange, rouge)
+        from native.presence.reglages_ui import FOND_VITRE
+        from native.presence.sante import contraste_relatif
+
+        for nom, couleur in (("vert", vert), ("orange", orange), ("rouge", rouge)):
+            ratio = contraste_relatif(couleur, FOND_VITRE)
+            assert ratio >= 3.0, (nom, couleur, ratio)
         assert fenetre.pastilles["codex"]["etat"] == ETAT_REPOND
         assert fenetre.pastilles["claude"]["etat"] == ETAT_MUET
         assert fenetre.pastilles["jev"]["etat"] == ETAT_INJOIGNABLE
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_un_harnais_joignable_mais_muet_n_est_pas_vert(tmp_path):
+def test_un_harnais_joignable_mais_muet_n_est_pas_vert(tmp_path, racine_tk):
     """Le défaut du brief, vu de l'écran : le pont répond en 13 ms, le
     harnais n'a rien dit. Ni vert, ni « injoignable »."""
     from src.onboarding.sondes import ETAT_MUET
 
     from native.presence.reglages_ui import FenetreReglages, PASTILLE_OK
 
-    tk, racine = _racine_tk()
+    tk, racine = racine_tk
 
     async def sonder_codex(url, jeton, client=None):
         return Sonde(
@@ -660,15 +667,15 @@ def test_un_harnais_joignable_mais_muet_n_est_pas_vert(tmp_path):
         assert _couleur_pastille(fenetre, "codex") != PASTILLE_OK
         assert "joignable" in fenetre.details["codex"].cget("text")
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_sonde_sans_etat_explicite_reste_rouge_pas_orange(tmp_path):
+def test_sonde_sans_etat_explicite_reste_rouge_pas_orange(tmp_path, racine_tk):
     """Une sonde injectée à l'ancienne (quatre arguments) ne doit pas
     hériter d'un état complaisant."""
     from native.presence.reglages_ui import FenetreReglages, PASTILLE_KO
 
-    tk, racine = _racine_tk()
+    tk, racine = racine_tk
 
     async def sonder_jev(cle, client=None, modele=None):
         return Sonde("jev", True, "JeV a repondu.", 1.0)
@@ -682,14 +689,14 @@ def test_sonde_sans_etat_explicite_reste_rouge_pas_orange(tmp_path):
         _pomper(racine, lambda: fenetre.pastilles["jev"]["ok"] is True)
         assert _couleur_pastille(fenetre, "jev") != PASTILLE_KO
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_legende_des_trois_etats_est_affichee(tmp_path):
+def test_legende_des_trois_etats_est_affichee(tmp_path, racine_tk):
     """Trois couleurs sans légende, c'est trois devinettes."""
     from native.presence.reglages_ui import FenetreReglages
 
-    tk, racine = _racine_tk()
+    tk, racine = racine_tk
     try:
         fenetre = FenetreReglages(racine, tmp_path / ".env.local")
         racine.update_idletasks()
@@ -698,17 +705,17 @@ def test_legende_des_trois_etats_est_affichee(tmp_path):
             assert mot in textes, mot
         assert "joignable" in textes
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_aide_verifier_annonce_le_delai_reel_d_un_harnais(tmp_path):
+def test_aide_verifier_annonce_le_delai_reel_d_un_harnais(tmp_path, racine_tk):
     """L'écran promettait « cinq secondes » ; un harnais met bien plus.
     Une promesse fausse est un échec de démonstration."""
     from src.onboarding.sondes import DELAI_HARNAIS_S, DELAI_S
 
     from native.presence.reglages_ui import FenetreReglages
 
-    tk, racine = _racine_tk()
+    tk, racine = racine_tk
     try:
         fenetre = FenetreReglages(racine, tmp_path / ".env.local")
         racine.update_idletasks()
@@ -718,16 +725,35 @@ def test_aide_verifier_annonce_le_delai_reel_d_un_harnais(tmp_path):
         assert str(int(DELAI_HARNAIS_S)) in textes
         assert "réellement" in textes
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_enregistrer_sans_rien_changer_ne_cree_pas_de_fichier(tmp_path):
+def test_fermer_annule_le_tic_de_la_file(tmp_path, racine_tk):
+    """Une fenêtre fermée ne doit pas laisser son `after` se déclencher sur un
+    widget détruit : Tcl remonte « invalid command name …_pomper_file » à
+    chaque fermeture, et le bruit finit dans la console de la démo."""
+    from native.presence.reglages_ui import FenetreReglages
+
+    tk, racine = racine_tk
+    try:
+        fenetre = FenetreReglages(racine, tmp_path / ".env.local")
+        racine.update_idletasks()
+        assert fenetre._apres is not None
+        fenetre.fermer()
+        assert fenetre._apres is None
+        assert fenetre._vivante() is False
+        racine.update()
+    finally:
+        fenetre.fermer()
+
+
+def test_enregistrer_sans_rien_changer_ne_cree_pas_de_fichier(tmp_path, racine_tk):
     """Installation neuve : ouvrir les réglages puis « Enregistrer » sans
     rien saisir ne doit pas poser de clés vides. Une clé vide dans
     `.env.local` écrase la valeur du conteneur."""
     from native.presence.reglages_ui import FenetreReglages
 
-    tk, racine = _racine_tk()
+    tk, racine = racine_tk
     chemin = tmp_path / ".env.local"
     try:
         fenetre = FenetreReglages(racine, chemin)
@@ -737,13 +763,13 @@ def test_enregistrer_sans_rien_changer_ne_cree_pas_de_fichier(tmp_path):
         assert not chemin.exists(), chemin.read_text(encoding="utf-8")
         assert "enregistr" in fenetre.ligne_statut.cget("text").lower()
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_enregistrer_ne_pose_pas_de_cle_vide_a_cote_des_autres(tmp_path):
+def test_enregistrer_ne_pose_pas_de_cle_vide_a_cote_des_autres(tmp_path, racine_tk):
     from native.presence.reglages_ui import FenetreReglages
 
-    tk, racine = _racine_tk()
+    tk, racine = racine_tk
     chemin = _env(tmp_path, "BRAIN_MODEL=modele-avant\n")
     try:
         fenetre = FenetreReglages(racine, chemin)
@@ -760,14 +786,14 @@ def test_enregistrer_ne_pose_pas_de_cle_vide_a_cote_des_autres(tmp_path):
         assert "BRAIN_API_ENDPOINT" not in lus
         assert "BRAIN_API_KEY" not in lus
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_enregistrer_conserve_une_valeur_deja_posee(tmp_path):
+def test_enregistrer_conserve_une_valeur_deja_posee(tmp_path, racine_tk):
     """Ne pas écrire ce qui n'a pas changé ne veut pas dire l'effacer."""
     from native.presence.reglages_ui import FenetreReglages
 
-    tk, racine = _racine_tk()
+    tk, racine = racine_tk
     chemin = _env(
         tmp_path,
         f"BRAIN_MODEL=modele-avant\nBRAIN_API_ENDPOINT={_FAUX_URL}\n",
@@ -783,15 +809,15 @@ def test_enregistrer_conserve_une_valeur_deja_posee(tmp_path):
         assert lus["BRAIN_MODEL"] == "modele-apres"
         assert lus["BRAIN_API_ENDPOINT"] == _FAUX_URL
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_enregistrer_un_champ_vide_explicitement_le_vide(tmp_path):
+def test_enregistrer_un_champ_vide_explicitement_le_vide(tmp_path, racine_tk):
     """Un champ prérempli que l'utilisateur efface est une intention :
     la clé repasse à vide, elle n'est pas ignorée."""
     from native.presence.reglages_ui import FenetreReglages
 
-    tk, racine = _racine_tk()
+    tk, racine = racine_tk
     chemin = _env(tmp_path, "BRAIN_MODEL=modele-avant\n")
     try:
         fenetre = FenetreReglages(racine, chemin)
@@ -801,11 +827,11 @@ def test_enregistrer_un_champ_vide_explicitement_le_vide(tmp_path):
         racine.update_idletasks()
         assert module_reglages.lire_reglages(chemin)["BRAIN_MODEL"] == ""
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_tout_verifier_appelle_sonder_tout(tmp_path):
-    tk, racine = _racine_tk()
+def test_tout_verifier_appelle_sonder_tout(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from native.presence.reglages_ui import FenetreReglages
 
@@ -832,11 +858,11 @@ def test_tout_verifier_appelle_sonder_tout(tmp_path):
         assert fenetre.pastilles["codex"]["ok"] is False
         assert fenetre.pastilles["jev"]["ok"] is True
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_enregistrer_depuis_la_fenetre_ecrit_sans_reeecrire_la_cle(tmp_path):
-    tk, racine = _racine_tk()
+def test_enregistrer_depuis_la_fenetre_ecrit_sans_reeecrire_la_cle(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from native.presence.reglages_ui import FenetreReglages
 
@@ -855,11 +881,11 @@ def test_enregistrer_depuis_la_fenetre_ecrit_sans_reeecrire_la_cle(tmp_path):
         assert lus["BRAIN_MODEL"] == "apres"
         assert lus["BRAIN_API_KEY"] == _FAUX_JETON
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_fenetre_utilisable_au_clavier_et_echap_ne_ferme_pas_l_app(tmp_path):
-    tk, racine = _racine_tk()
+def test_fenetre_utilisable_au_clavier_et_echap_ne_ferme_pas_l_app(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from native.presence.reglages_ui import FenetreReglages
 
@@ -882,13 +908,13 @@ def test_fenetre_utilisable_au_clavier_et_echap_ne_ferme_pas_l_app(tmp_path):
         assert not fenetre.fenetre.winfo_exists()
         assert racine.winfo_exists()
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_verifier_ne_reeerit_pas_l_url_du_pont(tmp_path):
+def test_verifier_ne_reeerit_pas_l_url_du_pont(tmp_path, racine_tk):
     """L'URL host.docker.internal reste celle de l'assistante.
     La sonde peut retenter 127.0.0.1 ; le fichier, non."""
-    tk, racine = _racine_tk()
+    tk, racine = racine_tk
 
     from native.presence.reglages_ui import FenetreReglages
 
@@ -915,11 +941,11 @@ def test_verifier_ne_reeerit_pas_l_url_du_pont(tmp_path):
         lus = module_reglages.lire_reglages(chemin)
         assert lus["CODEX_BRIDGE_URL"] == url_docker
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_verifier_un_harnais_appelle_outil_cli_pret(tmp_path):
-    tk, racine = _racine_tk()
+def test_verifier_un_harnais_appelle_outil_cli_pret(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from native.presence.reglages_ui import FenetreReglages
 
@@ -941,11 +967,11 @@ def test_verifier_un_harnais_appelle_outil_cli_pret(tmp_path):
         assert recu == ["codex"]
         assert "installe" in fenetre.details["outil_codex"].cget("text")
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_tout_verifier_sonde_aussi_les_harnais(tmp_path):
-    tk, racine = _racine_tk()
+def test_tout_verifier_sonde_aussi_les_harnais(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from native.presence.reglages_ui import FenetreReglages
 
@@ -981,11 +1007,11 @@ def test_tout_verifier_sonde_aussi_les_harnais(tmp_path):
         assert fenetre.pastilles["outil_claude"]["ok"] is False
         assert fenetre.pastilles["codex"]["ok"] is True
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_detecter_abonnements_sonde_les_deux_harnais(tmp_path):
-    tk, racine = _racine_tk()
+def test_detecter_abonnements_sonde_les_deux_harnais(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from native.presence.reglages_ui import FenetreReglages
 
@@ -1017,13 +1043,12 @@ def test_detecter_abonnements_sonde_les_deux_harnais(tmp_path):
         assert "installe" in fenetre.details["outil_codex"].cget("text")
         assert "pas installe" in fenetre.details["outil_claude"].cget("text")
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
 def test_bouton_reglages_ouvre_depuis_la_fenetre_principale(tmp_path):
     _ouvrir_tk()
-
-    from native.presence.app import Application, analyser_arguments
+    from native.presence.app import analyser_arguments
     from native.presence.onboarding import (
         ConfigurationPresence,
         enregistrer_configuration,
@@ -1036,12 +1061,7 @@ def test_bouton_reglages_ouvre_depuis_la_fenetre_principale(tmp_path):
     )
     env_local = _env(tmp_path, f"BRAIN_MODEL={_FAUX_MODELE}\n")
     args = analyser_arguments(["--onboarding", "--config", str(config)])
-    try:
-        application = Application(args)
-    except Exception as exc:
-        if exc.__class__.__name__ == "TclError":
-            pytest.skip(f"Tk indisponible : {exc}")
-        raise
+    application = _application_tk(args)
     application.session_lancee = True
     try:
         application._afficher_application()
@@ -1172,8 +1192,8 @@ def test_libelles_invite_et_feedback_anglais(monkeypatch):
     assert url_tavily() == "https://app.tavily.com"
 
 
-def test_champs_sont_visiblement_editables(tmp_path):
-    tk, racine = _racine_tk()
+def test_champs_sont_visiblement_editables(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from native.presence.reglages_ui import (
         FOND_VITRE,
@@ -1205,11 +1225,59 @@ def test_champs_sont_visiblement_editables(tmp_path):
         assert vide.get() == ""
         assert "jev-latest" in vide.texte_affiche()
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_invite_disparait_a_la_premiere_frappe(tmp_path):
-    tk, racine = _racine_tk()
+def _luminance(hexa: str) -> float:
+    brut = str(hexa).lstrip("#")
+    canaux = []
+    for indice in (0, 2, 4):
+        canal = int(brut[indice : indice + 2], 16) / 255
+        canaux.append(
+            canal / 12.92 if canal <= 0.03928 else ((canal + 0.055) / 1.055) ** 2.4
+        )
+    return 0.2126 * canaux[0] + 0.7152 * canaux[1] + 0.0722 * canaux[2]
+
+
+def _contraste(avant: str, arriere: str) -> float:
+    une, autre = _luminance(avant), _luminance(arriere)
+    if une < autre:
+        une, autre = autre, une
+    return (une + 0.05) / (autre + 0.05)
+
+
+def test_le_texte_saisi_est_lisible_sur_le_fond_sombre(tmp_path, racine_tk):
+    """« Lisible » se mesure. WCAG AA demande 4,5:1 pour du texte normal :
+    c'est la différence entre un champ qu'on voit et un champ qu'on devine."""
+    from native.presence.reglages_ui import FOND_VITRE, FenetreReglages
+
+    tk, racine = racine_tk
+    try:
+        for eleve in (False, True):
+            fenetre = FenetreReglages(
+                racine, tmp_path / ".env.local", contraste=eleve
+            )
+            racine.update_idletasks()
+            for cle, champ in fenetre.champs.items():
+                if not hasattr(champ, "poser_valeur"):
+                    continue
+                champ.poser_valeur("texte de demonstration")
+                racine.update_idletasks()
+                encre = str(champ.cget("fg"))
+                fond = str(champ.cget("bg"))
+                ratio = _contraste(encre, fond)
+                assert ratio >= 4.5, (eleve, cle, encre, fond, ratio)
+                # Le rectangle doit aussi se détacher du panneau.
+                bord = str(champ.cget("highlightbackground"))
+                assert _contraste(bord, FOND_VITRE) >= 3.0, (cle, bord)
+            fenetre.fermer()
+            racine.update_idletasks()
+    finally:
+        fenetre.fermer()
+
+
+def test_invite_disparait_a_la_premiere_frappe(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from native.presence.reglages_ui import FenetreReglages
 
@@ -1235,11 +1303,11 @@ def test_invite_disparait_a_la_premiere_frappe(tmp_path):
         assert str(secret.cget("show")) == "*"
         assert secret.get() == "abcd"
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_focus_change_la_bordure_du_champ(tmp_path):
-    tk, racine = _racine_tk()
+def test_focus_change_la_bordure_du_champ(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from native.presence.reglages_ui import FenetreReglages, couleurs_champ
 
@@ -1256,11 +1324,11 @@ def test_focus_change_la_bordure_du_champ(tmp_path):
         racine.update()
         assert str(champ.cget("highlightbackground")).lower() == palette["bord"].lower()
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_enregistrer_puis_rouvrir_relit_la_saisie(tmp_path):
-    tk, racine = _racine_tk()
+def test_enregistrer_puis_rouvrir_relit_la_saisie(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from native.presence.reglages_ui import FenetreReglages
 
@@ -1292,11 +1360,11 @@ def test_enregistrer_puis_rouvrir_relit_la_saisie(tmp_path):
         assert lus["BRAIN_API_KEY"] == nouveau_secret
         relue.fermer()
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_menu_feedback_dans_la_fenetre_reglages(tmp_path):
-    tk, racine = _racine_tk()
+def test_menu_feedback_dans_la_fenetre_reglages(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from native.presence.reglages_ui import FenetreReglages
 
@@ -1313,7 +1381,7 @@ def test_menu_feedback_dans_la_fenetre_reglages(tmp_path):
         fenetre.menu_aide.invoke(1)
         assert recu == [True]
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
 def test_voix_courante_lit_env_local_puis_carte(tmp_path):
@@ -1369,8 +1437,8 @@ def test_libelles_accent_pour_un_humain(monkeypatch):
     assert "phonetique" not in " ".join(libelles).lower()
 
 
-def test_menu_voix_vient_du_serveur_pas_du_code(tmp_path):
-    tk, racine = _racine_tk()
+def test_menu_voix_vient_du_serveur_pas_du_code(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from src.onboarding.sondes import VoixTts
 
@@ -1406,11 +1474,11 @@ def test_menu_voix_vient_du_serveur_pas_du_code(tmp_path):
         assert "ja-JP" not in accents
         assert fenetre.champs["MOUTH_LANGUAGE"].get() == "fr"
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_menu_voix_dit_le_repli_si_serveur_muet(tmp_path):
-    tk, racine = _racine_tk()
+def test_menu_voix_dit_le_repli_si_serveur_muet(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from src.onboarding.sondes import VOIX_TTS_REPLI, VoixTts
 
@@ -1437,11 +1505,11 @@ def test_menu_voix_dit_le_repli_si_serveur_muet(tmp_path):
         assert "charmante" in textes.lower()
         assert not fenetre.corps_voix.winfo_ismapped()
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_enregistrer_ecrit_la_voix_choisie(tmp_path):
-    tk, racine = _racine_tk()
+def test_enregistrer_ecrit_la_voix_choisie(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from src.onboarding.sondes import VoixTts
 
@@ -1463,11 +1531,11 @@ def test_enregistrer_ecrit_la_voix_choisie(tmp_path):
         assert lus["BRAIN_MODEL"] == "avant"
         assert lus.get("MOUTH_LANGUAGE", "fr") == "fr"
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_enregistrer_ecrit_l_accent_choisi(tmp_path):
-    tk, racine = _racine_tk()
+def test_enregistrer_ecrit_l_accent_choisi(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from src.onboarding.sondes import VoixTts
 
@@ -1492,11 +1560,11 @@ def test_enregistrer_ecrit_l_accent_choisi(tmp_path):
         assert lus["BRAIN_MODEL"] == "avant"
         assert lus.get("MOUTH_VOICE_NAME", "Sofia") == "Sofia"
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_ecouter_envoie_voix_et_accent(tmp_path):
-    tk, racine = _racine_tk()
+def test_ecouter_envoie_voix_et_accent(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from src.onboarding.sondes import VoixTts
 
@@ -1531,7 +1599,7 @@ def test_ecouter_envoie_voix_et_accent(tmp_path):
         assert recu[0][1] == "en-US"
         assert recu[0][2].strip()
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
 def test_url_tavily_extrait_du_libelle(monkeypatch):
@@ -1547,8 +1615,8 @@ def test_url_tavily_extrait_du_libelle(monkeypatch):
     assert url_tavily("sans adresse") == ""
 
 
-def test_menu_langue_dans_reglages(tmp_path):
-    tk, racine = _racine_tk()
+def test_menu_langue_dans_reglages(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from native.presence.reglages_ui import FenetreReglages
 
@@ -1578,11 +1646,11 @@ def test_menu_langue_dans_reglages(tmp_path):
         assert recu == ["en"]
         assert fenetre.ligne_langue_delai.cget("text")
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
-def test_lien_tavily_ouvre_l_adresse(tmp_path):
-    tk, racine = _racine_tk()
+def test_lien_tavily_ouvre_l_adresse(tmp_path, racine_tk):
+    tk, racine = racine_tk
 
     from native.presence.reglages_ui import FenetreReglages
 
@@ -1599,13 +1667,12 @@ def test_lien_tavily_ouvre_l_adresse(tmp_path):
         fenetre.lien_tavily.invoke()
         assert ouvert == ["https://app.tavily.com"]
     finally:
-        racine.destroy()
+        fenetre.fermer()
 
 
 def test_page_principale_sans_selecteur_langue(tmp_path):
     _ouvrir_tk()
-
-    from native.presence.app import Application, analyser_arguments
+    from native.presence.app import analyser_arguments
     from native.presence.onboarding import (
         ConfigurationPresence,
         enregistrer_configuration,
@@ -1618,12 +1685,7 @@ def test_page_principale_sans_selecteur_langue(tmp_path):
     )
     env_local = _env(tmp_path, f"BRAIN_MODEL={_FAUX_MODELE}\n")
     args = analyser_arguments(["--onboarding", "--config", str(config)])
-    try:
-        application = Application(args)
-    except Exception as exc:
-        if exc.__class__.__name__ == "TclError":
-            pytest.skip(f"Tk indisponible : {exc}")
-        raise
+    application = _application_tk(args)
     application.session_lancee = True
     try:
         application._afficher_application()
@@ -1644,5 +1706,62 @@ def test_page_principale_sans_selecteur_langue(tmp_path):
         )
         assert "Langue" in reglages
         assert "Français" in reglages or "Anglais" in reglages
+    finally:
+        application.fermer()
+
+
+def test_ouvrir_et_fermer_les_reglages_plusieurs_fois(tmp_path, racine_tk):
+    """Même racine Tk, plusieurs ouvertures : le geste utilisateur, pas la suite."""
+    tk, racine = racine_tk
+
+    from native.presence.reglages_ui import FenetreReglages
+
+    chemin = tmp_path / ".env.local"
+    for _ in range(5):
+        fenetre = FenetreReglages(racine, chemin)
+        racine.update_idletasks()
+        racine.update()
+        assert fenetre._vivante()
+        fenetre.fermer()
+        racine.update()
+        assert fenetre._vivante() is False
+    assert racine.winfo_exists()
+
+
+def test_ouvrir_et_fermer_reglages_depuis_l_application(tmp_path):
+    """La fenêtre principale survit à cinq ouvertures successives des réglages."""
+    _ouvrir_tk()
+    from native.presence.app import analyser_arguments
+    from native.presence.onboarding import (
+        ConfigurationPresence,
+        enregistrer_configuration,
+    )
+
+    config = tmp_path / "presence.json"
+    enregistrer_configuration(
+        ConfigurationPresence(onboarding_termine=True),
+        config,
+    )
+    env_local = _env(tmp_path, f"BRAIN_MODEL={_FAUX_MODELE}\n")
+    args = analyser_arguments(["--onboarding", "--config", str(config)])
+    application = _application_tk(args)
+    application.session_lancee = True
+    try:
+        application._afficher_application()
+        application.racine.withdraw()
+        application.racine.update_idletasks()
+        for _ in range(5):
+            application.ouvrir_reglages(env_local)
+            application.racine.update_idletasks()
+            application.racine.update()
+            assert application.fenetre_reglages is not None
+            assert application.fenetre_reglages._vivante()
+            application.fenetre_reglages.fermer()
+            application.racine.update()
+            assert not application.fenetre_reglages._vivante()
+        application.ouvrir_reglages(env_local)
+        application.racine.update_idletasks()
+        assert application.fenetre_reglages._vivante()
+        assert application.racine.winfo_exists()
     finally:
         application.fermer()

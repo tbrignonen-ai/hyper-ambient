@@ -12,17 +12,22 @@ import inspect
 import logging
 import queue
 import threading
+import webbrowser
 from pathlib import Path
 from typing import Any, Callable
 
 try:
     import tkinter as tk
+    from tkinter import ttk
 except ModuleNotFoundError:  # pragma: no cover — image docker sans Tk
     tk = None  # type: ignore[assignment]
+    ttk = None  # type: ignore[assignment]
 
 from src.i18n import t
+from src.onboarding import sondes as module_sondes
 from src.onboarding.reglages import lire_reglages, poser_reglages, reglage_present
 from src.onboarding.sondes import (
+    ETAT_MUET,
     Sonde,
     outil_cli_pret,
     sonder_brain_distant,
@@ -61,6 +66,27 @@ BLOCS: tuple[dict[str, Any], ...] = (
         "donnees": "reglages.donnees.cles",
         "sortie": False,
         "info": True,
+    },
+    {
+        "id": "voix",
+        "cles": ("MOUTH_VOICE_NAME", "MOUTH_LANGUAGE"),
+        "titre": "reglages.voix_titre",
+        "aide": "reglages.voix_aide",
+        "donnees": "reglages.donnees.voix",
+        "sortie": False,
+        "info": True,
+        "menu": True,
+        "repliable": True,
+    },
+    {
+        "id": "langue",
+        "cles": (),
+        "titre": "reglages.langue_titre",
+        "aide": "reglages.langue_aide",
+        "donnees": "reglages.donnees.langue",
+        "sortie": False,
+        "info": True,
+        "menu_langue": True,
     },
     {
         "id": "outil_codex",
@@ -125,7 +151,7 @@ CATEGORIES: tuple[dict[str, Any], ...] = (
     {
         "id": "machine",
         "titre": "reglages.categorie.machine",
-        "blocs": ("modele_local", "cles"),
+        "blocs": ("modele_local", "cles", "voix", "langue"),
     },
     {
         "id": "outils",
@@ -157,12 +183,115 @@ ENCRE_SOURDE = "#8aa0b0"
 PASTILLE_OK = "#3dba7a"
 PASTILLE_KO = "#d04a4a"
 PASTILLE_NEUTRE = "#4a6474"
+# Troisième état : le service est joignable, mais aucune réponse vérifiable
+# n'est revenue. Ni vert (rien n'est prouvé), ni rouge (il n'est pas tombé).
+PASTILLE_MUET = "#d9a441"
 MARQUEUR_LOCAL = "#4a8a72"
 MARQUEUR_SORTIE = "#b89654"
+# Champ de saisie : rectangle lisible, distinct du panneau (#102028).
+FOND_CHAMP = "#1c3a4a"
+BORD_CHAMP = "#6a9aac"
+BORD_FOCUS = "#7ec8dc"
+ENCRE_INVITE = "#7a96a4"
+FOND_CHAMP_CONTRASTE = "#2a5060"
+BORD_CHAMP_CONTRASTE = "#a8e0f0"
+BORD_FOCUS_CONTRASTE = "#e8f8fc"
+ENCRE_INVITE_CONTRASTE = "#b8d0dc"
+
+_CLES_INVITE_IGNOREES = frozenset(
+    {
+        "Tab",
+        "ISO_Left_Tab",
+        "Shift_L",
+        "Shift_R",
+        "Control_L",
+        "Control_R",
+        "Alt_L",
+        "Alt_R",
+        "Caps_Lock",
+        "Num_Lock",
+        "Left",
+        "Right",
+        "Up",
+        "Down",
+        "Home",
+        "End",
+        "Escape",
+        "Return",
+        "KP_Enter",
+        "Win_L",
+        "Win_R",
+        "App",
+        "F1",
+        "F2",
+        "F3",
+        "F4",
+        "F5",
+        "F6",
+        "F7",
+        "F8",
+        "F9",
+        "F10",
+        "F11",
+        "F12",
+    }
+)
+
+
+def couleurs_champ(contraste: bool = False) -> dict[str, str]:
+    """Palette du rectangle de saisie. Contraste élevé : bord et focus plus clairs."""
+    if contraste:
+        return {
+            "fond": FOND_CHAMP_CONTRASTE,
+            "bord": BORD_CHAMP_CONTRASTE,
+            "focus": BORD_FOCUS_CONTRASTE,
+            "invite": ENCRE_INVITE_CONTRASTE,
+            "encre": ENCRE,
+        }
+    return {
+        "fond": FOND_CHAMP,
+        "bord": BORD_CHAMP,
+        "focus": BORD_FOCUS,
+        "invite": ENCRE_INVITE,
+        "encre": ENCRE,
+    }
 
 
 def sortie_du_bloc(bloc: dict[str, Any]) -> bool:
     return bool(bloc.get("sortie"))
+
+
+def aide_verifier() -> str:
+    """Ce que « Vérifier » coûte vraiment, dit à l'écran.
+
+    L'ancien libellé promettait cinq secondes pour tout : c'était vrai tant
+    que les sondes ne posaient aucune question. Un harnais met bien plus, et
+    une promesse fausse à l'écran vaut un plantage devant un jury. Le chiffre
+    vient de la constante des sondes, pas d'un texte recopié.
+    """
+    cle = "reglages.verifier_aide_delais"
+    texte = t(cle)
+    if texte != cle:
+        return texte
+    return (
+        "Vérifier appelle réellement le service : cinq secondes pour un "
+        "service distant, jusqu'à "
+        f"{int(module_sondes.DELAI_HARNAIS_S)} secondes pour un harnais, qui "
+        "doit vraiment répondre à une question."
+    )
+
+
+def legende_etats() -> str:
+    """Trois couleurs, trois sens. Sans légende, l'orange se devine."""
+    cle = "reglages.legende_etats"
+    texte = t(cle)
+    if texte != cle:
+        return texte
+    return (
+        "Vert : le service a répondu à la question de test. "
+        "Orange : joignable, mais aucune réponse vérifiable. "
+        "Rouge : injoignable, ou rien n'est encore configuré."
+    )
 
 
 def libelle_donnees(bloc: dict[str, Any]) -> str:
@@ -172,6 +301,171 @@ def libelle_donnees(bloc: dict[str, Any]) -> str:
 def chemin_env_local(racine: Path | None = None) -> Path:
     base = Path(racine) if racine is not None else Path(__file__).resolve().parents[2]
     return base / ".env.local"
+
+
+def chemin_carte_figee(racine: Path | None = None) -> Path:
+    base = Path(racine) if racine is not None else Path(__file__).resolve().parents[2]
+    return base / "dev" / "scripts" / "carte_figee.env"
+
+
+def voix_courante(chemin: Path, carte: Path | None = None) -> str:
+    """Voix choisie dans `.env.local`, sinon celle de la carte figée."""
+    champs, _secrets = precharger(Path(chemin))
+    nom = (champs.get("MOUTH_VOICE_NAME") or "").strip()
+    if nom:
+        return nom
+    fichier = Path(carte) if carte is not None else chemin_carte_figee()
+    return (lire_reglages(fichier).get("MOUTH_VOICE_NAME") or "").strip()
+
+
+def accent_courant(chemin: Path, carte: Path | None = None) -> str:
+    """Phonétique choisie dans `.env.local`, sinon celle de la carte figée."""
+    champs, _secrets = precharger(Path(chemin))
+    nom = (champs.get("MOUTH_LANGUAGE") or "").strip()
+    if nom:
+        return nom
+    return accent_naturel(carte)
+
+
+def accent_naturel(carte: Path | None = None) -> str:
+    """Valeur carte : aucun accent supplémentaire. Ne pas la changer."""
+    fichier = Path(carte) if carte is not None else chemin_carte_figee()
+    try:
+        valeur = (lire_reglages(fichier).get("MOUTH_LANGUAGE") or "").strip()
+    except OSError:
+        valeur = ""
+    return valeur or "fr"
+
+
+def prefixe_langue(code: str) -> str:
+    brut = (code or "").strip().replace("_", "-")
+    if not brut:
+        return ""
+    return brut.split("-", 1)[0].lower()
+
+
+def libelle_accent(code: str) -> str:
+    """Libellé humain d'une langue Magpie. Pas un code d'ingénieur."""
+    pref = prefixe_langue(code)
+    if not pref:
+        return t("reglages.accent_aucun")
+    cle = f"reglages.accent.{pref}"
+    texte = t(cle)
+    if texte == cle:
+        return t("reglages.accent.autre", code=code)
+    return texte
+
+
+def options_accent(
+    langues: tuple[str, ...] | list[str],
+    naturel: str = "fr",
+) -> list[tuple[str, str]]:
+    """Premier choix : aucun accent (carte). Ensuite la liste Magpie."""
+    defaut = (naturel or "fr").strip() or "fr"
+    options: list[tuple[str, str]] = [(t("reglages.accent_aucun"), defaut)]
+    vus = {defaut}
+    for brut in langues or ():
+        code = str(brut).strip() if brut is not None else ""
+        if not code or code in vus:
+            continue
+        vus.add(code)
+        options.append((libelle_accent(code), code))
+    return options
+
+
+def url_tavily(texte: str | None = None) -> str:
+    """Première adresse https du libellé Recherche web. Pas une clé secrète."""
+    brut = texte if texte is not None else t("reglages.recherche_tavily")
+    for mot in brut.replace("(", " ").replace(")", " ").split():
+        if mot.startswith("https://"):
+            return mot.rstrip(".,;:")
+    return ""
+
+
+def options_langue() -> list[tuple[str, str]]:
+    return [
+        (t("reglages.langue.fr"), "fr"),
+        (t("reglages.langue.en"), "en"),
+    ]
+
+
+def libelle_pour_langue(code: str, options: list[tuple[str, str]]) -> str:
+    cible = (code or "fr").strip().lower()
+    if cible.startswith("en"):
+        cible = "en"
+    else:
+        cible = "fr"
+    for libelle, valeur in options:
+        if valeur == cible:
+            return libelle
+    return options[0][0] if options else t("reglages.langue.fr")
+
+
+def libelle_pour_accent(code: str, options: list[tuple[str, str]]) -> str:
+    if not options:
+        return t("reglages.accent_aucun")
+    cible = (code or "").strip()
+    for libelle, valeur in options:
+        if valeur == cible:
+            return libelle
+    if not cible or cible == options[0][1]:
+        return options[0][0]
+    pref = prefixe_langue(cible)
+    for libelle, valeur in options[1:]:
+        if prefixe_langue(valeur) == pref:
+            return libelle
+    return options[0][0]
+
+
+def _jouer_wav(donnees: bytes) -> None:
+    import os
+    import tempfile
+
+    if not donnees:
+        return
+    fd, chemin = tempfile.mkstemp(suffix=".wav")
+    try:
+        os.write(fd, donnees)
+        os.close(fd)
+        fd = -1
+        try:
+            import winsound
+
+            winsound.PlaySound(chemin, winsound.SND_FILENAME)
+        except (ImportError, RuntimeError, OSError):
+            pass
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            os.unlink(chemin)
+        except OSError:
+            pass
+
+
+class ChampMenu:
+    """Adapter `.get()` pour un menu, comme un champ de saisie.
+
+    Si ``codes_par_libelle`` est posé, le menu affiche des libellés humains
+    et ``get()`` rend le code enregistré (voix Magpie, langue de phonétique).
+    """
+
+    def __init__(
+        self,
+        variable: Any,
+        codes_par_libelle: dict[str, str] | None = None,
+    ) -> None:
+        self._variable = variable
+        self._codes = dict(codes_par_libelle or {})
+
+    def poser_codes(self, codes_par_libelle: dict[str, str]) -> None:
+        self._codes = dict(codes_par_libelle)
+
+    def get(self) -> str:
+        brut = (self._variable.get() or "").strip()
+        if self._codes:
+            return (self._codes.get(brut) or brut).strip()
+        return brut
 
 
 def quatre_derniers(valeur: str | None) -> str:
@@ -264,10 +558,161 @@ def lancer_hors_fil(
     return fil
 
 
+def _importer_ouvrir_feedback() -> Callable[..., bool]:
+    try:
+        from onboarding import ouvrir_feedback
+    except ImportError:
+        from native.presence.onboarding import ouvrir_feedback
+    return ouvrir_feedback
+
+
 def ouvrir_fenetre_reglages(
     parent: Any, chemin: Path | None = None, **kwargs: Any
 ) -> "FenetreReglages":
     return FenetreReglages(parent, chemin or chemin_env_local(), **kwargs)
+
+
+if tk is not None:
+
+    class ChampSaisie(tk.Entry):
+        """Zone de saisie visiblement éditable : bordure, focus, invite grise."""
+
+        def __init__(
+            self,
+            parent: Any,
+            *,
+            invite: str = "",
+            secret: bool = False,
+            contraste: bool = False,
+        ) -> None:
+            self._couleurs = couleurs_champ(contraste)
+            self._invite = invite
+            self._secret = secret
+            self._invite_visible = False
+            super().__init__(
+                parent,
+                takefocus=1,
+                bg=self._couleurs["fond"],
+                fg=self._couleurs["encre"],
+                insertbackground=self._couleurs["encre"],
+                relief=tk.SOLID,
+                bd=2,
+                font=("Segoe UI", 11),
+                highlightthickness=2,
+                highlightbackground=self._couleurs["bord"],
+                highlightcolor=self._couleurs["focus"],
+                disabledbackground=self._couleurs["fond"],
+                readonlybackground=self._couleurs["fond"],
+            )
+            self.bind("<FocusIn>", self._sur_focus, add="+")
+            self.bind("<FocusOut>", self._sur_blur, add="+")
+            self.bind("<KeyPress>", self._frappe, add="+")
+            self.bind("<<Paste>>", self._coller, add="+")
+            if self._invite:
+                self.afficher_invite()
+
+        @property
+        def invite_visible(self) -> bool:
+            return self._invite_visible
+
+        @property
+        def secret(self) -> bool:
+            return self._secret
+
+        def texte_affiche(self) -> str:
+            return super().get()
+
+        def get(self) -> str:  # type: ignore[override]
+            if self._invite_visible:
+                return ""
+            return super().get()
+
+        def insert(self, index: Any, string: str) -> None:  # type: ignore[override]
+            if self._invite_visible:
+                self._retirer_invite()
+                super().insert(0, string)
+                return
+            super().insert(index, string)
+
+        def delete(self, first: Any, last: Any | None = None) -> None:  # type: ignore[override]
+            if self._invite_visible:
+                self._retirer_invite()
+                return
+            super().delete(first, last)
+
+        def poser_valeur(self, valeur: str) -> None:
+            self._retirer_invite()
+            super().delete(0, tk.END)
+            if valeur:
+                super().insert(0, valeur)
+
+        def afficher_invite(self) -> None:
+            if not self._invite:
+                self._invite_visible = False
+                self._appliquer_saisie()
+                return
+            self._invite_visible = True
+            super().delete(0, tk.END)
+            super().insert(0, self._invite)
+            self.configure(
+                fg=self._couleurs["invite"],
+                show="",
+                insertbackground=self._couleurs["encre"],
+            )
+
+        def _retirer_invite(self) -> None:
+            if not self._invite_visible:
+                return
+            super().delete(0, tk.END)
+            self._invite_visible = False
+            self._appliquer_saisie()
+
+        def _appliquer_saisie(self) -> None:
+            self.configure(
+                fg=self._couleurs["encre"],
+                show="*" if self._secret else "",
+                insertbackground=self._couleurs["encre"],
+            )
+
+        def _sur_focus(self, _event: object | None = None) -> None:
+            self.configure(
+                highlightbackground=self._couleurs["focus"],
+                highlightcolor=self._couleurs["focus"],
+            )
+
+        def _sur_blur(self, _event: object | None = None) -> None:
+            self.configure(
+                highlightbackground=self._couleurs["bord"],
+                highlightcolor=self._couleurs["focus"],
+            )
+            if not self._invite_visible and not super().get():
+                self.afficher_invite()
+
+        def _frappe(self, event: Any) -> str | None:
+            if not self._invite_visible:
+                return None
+            touche = str(getattr(event, "keysym", "") or "")
+            if touche in _CLES_INVITE_IGNOREES:
+                return None
+            if touche in ("BackSpace", "Delete"):
+                return "break"
+            etat = int(getattr(event, "state", 0) or 0)
+            if etat & 0x4:
+                return None
+            char = str(getattr(event, "char", "") or "")
+            if char and char.isprintable():
+                self._retirer_invite()
+                return None
+            if len(touche) == 1:
+                self._retirer_invite()
+            return None
+
+        def _coller(self, _event: object | None = None) -> None:
+            if self._invite_visible:
+                self._retirer_invite()
+
+else:  # pragma: no cover — image docker sans Tk
+    ChampSaisie = None  # type: ignore[assignment,misc]
 
 
 class FenetreReglages:
@@ -280,13 +725,27 @@ class FenetreReglages:
         *,
         sondes: dict[str, Callable[..., Any]] | None = None,
         client: Any = None,
+        contraste: bool = False,
+        ouvrir_retour: Callable[..., Any] | None = None,
+        lister_voix: Callable[..., Any] | None = None,
+        jouer_extrait: Callable[..., Any] | None = None,
+        langue: str = "fr",
+        sur_langue: Callable[[str], Any] | None = None,
+        ouvrir_lien: Callable[[str], Any] | None = None,
     ) -> None:
         if tk is None:
             raise RuntimeError("tkinter indisponible")
         self.chemin = Path(chemin)
         self.client = client
         self.sondes = dict(sondes or {})
-        self.champs: dict[str, tk.Entry] = {}
+        self.contraste = bool(contraste)
+        self._ouvrir_retour = ouvrir_retour or _importer_ouvrir_feedback()
+        self._lister_voix = lister_voix
+        self._jouer_extrait = jouer_extrait
+        self._langue = "en" if str(langue).lower().startswith("en") else "fr"
+        self._sur_langue = sur_langue
+        self._ouvrir_lien = ouvrir_lien
+        self.champs: dict[str, Any] = {}
         self.boutons_verifier: dict[str, tk.Button] = {}
         self.details: dict[str, tk.Label] = {}
         self.pastilles: dict[str, dict[str, Any]] = {}
@@ -295,6 +754,21 @@ class FenetreReglages:
         self._suffixes: dict[str, tk.Label] = {}
         self._en_cours: set[str] = set()
         self._file: queue.Queue = queue.Queue()
+        self._apres: Any = None
+        self.var_voix: Any = None
+        self.combo_voix: Any = None
+        self.ligne_voix_repli: Any = None
+        self.var_accent: Any = None
+        self.combo_accent: Any = None
+        self.corps_voix: Any = None
+        self.bouton_ecouter: Any = None
+        self._champ_accent: ChampMenu | None = None
+        self.var_langue: Any = None
+        self.combo_langue: Any = None
+        self.ligne_langue_delai: Any = None
+        self.ligne_langue_etat: Any = None
+        self.lien_tavily: Any = None
+        self._champ_langue: ChampMenu | None = None
         champs, secrets = precharger(self.chemin)
         self._secrets = secrets
 
@@ -308,6 +782,14 @@ class FenetreReglages:
         self.fenetre.bind("<Escape>", self._echap)
         self.fenetre.bind("<KeyPress-Escape>", self._echap)
         self.fenetre.bind_all("<Escape>", self._echap, add="+")
+
+        self.barre_menus = tk.Menu(self.fenetre)
+        self.fenetre.configure(menu=self.barre_menus)
+        self.menu_aide = tk.Menu(self.barre_menus, tearoff=0)
+        self.barre_menus.add_cascade(label=t("reglages.menu"), menu=self.menu_aide)
+        self.menu_aide.add_command(
+            label=t("ui.feedback"), command=self._lancer_feedback
+        )
 
         tk.Label(
             self.fenetre,
@@ -332,16 +814,28 @@ class FenetreReglages:
 
         pied = tk.Frame(self.fenetre, bg=FOND)
         pied.pack(side=tk.BOTTOM, fill=tk.X, padx=16, pady=12)
-        tk.Label(
+        self.ligne_legende = tk.Label(
             pied,
-            text=t("reglages.verifier_aide") + " " + t("reglages.echec_manuel"),
+            text=legende_etats(),
             bg=FOND,
             fg=ENCRE_SOURDE,
             font=("Segoe UI", 8),
             wraplength=480,
             justify="left",
             anchor="w",
-        ).pack(fill=tk.X, pady=(0, 8))
+        )
+        self.ligne_legende.pack(fill=tk.X, pady=(0, 4))
+        self.ligne_aide_verifier = tk.Label(
+            pied,
+            text=aide_verifier() + " " + t("reglages.echec_manuel"),
+            bg=FOND,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 8),
+            wraplength=480,
+            justify="left",
+            anchor="w",
+        )
+        self.ligne_aide_verifier.pack(fill=tk.X, pady=(0, 8))
         rang_actions = tk.Frame(pied, bg=FOND)
         rang_actions.pack(fill=tk.X)
         self.bouton_tout = tk.Button(
@@ -407,8 +901,14 @@ class FenetreReglages:
             service = str(bloc["id"])
             self.marqueurs_confidentialite[service] = sortie_du_bloc(bloc)
             if not bloc.get("info"):
-                self.pastilles[service] = {"ok": None, "detail": ""}
-        self.fenetre.after(40, self._pomper_file)
+                self.pastilles[service] = {"ok": None, "detail": "", "etat": ""}
+        # Ce que chaque champ affichait à l'ouverture : « Enregistrer » ne
+        # pose que ce qui a changé, sinon une installation neuve repart avec
+        # des clés vides qui écrasent les valeurs du conteneur.
+        self._charges = {
+            cle: champ.get() for cle, champ in self.champs.items()
+        }
+        self._apres = self.fenetre.after(40, self._pomper_file)
         self.fenetre.focus_set()
 
     def _monter_bloc(
@@ -435,8 +935,25 @@ class FenetreReglages:
             anchor="w",
         ).pack(side=tk.LEFT, fill=tk.X, expand=True)
         self._monter_marqueur(interieur, bloc)
+        if bloc.get("repliable"):
+            corps = tk.Frame(interieur, bg=FOND_VITRE)
+            self.corps_voix = corps
+            self._monter_corps_bloc(corps, bloc, champs)
+            if t(bloc["titre"]):
+                entete.bind("<Button-1>", lambda _e: self._basculer_voix(), add="+")
+                for enfant in entete.winfo_children():
+                    enfant.bind(
+                        "<Button-1>", lambda _e: self._basculer_voix(), add="+"
+                    )
+            return
+        self._monter_corps_bloc(interieur, bloc, champs)
+
+    def _monter_corps_bloc(
+        self, parent: tk.Misc, bloc: dict[str, Any], champs: dict[str, str]
+    ) -> None:
+        service = str(bloc["id"])
         tk.Label(
-            interieur,
+            parent,
             text=t(bloc["aide"]),
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
@@ -445,6 +962,17 @@ class FenetreReglages:
             justify="left",
             anchor="w",
         ).pack(fill=tk.X, pady=(4, 8))
+        if bloc.get("menu"):
+            self._monter_menu_voix(parent)
+            if bloc.get("info"):
+                return
+        if bloc.get("menu_langue"):
+            self._monter_menu_langue(parent)
+            if bloc.get("info"):
+                return
+        if service == "recherche":
+            self._monter_reco_tavily(parent)
+        interieur = parent
         for cle in bloc["cles"]:
             tk.Label(
                 interieur,
@@ -468,18 +996,17 @@ class FenetreReglages:
                     anchor="w",
                 ).pack(fill=tk.X, pady=(0, 2))
             secret = cle in CLES_SECRETES
-            champ = tk.Entry(
+            champ = ChampSaisie(
                 interieur,
-                show="*" if secret else "",
-                takefocus=1,
-                bg="#142028",
-                fg=ENCRE,
-                insertbackground=ENCRE,
-                relief=tk.FLAT,
+                invite=t(f"reglages.invite.{cle}"),
+                secret=secret,
+                contraste=self.contraste,
             )
-            champ.pack(fill=tk.X, pady=(0, 4))
-            if not secret and cle in champs:
-                champ.insert(0, champs[cle])
+            champ.pack(fill=tk.X, pady=(2, 10), ipady=8)
+            if not secret:
+                valeur = champs.get(cle, "")
+                if str(valeur).strip():
+                    champ.poser_valeur(valeur)
             self.champs[cle] = champ
             if secret:
                 suffixe = quatre_derniers(self._secrets.get(cle, ""))
@@ -577,6 +1104,345 @@ class FenetreReglages:
             anchor="w",
         ).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+    def _monter_menu_voix(self, parent: tk.Misc) -> None:
+        from src.onboarding.sondes import LANGUES_TTS_REPLI, VOIX_TTS_REPLI
+
+        courante = voix_courante(self.chemin)
+        voix = list(VOIX_TTS_REPLI)
+        if courante and courante not in voix:
+            voix.append(courante)
+        if courante:
+            selection = courante
+        elif "Sofia" in voix:
+            selection = "Sofia"
+        elif voix:
+            selection = voix[0]
+        else:
+            selection = ""
+        self.var_voix = tk.StringVar(self.fenetre, value=selection)
+
+        naturel = accent_naturel()
+        options = options_accent(LANGUES_TTS_REPLI, naturel=naturel)
+        codes = {libelle: code for libelle, code in options}
+        libelles = [libelle for libelle, _code in options]
+        courant_accent = accent_courant(self.chemin)
+        self.var_accent = tk.StringVar(
+            self.fenetre,
+            value=libelle_pour_accent(courant_accent, options),
+        )
+
+        palette = couleurs_champ(self.contraste)
+        if ttk is not None:
+            try:
+                style = ttk.Style(self.fenetre)
+                try:
+                    style.theme_use("clam")
+                except tk.TclError:
+                    pass
+                style.configure(
+                    "Voix.TCombobox",
+                    fieldbackground=palette["fond"],
+                    background=palette["fond"],
+                    foreground=palette["encre"],
+                    arrowcolor=palette["encre"],
+                )
+            except tk.TclError:
+                pass
+
+        rang = tk.Frame(parent, bg=FOND_VITRE)
+        rang.pack(fill=tk.X, pady=(2, 4))
+        col_voix = tk.Frame(rang, bg=FOND_VITRE)
+        col_voix.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        tk.Label(
+            col_voix,
+            text=" ",
+            bg=FOND_VITRE,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).pack(fill=tk.X)
+        self.combo_voix = self._combo_voix(col_voix, self.var_voix, voix)
+
+        col_accent = tk.Frame(rang, bg=FOND_VITRE)
+        col_accent.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        tk.Label(
+            col_accent,
+            text=t("reglages.accent_titre"),
+            bg=FOND_VITRE,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).pack(fill=tk.X)
+        self.combo_accent = self._combo_voix(col_accent, self.var_accent, libelles)
+
+        col_btn = tk.Frame(rang, bg=FOND_VITRE)
+        col_btn.pack(side=tk.LEFT)
+        tk.Label(
+            col_btn,
+            text=" ",
+            bg=FOND_VITRE,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 9),
+            anchor="w",
+        ).pack(fill=tk.X)
+        self.bouton_ecouter = tk.Button(
+            col_btn,
+            text=t("reglages.voix_ecouter"),
+            command=self._ecouter_voix,
+            takefocus=1,
+            bg=FOND,
+            fg=ENCRE,
+            activebackground="#142028",
+            activeforeground=ENCRE,
+        )
+        self.bouton_ecouter.pack(ipady=2)
+
+        self.champs["MOUTH_VOICE_NAME"] = ChampMenu(self.var_voix)
+        self._champ_accent = ChampMenu(self.var_accent, codes)
+        self.champs["MOUTH_LANGUAGE"] = self._champ_accent
+
+        tk.Label(
+            parent,
+            text=t("reglages.accent_compromis"),
+            bg=FOND_VITRE,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 8),
+            wraplength=440,
+            justify="left",
+            anchor="w",
+        ).pack(fill=tk.X, pady=(0, 4))
+        self.ligne_voix_repli = tk.Label(
+            parent,
+            text=t("reglages.voix_repli"),
+            bg=FOND_VITRE,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 8),
+            wraplength=440,
+            justify="left",
+            anchor="w",
+        )
+        self.ligne_voix_repli.pack(fill=tk.X, pady=(0, 4))
+        self._rafraichir_voix()
+
+    def _monter_menu_langue(self, parent: tk.Misc) -> None:
+        options = options_langue()
+        codes = {libelle: code for libelle, code in options}
+        libelles = [libelle for libelle, _code in options]
+        self.var_langue = tk.StringVar(
+            self.fenetre,
+            value=libelle_pour_langue(self._langue, options),
+        )
+        self.combo_langue = self._combo_voix(parent, self.var_langue, libelles)
+        self._champ_langue = ChampMenu(self.var_langue, codes)
+        try:
+            self.combo_langue.bind(
+                "<<ComboboxSelected>>", lambda _e: self._appliquer_langue()
+            )
+        except tk.TclError:
+            pass
+        self.ligne_langue_delai = tk.Label(
+            parent,
+            text=t("reglages.langue_delai"),
+            bg=FOND_VITRE,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 8),
+            wraplength=440,
+            justify="left",
+            anchor="w",
+        )
+        self.ligne_langue_delai.pack(fill=tk.X, pady=(0, 2))
+        self.ligne_langue_etat = tk.Label(
+            parent,
+            text="",
+            bg=FOND_VITRE,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 8),
+            wraplength=440,
+            justify="left",
+            anchor="w",
+        )
+        self.ligne_langue_etat.pack(fill=tk.X, pady=(0, 4))
+
+    def _appliquer_langue(self) -> None:
+        if self._champ_langue is None or self.ligne_langue_etat is None:
+            return
+        code = self._champ_langue.get()
+        if code not in ("fr", "en") or code == self._langue:
+            return
+        self.ligne_langue_etat.configure(text=t("reglages.langue_en_cours"))
+
+        def travail() -> str:
+            return code
+
+        def rendre(resultat: Any) -> None:
+            if not self._vivante():
+                return
+            if not isinstance(resultat, Exception) and self._sur_langue is not None:
+                self._sur_langue(str(resultat))
+                self._langue = str(resultat)
+            if self.ligne_langue_etat is not None:
+                self.ligne_langue_etat.configure(text="")
+
+        lancer_hors_fil(travail, rendre, planifier=self._planifier)
+
+    def _monter_reco_tavily(self, parent: tk.Misc) -> None:
+        tk.Label(
+            parent,
+            text=t("reglages.recherche_tavily"),
+            bg=FOND_VITRE,
+            fg=ENCRE_SOURDE,
+            font=("Segoe UI", 9),
+            wraplength=440,
+            justify="left",
+            anchor="w",
+        ).pack(fill=tk.X, pady=(0, 4))
+        adresse = url_tavily()
+        self.lien_tavily = tk.Button(
+            parent,
+            text=adresse,
+            command=self._ouvrir_tavily,
+            takefocus=1,
+            bg=FOND_VITRE,
+            fg="#7ec8dc",
+            activebackground=FOND_VITRE,
+            activeforeground=ENCRE,
+            relief=tk.FLAT,
+            font=("Segoe UI", 9, "underline"),
+            cursor="hand2",
+            anchor="w",
+        )
+        self.lien_tavily.pack(fill=tk.X, pady=(0, 4))
+
+    def _ouvrir_tavily(self) -> None:
+        adresse = url_tavily()
+        if not adresse:
+            return
+        action = self._ouvrir_lien or webbrowser.open
+        action(adresse)
+
+    def _combo_voix(self, parent: tk.Misc, variable: Any, valeurs: list[str]) -> Any:
+        if ttk is not None:
+            combo = ttk.Combobox(
+                parent,
+                textvariable=variable,
+                values=valeurs,
+                state="readonly",
+                takefocus=1,
+                font=("Segoe UI", 11),
+            )
+            try:
+                combo.configure(style="Voix.TCombobox")
+            except tk.TclError:
+                pass
+        else:  # pragma: no cover
+            combo = tk.OptionMenu(parent, variable, *valeurs)
+        combo.pack(fill=tk.X, ipady=4)
+        return combo
+
+    def _basculer_voix(self) -> None:
+        corps = self.corps_voix
+        if corps is None:
+            return
+        try:
+            visible = bool(corps.winfo_ismapped())
+        except tk.TclError:
+            return
+        if visible:
+            corps.pack_forget()
+        else:
+            corps.pack(fill=tk.X)
+
+    def _rafraichir_voix(self) -> None:
+        def travail() -> Any:
+            fn = self._lister_voix
+            if fn is None:
+                from src.onboarding.sondes import lister_voix_tts
+
+                fn = lister_voix_tts
+            resultat = fn()
+            if inspect.isawaitable(resultat):
+                resultat = asyncio.run(resultat)
+            return resultat
+
+        def rendre(resultat: Any) -> None:
+            if not self._vivante():
+                return
+            if isinstance(resultat, Exception):
+                from src.onboarding.sondes import LANGUES_TTS_REPLI, VOIX_TTS_REPLI, VoixTts
+
+                resultat = VoixTts(VOIX_TTS_REPLI, False, LANGUES_TTS_REPLI)
+            self._appliquer_voix(resultat)
+
+        lancer_hors_fil(travail, rendre, planifier=self._planifier)
+
+    def _appliquer_voix(self, resultat: Any) -> None:
+        from src.onboarding.sondes import LANGUES_TTS_REPLI, VOIX_TTS_REPLI, VoixTts
+
+        if not isinstance(resultat, VoixTts):
+            resultat = VoixTts(VOIX_TTS_REPLI, False, LANGUES_TTS_REPLI)
+        voix = list(resultat.voix) or list(VOIX_TTS_REPLI)
+        courante = ""
+        if self.var_voix is not None:
+            courante = (self.var_voix.get() or "").strip()
+        if courante and courante not in voix:
+            voix.append(courante)
+        if self.combo_voix is not None:
+            try:
+                self.combo_voix.configure(values=voix)
+            except tk.TclError:
+                pass
+        langues = list(resultat.langues or ())
+        if not langues and not resultat.depuis_serveur:
+            langues = list(LANGUES_TTS_REPLI)
+        naturel = accent_naturel()
+        options = options_accent(langues, naturel=naturel)
+        libelles = [libelle for libelle, _code in options]
+        codes = {libelle: code for libelle, code in options}
+        if self._champ_accent is not None:
+            actuel = self._champ_accent.get()
+            self._champ_accent.poser_codes(codes)
+        else:
+            actuel = accent_courant(self.chemin)
+        if self.combo_accent is not None:
+            try:
+                self.combo_accent.configure(values=libelles)
+            except tk.TclError:
+                pass
+        if self.var_accent is not None:
+            self.var_accent.set(libelle_pour_accent(actuel, options))
+        if self.ligne_voix_repli is not None:
+            self.ligne_voix_repli.configure(
+                text="" if resultat.depuis_serveur else t("reglages.voix_repli")
+            )
+
+    def _ecouter_voix(self) -> None:
+        voix = ""
+        if "MOUTH_VOICE_NAME" in self.champs:
+            voix = self.champs["MOUTH_VOICE_NAME"].get()
+        langue = accent_naturel()
+        if "MOUTH_LANGUAGE" in self.champs:
+            langue = self.champs["MOUTH_LANGUAGE"].get() or langue
+        texte = t("reglages.voix_extrait")
+
+        def travail() -> Any:
+            fn = self._jouer_extrait
+            if fn is not None:
+                return fn(voix, langue, texte)
+            from src.onboarding.sondes import synthetiser_extrait_tts
+
+            wav = asyncio.run(synthetiser_extrait_tts(voix, langue, texte))
+            if wav:
+                _jouer_wav(wav)
+            return wav
+
+        def rendre(resultat: Any) -> None:
+            if not self._vivante():
+                return
+            if isinstance(resultat, Exception) or not resultat:
+                self.ligne_statut.configure(text=t("reglages.voix_ecouter_echec"))
+
+        lancer_hors_fil(travail, rendre, planifier=self._planifier)
+
     def _monter_detecter(self, parent: tk.Misc) -> None:
         cadre = tk.Frame(
             parent,
@@ -599,14 +1465,16 @@ class FenetreReglages:
         )
         self.bouton_detecter.pack(side=tk.LEFT)
 
-    def _dessiner_pastille(self, service: str, ok: bool | None) -> None:
+    def _dessiner_pastille(
+        self, service: str, ok: bool | None, etat: str = ""
+    ) -> None:
         toile = self._toiles[service]
         toile.delete("all")
         couleur = PASTILLE_NEUTRE
         if ok is True:
             couleur = PASTILLE_OK
         elif ok is False:
-            couleur = PASTILLE_KO
+            couleur = PASTILLE_MUET if etat == ETAT_MUET else PASTILLE_KO
         toile.create_oval(2, 2, 12, 12, fill=couleur, outline=couleur)
 
     def _fn_sonde(self, service: str) -> Callable[..., Any]:
@@ -637,7 +1505,7 @@ class FenetreReglages:
             return
         if self._vivante():
             try:
-                self.fenetre.after(40, self._pomper_file)
+                self._apres = self.fenetre.after(40, self._pomper_file)
             except tk.TclError:
                 return
 
@@ -714,7 +1582,13 @@ class FenetreReglages:
             return Sonde(service, False, t("reglages.echec_sonde"), None)
         if resultat.service == service:
             return resultat
-        return Sonde(service, resultat.ok, resultat.detail, resultat.latence_ms)
+        return Sonde(
+            service,
+            resultat.ok,
+            resultat.detail,
+            resultat.latence_ms,
+            getattr(resultat, "etat", "") or "",
+        )
 
     async def _coro_tout(self, vals: dict[str, str]) -> list[Sonde]:
         http = await self._fn_sonde("tout")(vals, self.client)
@@ -758,7 +1632,10 @@ class FenetreReglages:
                 )
                 return
             logger.info(
-                "reglages sonde %s: ok=%s", service, getattr(resultat, "ok", None)
+                "reglages sonde %s: ok=%s etat=%s",
+                service,
+                getattr(resultat, "ok", None),
+                getattr(resultat, "etat", None),
             )
             self._appliquer_sonde(resultat)
 
@@ -834,14 +1711,36 @@ class FenetreReglages:
     def _appliquer_sonde(self, sonde: Sonde) -> None:
         if sonde.service not in self.details:
             return
-        self.pastilles[sonde.service] = {"ok": sonde.ok, "detail": sonde.detail}
+        etat = str(getattr(sonde, "etat", "") or "")
+        self.pastilles[sonde.service] = {
+            "ok": sonde.ok,
+            "detail": sonde.detail,
+            "etat": etat,
+        }
         self.details[sonde.service].configure(text=sonde.detail)
-        self._dessiner_pastille(sonde.service, sonde.ok)
+        self._dessiner_pastille(sonde.service, sonde.ok, etat)
         if sonde.ok is False:
             self.ligne_statut.configure(text=t("reglages.echec_manuel"))
 
+    def _saisie_retouchee(self) -> dict[str, str]:
+        """Ce que l'utilisateur a changé, et rien d'autre.
+
+        Écrire aussi les champs intacts poserait `BRAIN_MODEL=` sur une
+        installation neuve : une clé vide dans `.env.local` écrase la valeur
+        que le conteneur ou la carte figée avait posée. Une clé secrète passe
+        toujours par `valeurs_a_poser`, qui sait la comparer à l'existante.
+        """
+        saisie: dict[str, str] = {}
+        for cle, champ in self.champs.items():
+            brut = champ.get()
+            if cle in CLES_SECRETES:
+                saisie[cle] = brut
+            elif brut != self._charges.get(cle, ""):
+                saisie[cle] = brut
+        return saisie
+
     def enregistrer(self) -> None:
-        saisie = {cle: champ.get() for cle, champ in self.champs.items()}
+        saisie = self._saisie_retouchee()
         enregistrer_saisie(self.chemin, saisie, self._secrets)
         _, self._secrets = precharger(self.chemin)
         for cle, ligne in self._suffixes.items():
@@ -851,10 +1750,43 @@ class FenetreReglages:
             )
         for cle in CLES_SECRETES:
             if cle in self.champs:
-                self.champs[cle].delete(0, tk.END)
+                champ = self.champs[cle]
+                champ.delete(0, tk.END)
+                if hasattr(champ, "afficher_invite"):
+                    champ.afficher_invite()
+        self._charges = {cle: champ.get() for cle, champ in self.champs.items()}
         self.ligne_statut.configure(text=t("reglages.enregistre"))
 
+    def _lancer_feedback(self) -> None:
+        self._ouvrir_retour()
+
+    def _relacher_variables(self) -> None:
+        """Détache les StringVar sur le fil Tk tant que l'interpréteur vit.
+
+        Sans ça, ``Variable.__del__`` part du fil ``reglages-sonde`` après
+        destruction : Tcl panique (Windows 0x80000003) au lieu de lever
+        une TclError rattrapable.
+        """
+        self.combo_voix = None
+        self.combo_accent = None
+        self.combo_langue = None
+        self.champs.clear()
+        self._champ_accent = None
+        self._champ_langue = None
+        for nom in ("var_voix", "var_accent", "var_langue"):
+            setattr(self, nom, None)
+
     def fermer(self, _event: object | None = None) -> None:
+        # Le tic de la file est porté par la fenêtre : sans annulation, il se
+        # déclenche après la destruction et Tcl remonte
+        # « invalid command name …_pomper_file » à chaque fermeture.
+        if self._apres is not None:
+            try:
+                self.fenetre.after_cancel(self._apres)
+            except tk.TclError:
+                pass
+            self._apres = None
+        self._relacher_variables()
         try:
             self.fenetre.destroy()
         except tk.TclError:

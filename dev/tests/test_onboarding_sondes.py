@@ -1,8 +1,13 @@
-"""Lot A — sondes d'onboarding, sans reseau.
+"""Sondes d'onboarding, sans reseau.
 
-Le client HTTP est injecte et double a la main. Ce qui est prouve : la forme
-des appels (les ponts existants), les trois causes dicibles, le delai borne,
-l'absence d'exception, et l'execution parallele de `sonder_tout`.
+Le client HTTP est injecte et double a la main, au plus pres du contrat reel
+des deux ponts (`native/codexbridge/bridge.py`, `native/clibridge/bridge.py`) :
+un statut de succes meme quand le harnais echoue, et le verdict dans le corps.
+
+Ce qui est prouve : la forme des appels, les trois etats dicibles (repond /
+muet / injoignable) plus l'absence de cle, le fait qu'aucun statut de succes
+ne suffit a allumer le vert, les delais bornes, l'absence d'exception, et
+l'execution parallele de `sonder_tout`.
 """
 from __future__ import annotations
 
@@ -100,11 +105,11 @@ REGLAGES_OK = {
 
 # Une reponse qui satisfait les quatre services a la fois : chacun verifie
 # autre chose qu'un statut, donc le double doit porter les quatre formes.
+# `answer` est le champ reel des deux ponts (`native/codexbridge/bridge.py`,
+# `native/clibridge/bridge.py`), verifie sur le pont en marche le 2026-09-21.
 PAYLOAD_TOUT_REPOND = {
     "ok": True,
-    "reponse": "PONG",
-    "question": "…",
-    "duree_ms": 1200,
+    "answer": "PONG",
     "choices": [{"message": {"content": "pong"}}],
     "answers": {"phrase_finished": {"noul": 0.9, "confidence": 0.9}},
 }
@@ -498,12 +503,9 @@ async def test_sonder_tout_passe_le_modele_jev():
 
 @runs_async
 async def test_sonder_tout_s_execute_en_parallele():
-    """Les quatre services partent ensemble ; seuls les deux harnais se suivent.
-
-    Le pont n'a qu'une place : deux questions reelles lancees en meme temps
-    renvoient « une demande est deja en cours » et l'un des deux voyants
-    serait orange sans raison.
-    """
+    """Les quatre services partent ensemble : le temps total est celui du
+    plus lent, pas la somme. Les deux ponts servent chaque requete sur son
+    propre fil, il n'y a pas de place unique a attendre."""
     from src.onboarding.sondes import sonder_tout
 
     client = FakeHTTPClient(_FakeResponse(PAYLOAD_TOUT_REPOND), delay_s=0.2)
@@ -513,40 +515,10 @@ async def test_sonder_tout_s_execute_en_parallele():
 
     assert len(sondes) == 4
     assert all(sonde.ok for sonde in sondes)
-    # 6 appels : une question vide + une vraie question par harnais, un par
-    # service distant. Deux harnais serialises coutent 0,4 s, pas 1,2 s.
+    # 6 appels : une question vide + une vraie question par harnais, un appel
+    # par service distant. En serie, cela couterait 1,2 s.
     assert len(client.calls) == 6
-    assert duree < 1.1
-
-
-@runs_async
-async def test_sonder_tout_ne_lance_pas_les_deux_harnais_en_meme_temps():
-    from src.onboarding.sondes import sonder_tout
-
-    class _UnePlace:
-        """Le pont reel refuse une seconde question simultanee."""
-
-        def __init__(self):
-            self.calls = []
-            self.en_cours = 0
-            self.chevauchements = 0
-
-        async def post(self, url, json=None, headers=None, timeout=None):
-            self.calls.append({"url": url, "json": json, "timeout": timeout})
-            vraie = bool((json or {}).get("question", "").strip())
-            if vraie:
-                self.en_cours += 1
-                if self.en_cours > 1:
-                    self.chevauchements += 1
-                await asyncio.sleep(0.05)
-                self.en_cours -= 1
-            return _FakeResponse(PAYLOAD_TOUT_REPOND)
-
-    client = _UnePlace()
-    sondes = await sonder_tout(REGLAGES_OK, client=client)
-
-    assert client.chevauchements == 0, "deux questions reelles en meme temps"
-    assert len(sondes) == 4
+    assert duree < 0.75
 
 
 @runs_async
@@ -917,7 +889,7 @@ async def test_un_pont_qui_repond_ok_false_n_est_plus_un_vert():
 async def test_une_reponse_sans_le_mot_attendu_n_est_pas_un_vert():
     from src.onboarding.sondes import ETAT_MUET, sonder_codex
 
-    client = FakeHTTPClient(_FakeResponse({"ok": True, "reponse": ""}))
+    client = FakeHTTPClient(_FakeResponse({"ok": True, "answer": ""}))
     sonde = await sonder_codex("http://exemple.invalid/ask", "jeton", client=client)
 
     assert sonde.ok is False
@@ -925,7 +897,7 @@ async def test_une_reponse_sans_le_mot_attendu_n_est_pas_un_vert():
     _dicible(sonde.detail)
 
     bavard = FakeHTTPClient(
-        _FakeResponse({"ok": True, "reponse": "Je ne sais pas quoi dire."})
+        _FakeResponse({"ok": True, "answer": "Je ne sais pas quoi dire."})
     )
     sonde = await sonder_codex("http://exemple.invalid/ask", "jeton", client=bavard)
     assert sonde.ok is False
@@ -937,12 +909,32 @@ async def test_la_reponse_attendue_ne_depend_pas_de_la_casse():
     from src.onboarding.sondes import sonder_codex
 
     for reponse in ("PONG", "pong", "Pong.", "Le mot demande est PONG."):
-        client = FakeHTTPClient(_FakeResponse({"ok": True, "reponse": reponse}))
+        client = FakeHTTPClient(_FakeResponse({"ok": True, "answer": reponse}))
         sonde = await sonder_codex(
             "http://exemple.invalid/ask", "jeton", client=client
         )
         assert sonde.ok is True, reponse
         _dicible(sonde.detail)
+
+
+@runs_async
+async def test_le_champ_verifie_est_celui_des_ponts():
+    """Garde-fou de contrat : les deux ponts rendent `answer`, et
+    `src/brain/tools_codex.py` lit le meme champ. Une sonde qui verifierait
+    un autre nom serait verte contre un double et muette contre le vrai."""
+    from native.clibridge import bridge as pont_cli
+    from native.codexbridge import bridge as pont_codex
+    from src.onboarding.sondes import _CHAMP_REPONSE_HARNAIS
+
+    assert _CHAMP_REPONSE_HARNAIS == "answer"
+    assert await pont_codex.answer_question("", runner=None) == {
+        "ok": False,
+        "error": "question vide",
+    }
+    assert await pont_cli.answer_question("", runner=None) == {
+        "ok": False,
+        "error": "question vide",
+    }
 
 
 @runs_async
@@ -964,25 +956,36 @@ async def test_la_question_de_sonde_est_minimale_et_verifiable():
 async def test_la_vraie_question_a_un_delai_borne_superieur_a_cinq_secondes():
     """Un harnais met plus de cinq secondes : borner a cinq produirait un
     faux negatif systematique. La borne est annoncee, pas devinee."""
-    from src.onboarding.sondes import (
-        DELAI_HARNAIS_S,
-        DELAI_HARNAIS_SERVEUR_S,
-        DELAI_S,
-        sonder_codex,
-    )
+    from native.clibridge.bridge import DEFAULT_TIMEOUT_S as delai_pont_claude
+    from native.codexbridge.bridge import DEFAULT_TIMEOUT_S as delai_pont_codex
 
-    assert DELAI_S == 5.0
+    from src.onboarding.sondes import DELAI_HARNAIS_S, DELAI_S, sonder_codex
+
+    assert DELAI_S == 5.0, "« cinq secondes » est ecrit en toutes lettres a l'ecran"
     assert DELAI_HARNAIS_S > DELAI_S
-    # Le serveur doit rendre son propre depassement avant que le client
-    # abandonne : sinon on dit « injoignable » pour un pont qui repond.
-    assert DELAI_HARNAIS_SERVEUR_S < DELAI_HARNAIS_S
+    # Le pont borne lui-meme le harnais et rend « delai depasse ». Si le
+    # client abandonnait avant, un pont qui a repondu serait dit injoignable.
+    assert DELAI_HARNAIS_S > delai_pont_codex
+    assert DELAI_HARNAIS_S > delai_pont_claude
 
     client = FakeHTTPClient(_FakeResponse(PAYLOAD_TOUT_REPOND))
     await sonder_codex("http://exemple.invalid/ask", "jeton", client=client)
     delais = [envoi["timeout"] for envoi in client.calls]
     assert delais[0] <= DELAI_S, "le premier appel doit echouer vite"
     assert delais[-1] <= DELAI_HARNAIS_S
-    assert client.calls[-1]["json"]["timeout"] <= DELAI_HARNAIS_SERVEUR_S
+
+
+@runs_async
+async def test_la_question_n_emporte_pas_de_champ_invente():
+    """Les ponts ne lisent que `question` et `agent`. Leur envoyer un delai
+    laisserait croire qu'on le commande."""
+    from src.onboarding.sondes import sonder_claude, sonder_codex
+
+    client = FakeHTTPClient(_FakeResponse(PAYLOAD_TOUT_REPOND))
+    await sonder_codex("http://exemple.invalid/ask", "jeton", client=client)
+    await sonder_claude("http://exemple.invalid/ask", "jeton", client=client)
+    for envoi in client.calls:
+        assert set(envoi["json"]) <= {"question", "agent"}
 
 
 @runs_async
@@ -1017,40 +1020,31 @@ async def test_un_harnais_qui_pend_ne_bloque_pas_plus_que_la_borne(monkeypatch):
     _dicible(sonde.detail)
 
 
-@runs_async
-async def test_le_pont_occupe_le_dit():
-    from src.onboarding.sondes import ETAT_MUET, sonder_codex
+class _PontReel:
+    """Double fidele des deux ponts : statut de succes, verdict dans le corps.
 
-    class _Occupe:
-        async def post(self, url, json=None, headers=None, timeout=None):
-            if (json or {}).get("question", "").strip():
-                return _FakeResponse(
-                    {"ok": False, "error": "Une demande est déjà en cours"},
-                    status_code=429,
-                )
+    `native/codexbridge/bridge.py` et `native/clibridge/bridge.py` rendent
+    toujours un statut de succes pour un harnais qui echoue ; seul `error`
+    porte la raison.
+    """
+
+    def __init__(self, corps: dict):
+        self.corps = corps
+        self.calls: list[dict] = []
+
+    async def post(self, url, json=None, headers=None, timeout=None):
+        self.calls.append({"url": url, "json": json or {}, "timeout": timeout})
+        if not (json or {}).get("question", "").strip():
             return _FakeResponse({"ok": False, "error": "question vide"})
-
-    sonde = await sonder_codex("http://exemple.invalid/ask", "jeton", client=_Occupe())
-
-    assert sonde.ok is False
-    assert sonde.etat == ETAT_MUET
-    assert "occupe" in sonde.detail.lower().replace("é", "e")
-    _dicible(sonde.detail)
+        return _FakeResponse(self.corps)
 
 
 @runs_async
-async def test_le_delai_du_serveur_est_dit_comme_un_delai():
+async def test_le_delai_du_pont_est_dit_comme_un_delai():
     from src.onboarding.sondes import ETAT_MUET, sonder_codex
 
-    class _TropLong:
-        async def post(self, url, json=None, headers=None, timeout=None):
-            if (json or {}).get("question", "").strip():
-                return _FakeResponse(
-                    {"ok": False, "error": "délai dépassé"}, status_code=408
-                )
-            return _FakeResponse({"ok": False, "error": "question vide"})
-
-    sonde = await sonder_codex("http://exemple.invalid/ask", "jeton", client=_TropLong())
+    client = _PontReel({"ok": False, "error": "delai depasse"})
+    sonde = await sonder_codex("http://exemple.invalid/ask", "jeton", client=client)
 
     assert sonde.ok is False
     assert sonde.etat == ETAT_MUET
@@ -1059,30 +1053,69 @@ async def test_le_delai_du_serveur_est_dit_comme_un_delai():
 
 
 @runs_async
-async def test_un_harnais_non_connecte_le_dit():
+async def test_un_harnais_introuvable_sur_l_hote_le_dit():
+    from src.onboarding.sondes import ETAT_MUET, sonder_claude
+
+    client = _PontReel({"ok": False, "error": "claude introuvable"})
+    sonde = await sonder_claude("http://exemple.invalid/ask", "jeton", client=client)
+
+    assert sonde.ok is False
+    assert sonde.etat == ETAT_MUET
+    assert "introuvable" in sonde.detail.lower()
+    _dicible(sonde.detail)
+
+
+@runs_async
+async def test_un_harnais_qui_echoue_oriente_vers_la_connexion():
+    """Le pont ne dit pas pourquoi le harnais a echoue : un code de sortie
+    et rien d'autre. Le libelle ne peut donc pas affirmer la cause, mais il
+    doit donner le geste qui la leve le plus souvent."""
     from src.onboarding.sondes import ETAT_MUET, sonder_codex
 
-    class _PasConnecte:
-        async def post(self, url, json=None, headers=None, timeout=None):
-            if (json or {}).get("question", "").strip():
-                return _FakeResponse(
-                    {
-                        "ok": False,
-                        "error": "codex failed (exit 1)",
-                        "erreur": "Error: not logged in",
-                        "sortie": "codex: authentication required",
-                    }
-                )
-            return _FakeResponse({"ok": False, "error": "question vide"})
-
-    sonde = await sonder_codex(
-        "http://exemple.invalid/ask", "jeton", client=_PasConnecte()
-    )
+    client = _PontReel({"ok": False, "error": "codex a echoue (code 1)"})
+    sonde = await sonder_codex("http://exemple.invalid/ask", "jeton", client=client)
 
     assert sonde.ok is False
     assert sonde.etat == ETAT_MUET
     texte = sonde.detail.lower().replace("é", "e").replace("è", "e")
-    assert "connect" in texte or "login" in texte
+    assert "connexion" in texte or "login" in texte
+    assert "powershell" in texte
+    # le code de sortie brut du pont ne doit pas se retrouver a l'ecran
+    assert "code 1" not in texte
+    _dicible(sonde.detail)
+
+
+@runs_async
+async def test_un_agent_inconnu_n_est_pas_un_vert():
+    from src.onboarding.sondes import ETAT_MUET, sonder_claude
+
+    client = _PontReel({"ok": False, "error": "agent inconnu"})
+    sonde = await sonder_claude("http://exemple.invalid/ask", "jeton", client=client)
+
+    assert sonde.ok is False
+    assert sonde.etat == ETAT_MUET
+    _dicible(sonde.detail)
+
+
+@runs_async
+async def test_un_statut_inattendu_apres_le_pont_est_un_echec_pas_une_erreur_d_adresse():
+    """Le premier temps a deja prouve que l'adresse est la bonne : dire
+    « ce n'est pas le pont » sur un echec du second temps serait faux."""
+    from src.onboarding.sondes import ETAT_MUET, sonder_codex
+
+    class _CasseAuSecondTemps:
+        async def post(self, url, json=None, headers=None, timeout=None):
+            if (json or {}).get("question", "").strip():
+                return _FakeResponse({"ok": False}, status_code=500)
+            return _FakeResponse({"ok": False, "error": "question vide"})
+
+    sonde = await sonder_codex(
+        "http://exemple.invalid/ask", "jeton", client=_CasseAuSecondTemps()
+    )
+
+    assert sonde.ok is False
+    assert sonde.etat == ETAT_MUET
+    assert "pas le pont" not in sonde.detail
     _dicible(sonde.detail)
 
 

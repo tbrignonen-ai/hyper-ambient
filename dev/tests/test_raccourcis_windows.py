@@ -51,9 +51,26 @@ def test_script_se_deduit_de_son_emplacement(script: str):
 
 
 def test_script_pointe_vers_le_bat_avec_repertoire_de_travail(script: str):
-    assert "hyper-ambient.bat" in script
-    assert "native" in script and "presence" in script
+    """Le raccourci appelle lancer.ps1 (Docker, conteneur, modeles, host-agent)
+    et porte un repertoire de travail : il marche depuis n'importe ou."""
+    lanceur = RACINE / "packaging" / "windows" / "lancer.ps1"
+    assert lanceur.is_file(), f"manque {lanceur}"
+    assert "lancer.ps1" in script
     assert "WorkingDirectory" in script
+    assert "$PSScriptRoot" in script or "MyInvocation" in script
+    assert "$racine" in script
+
+
+def test_script_est_utf8_bom_ou_ascii_strict():
+    """PowerShell 5.1, lance par les raccourcis, lit un .ps1 sans BOM
+    comme ANSI : un accent casse le parseur. UTF-8+BOM ou ASCII strict."""
+    if not SCRIPT.is_file():
+        pytest.skip("packaging/ n'est pas monte dans mother-core-dev")
+    brut = SCRIPT.read_bytes()
+    if brut.startswith(b"\xef\xbb\xbf"):
+        brut.decode("utf-8-sig")
+        return
+    brut.decode("ascii")
 
 
 def test_script_cible_bureau_et_programmes_utilisateur(script: str):
@@ -106,12 +123,31 @@ def test_script_echoue_avec_un_message_sans_trace(script: str):
 
 
 def test_readme_tient_en_dix_lignes_et_reste_honnete(readme: str):
-    assert len(readme.splitlines()) <= 10
+    """Les commandes tiennent en dix lignes, avant le guide. Le reste
+    peut s'allonger : un arrivant ne doit pas le lire pour lancer."""
+    lignes = readme.splitlines()
+    debut_detail = next(
+        (i for i, ligne in enumerate(lignes) if ligne.startswith("## ")),
+        len(lignes),
+    )
+    demarrage = lignes[:debut_detail]
+    assert len(demarrage) <= 10, len(demarrage)
+    texte_demarrage = "\n".join(demarrage)
+    assert "```powershell" in texte_demarrage.lower()
+    assert "installer_raccourcis.ps1" in texte_demarrage
+    commandes = [
+        ligne.strip() for ligne in demarrage if ligne.strip().startswith("& ")
+    ]
+    assert commandes, "aucune commande complete dans le demarrage rapide"
+    for ligne in commandes:
+        assert '"' in ligne, ligne
+        assert ".ps1" in ligne, ligne
+    assert any("-Supprimer" in ligne or "-supprimer" in ligne for ligne in commandes)
     texte = readme.lower()
     assert "installer_raccourcis.ps1" in texte
     assert "-supprimer" in texte
     assert "raccourci" in texte
-    assert "produit" in texte
+    assert "produit" in texte or "product" in texte
     assert "docker" in texte
     assert "mother-core-dev" in texte
     assert "pyinstaller" not in texte
