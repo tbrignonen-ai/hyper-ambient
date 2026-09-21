@@ -90,6 +90,7 @@ from src.brain.mandat import (  # noqa: E402
     phrase_accuse,
     phrase_depot,
     phrase_harnais_absent,
+    phrase_si_harnais_non_branche,
     respecter_harnais_nomme,
     phrase_question_manquante,
     phrase_arrivee,
@@ -225,9 +226,10 @@ def test_extraire_harnais_et_sujet():
     assert extraire_sujet("demande à Claude de relire le code") == "relire le code"
 
 
-def test_extraire_harnais_cursor_reste_mappe_sur_codex():
-    """Piège de la table : `cursor` rend Codex. Non changé ici — à confirmer."""
-    assert extraire_harnais("demande a Cursor d'ouvrir le fichier") == "Codex"
+def test_extraire_harnais_cursor_est_un_harnais():
+    """Cursor est un harnais à part, pas un alias silencieux de Codex."""
+    assert extraire_harnais("demande a Cursor d'ouvrir le fichier") == "Cursor"
+    assert nom_harnais_dit("demande a Cursor d'ouvrir le fichier") == "Cursor"
 
 
 def test_nom_harnais_dit_garde_claude_code():
@@ -236,9 +238,12 @@ def test_nom_harnais_dit_garde_claude_code():
     assert nom_harnais_dit(prompt) == "Claude Code"
 
 
-def test_phrase_harnais_absent_dit_le_nom_sans_basculer():
-    phrase = phrase_harnais_absent("Claude Code")
-    assert phrase == "Claude Code n'est pas connecté sur cette machine"
+def test_phrase_harnais_absent_nomme_le_demande_et_le_propose():
+    phrase = phrase_harnais_absent("Cursor", propose="Codex")
+    assert "Cursor" in phrase
+    assert "Codex" in phrase
+    assert "n'est pas connecté" in phrase
+    assert phrase != phrase_harnais_absent("Cursor")
 
 
 class _Registre:
@@ -273,7 +278,58 @@ def test_respecter_harnais_nomme_refuse_si_absent_du_registre():
         _Registre({"ask_codex"}),
     )
     assert appels == []
-    assert refus == "Claude Code n'est pas connecté sur cette machine"
+    assert "Claude Code" in refus
+    assert "Codex" in refus
+    assert "n'est pas connecté" in refus
+
+
+def test_harnais_nomme_et_branche_ne_produit_pas_la_phrase():
+    """Codex est dans le registre : on ne refuse pas, on laisse le mandat se déposer."""
+    phrase = phrase_si_harnais_non_branche(
+        "Demande a Codex de relire transport.py",
+        _Registre({"ask_codex"}),
+    )
+    assert phrase is None
+
+
+def test_harnais_nomme_et_non_branche_produit_la_phrase_sans_mandat():
+    """Cursor est reconnu, pas branché : une phrase, pas un mandat, pas Codex saisi."""
+    registre = _Registre({"ask_codex"})
+    prompt = "Demande a Cursor de me resumer src/brain/router.py."
+    phrase = phrase_si_harnais_non_branche(prompt, registre)
+    assert phrase is not None
+    assert "Cursor" in phrase
+    assert "Codex" in phrase
+    appels, refus = respecter_harnais_nomme(prompt, [], registre)
+    assert appels == []
+    assert refus == phrase
+
+
+def test_muse_et_claude_non_branches_empruntent_le_meme_chemin():
+    """Un seul traitement : harnais nommé, outil absent du registre."""
+    registre = _Registre({"ask_codex"})
+    pour_muse = phrase_si_harnais_non_branche(
+        "Demande a Muse un plan pour la soutenance.", registre
+    )
+    pour_claude = phrase_si_harnais_non_branche(
+        "Demande a Claude de relire transport.py.", registre
+    )
+    pour_cursor = phrase_si_harnais_non_branche(
+        "Demande a Cursor d'ouvrir le fichier.", registre
+    )
+    assert pour_muse is not None and "Muse" in pour_muse and "Codex" in pour_muse
+    assert pour_claude is not None and "Claude" in pour_claude and "Codex" in pour_claude
+    assert pour_cursor is not None and "Cursor" in pour_cursor and "Codex" in pour_cursor
+    assert pour_muse.count("Je peux demander") == 1
+    assert pour_claude.count("Je peux demander") == 1
+    assert pour_cursor.count("Je peux demander") == 1
+
+
+def test_tour_sans_harnais_nomme_ne_change_pas():
+    assert phrase_si_harnais_non_branche("Bonjour.", _Registre({"ask_codex"})) is None
+    assert phrase_si_harnais_non_branche(
+        "Quelle heure est-il ?", _Registre({"ask_codex", "calculer"})
+    ) is None
 
 
 def test_respecter_harnais_nomme_laisse_un_outil_local():
@@ -645,6 +701,63 @@ async def test_appel_harnais_depose_un_mandat_et_rend_la_main(monkeypatch):
     assert pipeline._mandats.en_cours()
     for m in list(pipeline._mandats.en_cours()):
         pipeline._mandats.oublier(m.identifiant)
+    if pipeline._tache_mandats is not None and not pipeline._tache_mandats.done():
+        pipeline._tache_mandats.cancel()
+
+
+@runs_async
+async def test_cursor_non_branche_ne_depose_rien_et_dit_la_phrase(monkeypatch):
+    """Chemin vocal : nommer Cursor ne saisit pas Codex et ne dépose pas de mandat."""
+    monkeypatch.setenv("CODEX_BRIDGE_TOKEN", "jeton")
+    monkeypatch.delenv("CLI_BRIDGE_TOKEN", raising=False)
+    monkeypatch.delenv("MUSE_BRIDGE_URL", raising=False)
+    monkeypatch.delenv("SEARXNG_URL", raising=False)
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+
+    pipeline = serve_hostagent.HostPipeline()
+    pipeline.registre = serve_hostagent.construire_registre(
+        client=object(), registre_mandats=pipeline._mandats
+    )
+    pipeline.porte = serve_hostagent.construire_porte()
+    pipeline.asr = _ASRTexte(
+        "Demande a Cursor de me resumer le fichier src/brain/router.py."
+    )
+    pipeline.tts = _MOUTHDouble()
+    from src.brain.tools import ToolCall
+
+    class _BrainQuiSaisitCodex(_BrainDouble):
+        async def query_streaming(self, prompt, **kw):
+            self.appels.append({"prompt": prompt, **kw})
+            yield {
+                "delta": "",
+                "stop_reason": "tool_calls",
+                "tool_calls": [
+                    ToolCall(
+                        id="mandat-codex",
+                        name="ask_codex",
+                        arguments={"question": "résume src/brain/router.py"},
+                        raw_arguments='{"question":"résume src/brain/router.py"}',
+                    )
+                ],
+            }
+
+    pipeline.brain = _BrainQuiSaisitCodex()
+    pipeline._client_outils = object()
+    socket = _SocketDouble()
+
+    async def lent(question: str) -> str:
+        await asyncio.sleep(30)
+        return "trop tard"
+
+    pipeline.registre.get("ask_codex").handler.pont = lent
+
+    await pipeline._enchainer(_trames_de_parole(), socket)
+    rapport = _rapport(socket)
+    assert rapport is not None
+    assert "Cursor" in rapport["reply"]
+    assert "Codex" in rapport["reply"]
+    assert "n'est pas connecté" in rapport["reply"]
+    assert pipeline._mandats.en_cours() == []
     if pipeline._tache_mandats is not None and not pipeline._tache_mandats.done():
         pipeline._tache_mandats.cancel()
 

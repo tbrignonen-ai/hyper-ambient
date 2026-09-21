@@ -324,6 +324,52 @@ async def test_une_seule_annonce_d_attente_sur_un_mandat(tmp_path, capsys):
     assert "toi.Je" not in compte["texte"]
 
 
+@runs_async
+async def test_cursor_non_branche_affiche_la_phrase_sans_mandat(tmp_path, capsys):
+    """Le chemin écrit ne saisit pas Codex quand on a nommé Cursor."""
+    from src.brain.tools import ToolRegistry, ToolSpec
+    from src.gate.permission import Gate
+    from src.brain.mandat import RegistreMandats, phrase_si_harnais_non_branche
+
+    async def interdit(question: str) -> str:
+        raise AssertionError("Codex ne doit pas être saisi")
+
+    class _Mandat:
+        registre_mandats = True
+
+        async def __call__(self, question: str) -> str:
+            return await interdit(question)
+
+    registre = ToolRegistry()
+    registre.register(
+        ToolSpec(
+            name="ask_codex",
+            description="x",
+            parameters={"type": "object", "properties": {}, "required": []},
+            danger="read",
+            handler=_Mandat(),
+        )
+    )
+    pieces = {
+        "brain": _BrainOutil(),
+        "registre": registre,
+        "porte": Gate(mode="auto"),
+        "mandats": RegistreMandats(),
+        "historique": [],
+        "journal": tmp_path / "convo.md",
+    }
+    pieces["journal"].write_text("# test\n\n", encoding="utf-8")
+    prompt = "Demande a Cursor de me resumer src/brain/router.py."
+    attendue = phrase_si_harnais_non_branche(prompt, registre)
+    compte = await parler_ecrit.jouer_tour_ecrit(prompt, pieces)
+    sortie = capsys.readouterr().out
+    assert attendue
+    assert attendue in compte["texte"]
+    assert attendue in sortie
+    assert "→ Codex" not in sortie
+    assert pieces["mandats"].en_cours() == []
+
+
 def test_recoller_prononce_ajoute_l_espace_a_la_couture():
     """La jointure vit à la concaténation, pas à la fin de chaque libellé."""
     recoller = serve_hostagent.recoller_prononce

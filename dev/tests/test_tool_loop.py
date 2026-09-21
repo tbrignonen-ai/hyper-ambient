@@ -539,3 +539,35 @@ async def test_les_messages_de_la_boucle_valent_la_construction_par_defaut():
     compat = _brain()
     expected = compat._payload("salut", "S", 0.7, True, [{"role": "user", "content": "h"}])["messages"]
     assert brain.calls[0]["messages"] == expected
+
+
+@runs_async
+async def test_harnais_nomme_non_branche_parle_sans_executer_d_outil():
+    """Cursor nommé, seul Codex est branché : phrase, pas d'appel, pas de mandat."""
+    from src.brain.mandat import phrase_si_harnais_non_branche
+
+    async def handler(question: str) -> str:
+        raise AssertionError("Codex ne doit pas être saisi à la place de Cursor")
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="ask_codex",
+            description="x",
+            parameters={"type": "object", "properties": {}, "required": []},
+            danger="read",
+            handler=handler,
+        )
+    )
+    brain = FakeBrain([
+        [tool_calls_chunk(name="ask_codex", args='{"question":"résume router.py"}')],
+        [{"delta": "fait.", "stop_reason": "stop", "ttft_ms": 1.0}],
+    ])
+    prompt = "Demande a Cursor de me resumer src/brain/router.py."
+    attendue = phrase_si_harnais_non_branche(prompt, registry)
+    chunks = [c async for c in run_tool_loop(brain, prompt, registry, FakeGate())]
+    deltas = [c.get("delta") or "" for c in chunks]
+    assert attendue
+    assert attendue in deltas
+    assert not any(c.get("channel") == "tool" for c in chunks)
+    assert any(c.get("stop_reason") == "harnais_absent" for c in chunks)

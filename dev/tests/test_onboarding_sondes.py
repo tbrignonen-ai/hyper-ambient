@@ -762,7 +762,7 @@ def test_outil_cli_pret_installe_et_connecte_est_vert(monkeypatch, maison_vide):
     _dicible(sonde.detail)
     texte = sonde.detail.lower().replace("é", "e").replace("è", "e")
     assert "codex" in texte
-    assert "connect" in texte
+    assert "connexion" in texte or "connecte" in texte
 
 
 def test_outil_cli_pret_dit_ce_qu_il_prouve_et_ce_qu_il_ne_prouve_pas(
@@ -986,8 +986,12 @@ async def test_la_vraie_question_a_un_delai_borne_superieur_a_cinq_secondes():
 
 
 @runs_async
-async def test_un_harnais_qui_pend_ne_bloque_pas_plus_que_la_borne():
-    from src.onboarding.sondes import DELAI_HARNAIS_S, ETAT_MUET, sonder_codex
+async def test_un_harnais_qui_pend_ne_bloque_pas_plus_que_la_borne(monkeypatch):
+    """La borne est annoncee et tenue. Ramenee ici a 0,4 s pour que le test
+    ne dure pas quatre-vingt-dix secondes."""
+    from src.onboarding.sondes import ETAT_MUET, sonder_codex
+
+    monkeypatch.setattr("src.onboarding.sondes.DELAI_HARNAIS_S", 0.4)
 
     class _PondApresLePont:
         """Le pont repond, le harnais ne rend jamais la main."""
@@ -1008,7 +1012,8 @@ async def test_un_harnais_qui_pend_ne_bloque_pas_plus_que_la_borne():
 
     assert sonde.ok is False
     assert sonde.etat == ETAT_MUET
-    assert duree < DELAI_HARNAIS_S + 2.0
+    assert duree < 2.0
+    assert "delai" in sonde.detail.lower().replace("é", "e")
     _dicible(sonde.detail)
 
 

@@ -573,6 +573,237 @@ def test_verifier_pastille_rouge_sur_echec(tmp_path):
         racine.destroy()
 
 
+# ---------------------------------------------------------------------------
+# Trois états honnêtes à l'écran
+# ---------------------------------------------------------------------------
+
+
+def _couleur_pastille(fenetre, service):
+    toile = fenetre._toiles[service]
+    items = toile.find_all()
+    assert items, "aucune pastille dessinée"
+    return str(toile.itemcget(items[-1], "fill"))
+
+
+def test_les_trois_etats_ont_trois_couleurs_differents(tmp_path):
+    """Joignable-et-muet n'est ni un vert ni un rouge : c'est un troisième
+    état, et l'œil doit le distinguer sans lire le libellé."""
+    from src.onboarding.sondes import (
+        ETAT_INJOIGNABLE,
+        ETAT_MUET,
+        ETAT_REPOND,
+    )
+
+    from native.presence.reglages_ui import FenetreReglages
+
+    tk, racine = _racine_tk()
+    cas = {
+        "codex": Sonde("codex", True, "Codex a repondu.", 1.0, ETAT_REPOND),
+        "claude": Sonde(
+            "claude", False, "Le pont Claude est joignable, mais muet.", 1.0, ETAT_MUET
+        ),
+        "jev": Sonde(
+            "jev", False, "JeV ne repond pas.", 1.0, ETAT_INJOIGNABLE
+        ),
+    }
+
+    async def tout(reglages, client=None):
+        return [
+            Sonde("brain_distant", False, "Rien n'est pose.", None),
+            cas["codex"],
+            cas["claude"],
+            cas["jev"],
+        ]
+
+    try:
+        fenetre = FenetreReglages(racine, tmp_path / ".env.local", sondes={"tout": tout})
+        racine.update_idletasks()
+        fenetre.bouton_tout.invoke()
+        _pomper(racine, lambda: fenetre.pastilles["jev"]["ok"] is False)
+        vert = _couleur_pastille(fenetre, "codex")
+        orange = _couleur_pastille(fenetre, "claude")
+        rouge = _couleur_pastille(fenetre, "jev")
+        assert len({vert, orange, rouge}) == 3, (vert, orange, rouge)
+        assert fenetre.pastilles["codex"]["etat"] == ETAT_REPOND
+        assert fenetre.pastilles["claude"]["etat"] == ETAT_MUET
+        assert fenetre.pastilles["jev"]["etat"] == ETAT_INJOIGNABLE
+    finally:
+        racine.destroy()
+
+
+def test_un_harnais_joignable_mais_muet_n_est_pas_vert(tmp_path):
+    """Le défaut du brief, vu de l'écran : le pont répond en 13 ms, le
+    harnais n'a rien dit. Ni vert, ni « injoignable »."""
+    from src.onboarding.sondes import ETAT_MUET
+
+    from native.presence.reglages_ui import FenetreReglages, PASTILLE_OK
+
+    tk, racine = _racine_tk()
+
+    async def sonder_codex(url, jeton, client=None):
+        return Sonde(
+            "codex",
+            False,
+            "Le pont Codex est joignable, mais Codex n'a pas donne la reponse attendue.",
+            13.0,
+            ETAT_MUET,
+        )
+
+    chemin = _env(tmp_path, f"CODEX_BRIDGE_TOKEN={_FAUX_JETON}\n")
+    try:
+        fenetre = FenetreReglages(racine, chemin, sondes={"codex": sonder_codex})
+        racine.update_idletasks()
+        fenetre.boutons_verifier["codex"].invoke()
+        _pomper(racine, lambda: fenetre.details["codex"].cget("text") != "")
+        assert fenetre.pastilles["codex"]["ok"] is False
+        assert fenetre.pastilles["codex"]["etat"] == ETAT_MUET
+        assert _couleur_pastille(fenetre, "codex") != PASTILLE_OK
+        assert "joignable" in fenetre.details["codex"].cget("text")
+    finally:
+        racine.destroy()
+
+
+def test_sonde_sans_etat_explicite_reste_rouge_pas_orange(tmp_path):
+    """Une sonde injectée à l'ancienne (quatre arguments) ne doit pas
+    hériter d'un état complaisant."""
+    from native.presence.reglages_ui import FenetreReglages, PASTILLE_KO
+
+    tk, racine = _racine_tk()
+
+    async def sonder_jev(cle, client=None, modele=None):
+        return Sonde("jev", True, "JeV a repondu.", 1.0)
+
+    try:
+        fenetre = FenetreReglages(
+            racine, tmp_path / ".env.local", sondes={"jev": sonder_jev}
+        )
+        racine.update_idletasks()
+        fenetre.boutons_verifier["jev"].invoke()
+        _pomper(racine, lambda: fenetre.pastilles["jev"]["ok"] is True)
+        assert _couleur_pastille(fenetre, "jev") != PASTILLE_KO
+    finally:
+        racine.destroy()
+
+
+def test_legende_des_trois_etats_est_affichee(tmp_path):
+    """Trois couleurs sans légende, c'est trois devinettes."""
+    from native.presence.reglages_ui import FenetreReglages
+
+    tk, racine = _racine_tk()
+    try:
+        fenetre = FenetreReglages(racine, tmp_path / ".env.local")
+        racine.update_idletasks()
+        textes = " ".join(_textes_widgets(fenetre.fenetre)).lower()
+        for mot in ("vert", "orange", "rouge"):
+            assert mot in textes, mot
+        assert "joignable" in textes
+    finally:
+        racine.destroy()
+
+
+def test_aide_verifier_annonce_le_delai_reel_d_un_harnais(tmp_path):
+    """L'écran promettait « cinq secondes » ; un harnais met bien plus.
+    Une promesse fausse est un échec de démonstration."""
+    from src.onboarding.sondes import DELAI_HARNAIS_S, DELAI_S
+
+    from native.presence.reglages_ui import FenetreReglages
+
+    tk, racine = _racine_tk()
+    try:
+        fenetre = FenetreReglages(racine, tmp_path / ".env.local")
+        racine.update_idletasks()
+        textes = " ".join(_textes_widgets(fenetre.fenetre))
+        assert "cinq secondes" in textes
+        assert str(int(DELAI_S)) == "5"
+        assert str(int(DELAI_HARNAIS_S)) in textes
+        assert "réellement" in textes
+    finally:
+        racine.destroy()
+
+
+def test_enregistrer_sans_rien_changer_ne_cree_pas_de_fichier(tmp_path):
+    """Installation neuve : ouvrir les réglages puis « Enregistrer » sans
+    rien saisir ne doit pas poser de clés vides. Une clé vide dans
+    `.env.local` écrase la valeur du conteneur."""
+    from native.presence.reglages_ui import FenetreReglages
+
+    tk, racine = _racine_tk()
+    chemin = tmp_path / ".env.local"
+    try:
+        fenetre = FenetreReglages(racine, chemin)
+        racine.update_idletasks()
+        fenetre.bouton_enregistrer.invoke()
+        racine.update_idletasks()
+        assert not chemin.exists(), chemin.read_text(encoding="utf-8")
+        assert "enregistr" in fenetre.ligne_statut.cget("text").lower()
+    finally:
+        racine.destroy()
+
+
+def test_enregistrer_ne_pose_pas_de_cle_vide_a_cote_des_autres(tmp_path):
+    from native.presence.reglages_ui import FenetreReglages
+
+    tk, racine = _racine_tk()
+    chemin = _env(tmp_path, "BRAIN_MODEL=modele-avant\n")
+    try:
+        fenetre = FenetreReglages(racine, chemin)
+        racine.update_idletasks()
+        fenetre.champs["TYPESAFE_MODEL"].delete(0, tk.END)
+        fenetre.champs["TYPESAFE_MODEL"].insert(0, "jev-autre")
+        fenetre.bouton_enregistrer.invoke()
+        racine.update_idletasks()
+        lus = module_reglages.lire_reglages(chemin)
+        assert lus["TYPESAFE_MODEL"] == "jev-autre"
+        assert lus["BRAIN_MODEL"] == "modele-avant"
+        assert "CODEX_BRIDGE_URL" not in lus
+        assert "CLI_BRIDGE_URL" not in lus
+        assert "BRAIN_API_ENDPOINT" not in lus
+        assert "BRAIN_API_KEY" not in lus
+    finally:
+        racine.destroy()
+
+
+def test_enregistrer_conserve_une_valeur_deja_posee(tmp_path):
+    """Ne pas écrire ce qui n'a pas changé ne veut pas dire l'effacer."""
+    from native.presence.reglages_ui import FenetreReglages
+
+    tk, racine = _racine_tk()
+    chemin = _env(
+        tmp_path,
+        f"BRAIN_MODEL=modele-avant\nBRAIN_API_ENDPOINT={_FAUX_URL}\n",
+    )
+    try:
+        fenetre = FenetreReglages(racine, chemin)
+        racine.update_idletasks()
+        fenetre.champs["BRAIN_MODEL"].delete(0, tk.END)
+        fenetre.champs["BRAIN_MODEL"].insert(0, "modele-apres")
+        fenetre.bouton_enregistrer.invoke()
+        racine.update_idletasks()
+        lus = module_reglages.lire_reglages(chemin)
+        assert lus["BRAIN_MODEL"] == "modele-apres"
+        assert lus["BRAIN_API_ENDPOINT"] == _FAUX_URL
+    finally:
+        racine.destroy()
+
+
+def test_enregistrer_un_champ_vide_explicitement_le_vide(tmp_path):
+    """Un champ prérempli que l'utilisateur efface est une intention :
+    la clé repasse à vide, elle n'est pas ignorée."""
+    from native.presence.reglages_ui import FenetreReglages
+
+    tk, racine = _racine_tk()
+    chemin = _env(tmp_path, "BRAIN_MODEL=modele-avant\n")
+    try:
+        fenetre = FenetreReglages(racine, chemin)
+        racine.update_idletasks()
+        fenetre.champs["BRAIN_MODEL"].delete(0, tk.END)
+        fenetre.bouton_enregistrer.invoke()
+        racine.update_idletasks()
+        assert module_reglages.lire_reglages(chemin)["BRAIN_MODEL"] == ""
+    finally:
+        racine.destroy()
+
+
 def test_tout_verifier_appelle_sonder_tout(tmp_path):
     tk, racine = _racine_tk()
 

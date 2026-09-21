@@ -54,7 +54,7 @@ _NOMS_VERS_HARNAIS = {
     "claude": "Claude",
     "codex": "Codex",
     "muse": "Muse",
-    "cursor": "Codex",
+    "cursor": "Cursor",
 }
 
 # Un harnais ne doit jamais recevoir le simple geste de le nommer.  Cette
@@ -137,8 +137,35 @@ def nom_harnais_dit(prompt: str) -> str:
     return extraire_harnais(prompt)
 
 
-def phrase_harnais_absent(nom: str) -> str:
-    return f"{nom} n'est pas connecté sur cette machine"
+def proposer_harnais(registre) -> Optional[str]:
+    """Premier harnais réellement branché, pour le proposer sans le saisir."""
+    if registre is None:
+        return None
+    for nom, outil in OUTIL_PAR_HARNAIS.items():
+        if registre.get(outil) is not None:
+            return nom
+    return None
+
+
+def harnais_est_branche(nom: str, registre) -> bool:
+    outil = OUTIL_PAR_HARNAIS.get(nom)
+    return outil is not None and registre is not None and registre.get(outil) is not None
+
+
+def phrase_harnais_absent(nom: str, propose: Optional[str] = None) -> str:
+    tete = f"{nom} n'est pas connecté sur cette machine"
+    if propose:
+        return f"{tete}. Je peux demander à {propose}, si tu veux."
+    return tete
+
+
+def phrase_si_harnais_non_branche(prompt, registre) -> Optional[str]:
+    """Phrase unique : harnais nommé, pont absent. Cursor, Muse, Claude."""
+    if not re.search(r"\b" + _NOMS + r"\b", prompt or "", re.IGNORECASE):
+        return None
+    if harnais_est_branche(extraire_harnais(prompt), registre):
+        return None
+    return phrase_harnais_absent(nom_harnais_dit(prompt), proposer_harnais(registre))
 
 
 def respecter_harnais_nomme(prompt, appels, registre):
@@ -150,6 +177,9 @@ def respecter_harnais_nomme(prompt, appels, registre):
     """
     if not re.search(r"\b" + _NOMS + r"\b", prompt or "", re.IGNORECASE):
         return list(appels or []), None
+    refus = phrase_si_harnais_non_branche(prompt, registre)
+    if refus:
+        return [], refus
     exigé = OUTIL_PAR_HARNAIS.get(extraire_harnais(prompt))
     if exigé is None:
         return list(appels or []), None
@@ -157,8 +187,6 @@ def respecter_harnais_nomme(prompt, appels, registre):
     retenus = list(appels or [])
     if not any(getattr(appel, "name", None) in noms_harnais for appel in retenus):
         return retenus, None
-    if registre.get(exigé) is None:
-        return [], phrase_harnais_absent(nom_harnais_dit(prompt))
     recrits = []
     for appel in retenus:
         if appel.name in noms_harnais and appel.name != exigé:

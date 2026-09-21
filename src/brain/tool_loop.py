@@ -20,7 +20,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional
 
-from src.brain.mandat import respecter_harnais_nomme
+from src.brain.mandat import phrase_si_harnais_non_branche, respecter_harnais_nomme
 from src.brain.tools import ToolCall, ToolRegistry, ToolResult
 
 if TYPE_CHECKING:  # pragma: no cover - contrat partage, ecrit cote GATE
@@ -181,6 +181,18 @@ async def run_tool_loop(
     Apres cet unique appel, les schemas ne sont plus renvoyes : le modele doit
     formuler une reponse, pas encherir.
     """
+    # Un harnais nommé et non branché se dit tout de suite : on n'appelle
+    # pas le modèle, on ne dépose pas de mandat, on ne saisit pas un autre
+    # outil. Cursor, Muse et Claude empruntent ce seul chemin.
+    refus_amont = phrase_si_harnais_non_branche(prompt, registry)
+    if refus_amont:
+        yield {
+            "delta": refus_amont,
+            "stop_reason": "harnais_absent",
+            "ttft_ms": None,
+        }
+        return
+
     messages = _build_messages(prompt, system, history)
     schemas = registry.schemas()
     executed = 0
