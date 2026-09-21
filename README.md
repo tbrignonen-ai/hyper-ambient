@@ -1,166 +1,90 @@
-# hyper-ambient — Development Environment
+# hyper-ambient
 
-hyper-ambient (HA) is a local ambient voice: it listens and answers out loud in French, English, and Spanish. GPU-accelerated, containerized. First-to-end pipeline: **500 ms round-trip**, 96 % endpoint accuracy, local BRAIN with remote escalade.
+hyper-ambient est une présence vocale ambiante locale pour Windows. Elle écoute,
+répond à voix haute et conserve le temps réel sur la machine. Pour les demandes
+complexes — et systématiquement lorsqu’un harnais est nommé — elle utilise un modèle
+distant pour raisonner et piloter les harnais de développement déjà installés : Codex,
+Claude Code et Cursor.
 
-## Quick Start
+Le produit est fait pour accompagner un travail sur ordinateur, pas pour remplacer un
+environnement de développement. Il peut confier des tâches simples aux harnais et en
+donner un résumé vocal. Pour du développement intensif, consultez directement Codex,
+Claude Code ou Cursor : hyper-ambient n’a pas d’interface visuelle pour lire, modifier
+ou valider leurs résultats détaillés.
 
-```bash
-# Build container (caches CUDA & PyTorch on rebuild)
-make build
+English version: [README.en.md](README.en.md). Data flows: [DONNEES.md](DONNEES.md)
+([English](DONNEES.en.md)).
 
-# Start container
-make up
+## Architecture
 
-# Enter container shell
-make shell
+- **Cœur Docker** — les modèles locaux et le service de raisonnement temps réel
+  s’exécutent dans le conteneur `mother-core-dev`.
+- **Agent hôte Windows** — il relie le micro, les haut-parleurs et le cœur par un
+  canal local.
+- **Presence Tkinter** — la petite fenêtre Windows affiche l’état, les transcriptions,
+  les réponses et l’indication d’un appel distant.
 
-# Run smoke test: verify all capabilities in one call
-make smoke    # Expected: 9/9 ✓
+Le modèle local répond aux tours brefs. Le modèle distant ne reçoit les données d’un
+tour que lorsqu’il est nécessaire pour un tour complexe ou pour une demande qui nomme
+un harnais ; il orchestre alors les outils disponibles. Voir le détail, y compris les
+désactivations, dans [DONNEES.md](DONNEES.md).
 
-# Download required models (~1.2 GB core + 2.5 GB GGUF for BRAIN)
-make models
-make models-brain
+## Prérequis
+
+- Windows 10 version 2004 ou ultérieure, ou Windows 11 ; PowerShell ; connexion réseau
+  pour télécharger les dépendances et, si configuré, utiliser le modèle distant.
+- GPU NVIDIA : le budget visé est **8 Go de VRAM**, et l’ensemble des étages ne doit pas
+  dépasser **10 Go**. Prévoyez au moins 15 Go de RAM système, environ 40 Go libres et un
+  pilote NVIDIA compatible CUDA.
+- Virtualisation activée dans le BIOS/UEFI. Docker Desktop, WSL2 et Python sont
+  installés ou vérifiés par l’installeur.
+- Un clone local du dépôt. Les clés des services facultatifs restent à fournir par leur
+  titulaire ; elles ne figurent jamais dans ce dépôt.
+
+## Installation Windows
+
+L’installeur est le chemin d’installation documenté. Depuis **n’importe quel**
+répertoire PowerShell, remplacez le chemin ci-dessous par celui de votre clone, puis
+exécutez d’abord le diagnostic :
+
+```powershell
+& "C:\chemin\vers\hyper-ambient\packaging\windows\installer.ps1" -Diagnostic
 ```
 
-## Makefile Targets
+Pour installer ou reprendre l’installation :
 
-All targets run inside the container. Common workflow:
-
-| Target | Purpose |
-|--------|---------|
-| `make build` | Rebuild image (CUDA + torch cached) |
-| `make up` | Start container background |
-| `make down` | Stop container |
-| `make shell` | Interactive bash in container |
-| `make logs` | Stream container output |
-| `make gpu` | Check GPU availability: `nvidia-smi` |
-| `make smoke` | Run smoke test (9 capability checks) |
-| `make test` | Run pytest suite |
-| `make models` | Download VAD + TTS models (~1.2 GB) |
-| `make models-brain` | Download GGUF weights for llama-server (~2.5 GB) |
-| `make llama` | Launch llama-server (BRAIN local) on port 8090 |
-| `make whisper` | Launch whisper-server (EARS local) on port 8091 |
-| `make demo` | Run end-to-end pipeline with latency breakdown |
-| `make demo-local` | Same, force BRAIN to local only (no remote) |
-| `make clean` | Stop container and prune volumes |
-
-## Structure
-
-```
-src/
-  core/        Orchestration, event loop, lifecycle
-  ears/        ASR (faster-whisper CTranslate2, GPU)
-  turn/        Turn detection (Silero VAD L1, Smart Turn v3 L2)
-  mouth/       TTS (Pocket TTS primary, Piper fallback)
-  brain/       BRAIN local (llama.cpp + LFM2.5-2.6B-Q5_K_M `mother-local` :8090) + remote escalade (MiniMax-M3)
-  acoustic/    Acoustic descriptors, event classification
-  gate/        Permission control, audit log, execution modes
-
-dev/
-  tests/       Unit and integration tests
-  scripts/     Build & runtime helpers, measurement bancs
-  notebooks/   Interactive analysis
+```powershell
+& "C:\chemin\vers\hyper-ambient\packaging\windows\installer.ps1"
 ```
 
-## Hardware Requirements
+Le détail des vérifications, de Docker Desktop, du lanceur et des limites réellement
+manuelles est dans [le guide Windows](packaging/windows/README.md). Ne lancez pas le
+script sans `-Diagnostic` sur une machine que vous êtes en train de diagnostiquer.
 
-- **GPU**: NVIDIA RTX 4070 or equivalent (≥ 12 GB VRAM)
-  - GPU reservation in docker-compose **mandatory** — without it, `torch.cuda.is_available()` returns `False`
-- **CPU**: 8+ cores recommended
-- **RAM**: 15+ GB host (15 GB WSL2 tested)
-- **Storage**: 25+ GB for models (`models/` directory, bind-mounted, survives rebuilds)
-- **Audio**: No `/dev/snd` in Docker Desktop Windows (no ALSA). Audio capture/render is the native host-agent's job.
+Après l'installation, utilisez le raccourci **hyper-ambient** ou, depuis n'importe quel
+répertoire PowerShell :
 
-## Network Ports
-
-| Service | Host Port | Container | Purpose |
-|---------|-----------|-----------|---------|
-| hyper-ambient Core API | 8000 | 8000 | FastAPI / REST |
-| WebSocket (host-agent) | 8001 | 8001 | Bidirectional event stream |
-| llama-server (BRAIN local) | 8090 | 8080 | OpenAI-compatible completions |
-| whisper-server (EARS local) | 8091 | 8081 | Whisper transcription |
-
-Note: 8080 on host is reserved by SearXNG; remapped container 8080→8090 in docker-compose.
-
-## Development Scripts
-
-Located in `dev/scripts/`, run via `docker exec` or `make`:
-
-| Script | Purpose |
-|--------|---------|
-| `smoke_test.py` | Verify all 9 capabilities load + run once (< 10 s) |
-| `pipeline_demo.py` | End-to-end BRAIN → MOUTH with latency breakdown |
-| `bench_brain.py` | Compare BRAIN models (TTFT, tokens/s, markup, WER) |
-| `loopback_test.py` | MOUTH → EARS roundtrip (WER, RTF) |
-| `voice_lab.py` | A/B test TTS voices + DSP profiles |
-| `router_demo.py` | Demonstrate local-vs-remote routing strategy |
-| `fetch_models.sh` | Download model weights (core or GGUF) |
-| `serve_llama.sh` | Launch llama-server (blocking) |
-| `serve_whisper.sh` | Launch whisper-server (blocking) |
-
-## Capabilities Matrix (Measured 2026-08-21)
-
-| Capability | Model | License | Metric | Value | VRAM | Status |
-|---|---|---|---|---|---|---|
-| **EARS** | faster-whisper `large-v3-turbo` int8_float16 | MIT | WER (loopback) | 2.6 % | 1.6 GB | ✅ Active |
-| **TURN-L1** | Silero VAD ONNX | Apache-2.0 | Latency | 20 ms | CPU | ✅ Active |
-| **TURN-L2** | Smart Turn v3 | BSD-2 | Accuracy (FR) | 96.01 % | 8 MB | ⏳ Ready, not installed |
-| **MOUTH** | Kyutai Pocket TTS `estelle` | CC-BY-4.0 | TTFA | 75 ms (63 ms warm) | 1.49 GB | ✅ Active |
-| **BRAIN-L1** | LFM2.5-2.6B-Q5_K_M (llama.cpp CUDA) | ? | TTFT | 27-38 ms | 1.9 GB | ✅ Active (`mother-local` :8090) |
-| **BRAIN-Escalade** | MiniMax-M3 (CommandCode API) | Proprietary | TTFC p50 | 612 ms | 0 (remote) | ✅ Active |
-| **Round-trip** | Composed | — | End-to-end | 500 ms | — | ✅ Executable |
-
-## Critical Health Checks
-
-Before claiming "working":
-
-```bash
-# 1. GPU detection
-make gpu    # Should show RTX 4070
-
-# 2. All capabilities load
-make smoke  # Should print: 9/9 ✓
-
-# 3. Local BRAIN works
-make llama &
-curl http://localhost:8090/v1/models  # Should return list
-
-# 4. Local EARS works
-make whisper &
-curl http://localhost:8091/v1/models  # Should return list
+```powershell
+& "C:\chemin\vers\hyper-ambient\packaging\windows\lancer.ps1"
 ```
 
-## Model Storage
+Le lanceur vérifie l'existant, reprend le conteneur sans le recréer et ouvre Presence.
 
-Downloaded to `./models/` (bind-mounted, persistent):
+## Ce qui vient ensuite
 
-```
-models/gguf/       20 GB   Candidate LLMs (LFM2.5-2.6B-Q5_K_M active; Luth = repli/historique 2026-08-21, Ministral/Luciole/Qwen for evaluation)
-models/pocket-tts/ 724 MB  Pocket TTS + 3 voices (estelle, eve, vera)
-models/hf-cache/   1.7 GB  faster-whisper turbo + base
-models/tts/        1.4 Go  Qwen3-TTS (offline only, not real-time)
-models/whisper/    548 MB  GGML Whisper (fallback)
-models/piper/      268 MB  Piper voices (MOUTH fallback, zero VRAM)
-```
+- **macOS** : le terminal est écrit, mais n’a jamais été exécuté sur une vraie machine ;
+  il n’est pas encore pris en charge. Le cœur reste volontairement sur le GPU NVIDIA du
+  PC Windows.
+- **Espagnol** : annoncé, puis repoussé ; le français et l’anglais sont les langues
+  livrées aujourd’hui.
+- **Onboarding** : l’accueil assisté par le modèle local est spécifié, mais remplacé
+  pour l’instant par des menus Tkinter classiques. La déclaration et la vérification des
+  services distants et des harnais n’y sont pas encore guidées.
+- **Interface** : vidéo optionnelle, zone de notification, raccourci global Windows et
+  certains contrôles d’accessibilité en parcours réel restent à livrer ou à vérifier.
+- **Continuité** : la mémoire vocale longue, la reprise après redémarrage du serveur,
+  les notifications de mandat comme tours complets et une sonde de santé adaptée restent
+  des chantiers ouverts.
 
-Run `make models` and `make models-brain` once; they survive rebuilds.
-
-## API Endpoints (WIP)
-
-See `src/core/api.py` for current stubs. Planned:
-
-- `GET /health` — health check
-- `POST /converse` — one-turn voice I/O (placeholder)
-- `WS /ws` — bidirectional event stream
-- `GET /capabilities` — list loaded components
-
-## References
-
-- **Implementation log**: `dev/sessions/2026-08-21-implementation.md` (source of truth for this state)
-- **Technical stack**: `STACK.md` (design rationale, benchmarks, model selection)
-- **Spec**: `D:\BGB Training\Projet MOTHER\` (separate directory; this is code)
-
----
-
-**Status**: First executable pipeline. Smoke test 9/9. Round-trip 500 ms.  
-**Updated**: 2026-08-21
+Ces limites sont volontaires et suivies : elles ne remplacent pas une étape que
+l’installeur peut déjà automatiser.
