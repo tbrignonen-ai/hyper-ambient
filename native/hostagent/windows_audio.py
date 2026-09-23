@@ -30,7 +30,14 @@ import numpy as np
 from src.hostagent.audio import FRAME_SAMPLES, SAMPLE_RATE, AudioFrame
 
 # RMS int16 en dessous duquel un bloc n'est jamais de la parole (souffle, bits).
-PLANCHER_RMS = 150.0
+# Mesure du 23 sept, micro USB PnP : bruit 0–10, voix normale 45–80 RMS.
+# À 150 puis à 60, seule une voix forte ouvrait un tour : mains libres muet.
+# Le filtre de bande parole (``_trame_voix``) écarte déjà ventilateur et bruit,
+# et le calage relève le seuil à 2,5 × le bruit dans une pièce plus bruyante.
+PLANCHER_RMS = float(os.environ.get("HA_PLANCHER_RMS") or 35.0)
+# Pendant la lecture, l'ancien plancher × 2,5 reste le minimum : sa propre
+# voix rendue par les enceintes ne doit pas déclencher un barge-in.
+PLANCHER_LECTURE_RMS = 375.0
 # Seuil = max(PLANCHER_RMS, bruit_ambiant * FACTEUR) après ~500 ms de calage.
 FACTEUR = 2.5
 # Pendant la lecture : seuil relevé (anti-écho) sans sourdine totale.
@@ -245,6 +252,7 @@ class CaptureContinue:
         self._silence_ms = _silence_ms_tour()
         self._regime_lecture = False
         self._dernier_rms = 0.0
+        self._rms_max = 0.0
         self._on_barge_in = None
         self.barge_in.clear()
 
@@ -329,11 +337,17 @@ class CaptureContinue:
             self._leftover = [np.zeros(0, dtype=np.float32)]
 
     def instantane(self) -> dict:
-        """Snapshot VAD pour le pouls ML : seuil, dernier RMS, accumulation."""
+        """Snapshot VAD pour le pouls ML : seuil, dernier RMS, accumulation.
+
+        ``rms_max`` est le pic depuis la lecture précédente, puis repart à
+        zéro : c'est lui qui dit si la voix a franchi le seuil.
+        """
         with self._lock:
+            pic, self._rms_max = self._rms_max, 0.0
             return {
                 "seuil": float(self._seuil),
                 "rms": float(self._dernier_rms),
+                "rms_max": float(pic),
                 "accumulation": bool(self._tour or self._preambule),
                 "suspendue": bool(self._suspendu),
                 "regime_lecture": bool(self._regime_lecture),
@@ -380,6 +394,7 @@ class CaptureContinue:
         """Ingère une trame. True si un barge-in vocal vient d'être déclaré."""
         rms = _rms_int16(trame.samples)
         self._dernier_rms = rms
+        self._rms_max = max(self._rms_max, rms)
         if not self._calibre:
             self._somme_rms += rms
             self._calibrage_ms += _TRAME_MS
@@ -393,7 +408,7 @@ class CaptureContinue:
         seuil = self._seuil
         debut_ms = _DEBUT_TOUR_MS
         if self._regime_lecture:
-            seuil = self._seuil * FACTEUR_SEUIL_LECTURE
+            seuil = max(self._seuil * FACTEUR_SEUIL_LECTURE, PLANCHER_LECTURE_RMS)
             debut_ms = _DEBUT_BARGE_IN_MS
         au_dessus = rms >= seuil and _trame_voix(trame.samples)
         if not self._tour:

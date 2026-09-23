@@ -190,3 +190,49 @@ def test_prendre_segment_ne_ferme_pas_le_flux(monkeypatch):
     flux.pousser(_silence(700))
     assert capture.segment_pret() is True
     capture.stop()
+
+
+def _parole_a_rms(ms: int, rms_cible: float) -> np.ndarray:
+    base = _parole(ms, amplitude=8000).astype(np.float64)
+    rms = float(np.sqrt(np.mean(np.square(base)))) or 1.0
+    return np.clip(base * (rms_cible / rms), -32767, 32767).astype(np.int16)
+
+
+def test_voix_normale_d_un_micro_usb_faible_ouvre_un_tour(monkeypatch):
+    """Séance du 23 sept : micro USB PnP, bruit 0–6, voix 50–80 RMS. Le
+    plancher de 150 ne laissait passer qu'une voix forte : mains libres muet."""
+    capture, flux = _nouvelle_capture(monkeypatch)
+    flux.pousser(_parole_a_rms(1200, 75.0))
+    flux.pousser(_silence(700))
+    assert capture.segment_pret() is True
+    capture.stop()
+
+
+def test_pendant_la_lecture_le_seuil_reste_haut_contre_l_echo(monkeypatch):
+    """Baisser le plancher ne doit pas laisser sa propre voix, rendue par
+    les enceintes, déclencher un barge-in."""
+    from native.hostagent.windows_audio import PLANCHER_LECTURE_RMS
+
+    capture, flux = _nouvelle_capture(monkeypatch)
+    assert capture.instantane()["seuil"] * 2.5 < PLANCHER_LECTURE_RMS
+    assert PLANCHER_LECTURE_RMS >= 375.0
+    capture.stop()
+
+
+def test_voix_basse_a_45_ouvre_encore_un_tour(monkeypatch):
+    """Après reconnexion, le 23 sept : pics de voix autour de 60, seuil 60."""
+    capture, flux = _nouvelle_capture(monkeypatch)
+    flux.pousser(_parole_a_rms(1200, 45.0))
+    flux.pousser(_silence(700))
+    assert capture.segment_pret() is True
+    capture.stop()
+
+
+def test_instantane_donne_le_pic_depuis_la_derniere_lecture(monkeypatch):
+    """Le pouls lisait un RMS ponctuel : on ne savait pas si la voix passait."""
+    capture, flux = _nouvelle_capture(monkeypatch)
+    flux.pousser(_parole_a_rms(300, 80.0))
+    flux.pousser(_silence(300))
+    assert capture.instantane()["rms_max"] >= 70.0
+    assert capture.instantane()["rms_max"] < 5.0
+    capture.stop()

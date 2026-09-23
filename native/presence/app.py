@@ -97,6 +97,17 @@ def assurer_stdio(journal: Path | None = None) -> Path | None:
     return journal
 
 
+def _socket_fermee(exc: BaseException) -> bool:
+    """Vrai si la socket est morte : il faut remonter pour se reconnecter.
+
+    Avaler cette erreur hors tour laissait Présence boucler sur une socket
+    fermée après une relance du host-agent, sans jamais se reconnecter.
+    """
+    return type(exc).__name__.startswith("ConnectionClosed") or isinstance(
+        exc, ConnectionError
+    )
+
+
 def journaliser(*args: object) -> None:
     """pythonw n'a pas de stdout : print() tuait le fil session (C13)."""
     flux = getattr(sys, "stdout", None)
@@ -349,13 +360,14 @@ def ligne_pouls_ml(capture, *, n_segments: int, en_lecture: bool, couper: bool) 
     suspendue = bool(inst.get("suspendue", getattr(capture, "_suspendu", False)))
     return (
         "ML : vivante, %d segment(s) envoye(s), lecture=%s, suspendue=%s, "
-        "seuil=%.0f, rms=%.0f, accumulation=%s, couper=%s"
+        "seuil=%.0f, rms=%.0f, pic=%.0f, accumulation=%s, couper=%s"
         % (
             n_segments,
             "oui" if en_lecture else "non",
             "oui" if suspendue else "non",
             float(inst.get("seuil") or 0.0),
             float(inst.get("rms") or 0.0),
+            float(inst.get("rms_max") or 0.0),
             "oui" if inst.get("accumulation") else "non",
             "oui" if couper else "non",
         )
@@ -561,6 +573,8 @@ class SessionVocale(threading.Thread):
             return
         except Exception as exc:
             journaliser(f"jev_pret : {exc}")
+            if _socket_fermee(exc):
+                raise
             self._attendre_jev = False
             return
         try:
@@ -572,6 +586,62 @@ class SessionVocale(threading.Thread):
             return
         if relayer_conversation(message, self.deposer):
             return
+
+    def _aspirer_hors_tour(
+        self, ws, capture, sortie, timeout: float = 0.2
+    ) -> bool:
+        """Lit la socket hors tour en mode bouton, sans bloquer l'attente PTT.
+
+        Relaie jev_pret et conversation comme ``_aspirer_jev_pret``, et joue
+        une annonce de mandat (trames puis marqueur vide) jusqu'à son
+        marqueur. Rend True si l'appui l'a coupée : la capture tourne déjà.
+        """
+        try:
+            brut = ws.recv(timeout=timeout)
+        except TimeoutError:
+            return False
+        except TypeError:
+            self.tenu.wait(timeout)
+            return False
+        except Exception as exc:
+            journaliser(f"hors tour : {exc}")
+            if _socket_fermee(exc):
+                raise
+            self.tenu.wait(timeout)
+            return False
+        try:
+            message = json.loads(brut)
+        except (json.JSONDecodeError, TypeError):
+            return False
+        if not isinstance(message, dict):
+            return False
+        if relayer_jev_pret(message, self.deposer):
+            self._attendre_jev = False
+            return False
+        if relayer_conversation(message, self.deposer):
+            return False
+        recues = message.get("frames")
+        if not recues:
+            return False
+        journaliser(f"annonce hors tour : {len(recues)} trames")
+        a_jouer: list[float] = []
+        for brute in recues:
+            a_jouer.extend(brute)
+        try:
+            moteur._jouer(sortie, a_jouer)
+        except Exception as exc:
+            journaliser(f"restitution : {exc}")
+        self.couper.clear()
+        self.en_lecture.set()
+        try:
+            return consommer_reponse(
+                ws, sortie, time.perf_counter(), self.deposer, self.arreter,
+                interrompre=self.tenu, couper=self.couper,
+                sur_interruption=capture.start,
+            ) is True
+        finally:
+            self.en_lecture.clear()
+            self.couper.clear()
 
     def deposer(self, message: dict[str, Any]) -> None:
         if not self.arreter.is_set():
@@ -725,15 +795,19 @@ class SessionVocale(threading.Thread):
                         break
                     if self._options_a_envoyer.is_set():
                         self._pousser_options(ws)
-                    if self._attendre_jev:
-                        self._aspirer_jev_pret(ws)
-                    else:
-                        self.tenu.wait(0.2)
+                    # Hors tour, la socket est lue aussi en mode bouton :
+                    # une annonce de mandat (« Codex a fini… ») arrive quand
+                    # personne ne parle. Laissée en file, elle devenait la
+                    # réponse du tour suivant, et tout se décalait d'un cran.
+                    if self._aspirer_hors_tour(ws, capture, sortie):
+                        deja_en_ecoute = True
+                        break
                 if self.arreter.is_set():
                     return
                 if self.mains_libres and self._capture_continue is not None:
                     continue
-                capture.start()
+                if not deja_en_ecoute:
+                    capture.start()
             deja_en_ecoute = False
             u_tour = ui_presence()
             self.deposer(

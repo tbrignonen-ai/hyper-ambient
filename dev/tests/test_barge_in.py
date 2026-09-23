@@ -193,7 +193,9 @@ def test_instantane_expose_seuil_rms_accumulation(monkeypatch):
     assert "seuil" in snap
     assert "rms" in snap
     assert "accumulation" in snap
-    assert snap["seuil"] >= 150.0
+    from native.hostagent.windows_audio import PLANCHER_RMS
+
+    assert snap["seuil"] >= PLANCHER_RMS
     capture.regime_lecture(True)
     flux.pousser(_voix(400, amplitude=8000))
     snap = capture.instantane()
