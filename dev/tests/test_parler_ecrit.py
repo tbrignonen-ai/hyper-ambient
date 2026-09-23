@@ -435,3 +435,57 @@ async def test_annonce_mandat_riche_prononce_l_invitation(tmp_path, capsys):
     attendue = phrase_arrivee(mandat)
     assert attendue in sortie
     assert "Le détail est dans Codex" in attendue or "Le detail est dans Codex" in attendue
+
+
+class _BrainQuiInvente:
+    """Le distant du 23 sept : ignore tool_choice et répond « Pong. »."""
+
+    name = "double"
+
+    def __init__(self):
+        self.appels = 0
+
+    async def query_streaming(self, prompt, **kw):
+        self.appels += 1
+        yield {"delta": "Pong.", "stop_reason": None, "ttft_ms": 3.0, "channel": "deep"}
+        yield {"delta": "", "stop_reason": "stop", "ttft_ms": None, "channel": "deep"}
+
+
+@runs_async
+async def test_demande_explicite_a_claude_part_sans_laisser_le_modele_repondre():
+    from src.brain.mandat import RegistreMandats
+    from src.brain.tools import ToolRegistry, ToolSpec
+    from src.gate.permission import Gate
+
+    recus = []
+
+    class Mandat:
+        registre_mandats = RegistreMandats()
+
+        async def __call__(self, question: str) -> str:
+            recus.append(question)
+            return "Je demande à Claude. Je te préviens dès qu'il répond."
+
+    registre = ToolRegistry()
+    registre.register(
+        ToolSpec(
+            name="ask_claude",
+            description="Claude",
+            parameters={"type": "object", "properties": {"question": {"type": "string"}}},
+            danger="read",
+            handler=Mandat(),
+        )
+    )
+    brain = _BrainQuiInvente()
+    prompt = "Demande à Claude justement, tu lui dis ping et tu attends sa réponse."
+    deltas = []
+    async for chunk in serve_hostagent.flux_cerveau(
+        brain, prompt, registre, Gate(mode="auto"), []
+    ):
+        if chunk.get("delta"):
+            deltas.append(chunk["delta"])
+
+    assert recus == [prompt]
+    assert "Pong." not in deltas
+    assert brain.appels == 1
+    assert "Je demande à Claude" in "".join(deltas)

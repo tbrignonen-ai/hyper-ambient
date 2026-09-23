@@ -64,8 +64,10 @@ _NOMS_VERS_HARNAIS = {
 # demande de l'utilisateur en « demande à Codex ».  Elle est volontairement
 # structurelle, pas une liste de verbes ou de sujets autorisés.
 _MOTS_QUESTION = re.compile(r"[^\W\d_]+", re.UNICODE)
-_LONGUEUR_MIN_QUESTION = 8
-_NOMBRE_MIN_MOTS_QUESTION = 2
+# Un seul mot réel suffit (« ping ») ; ce qui est refusé, c'est le seul nom
+# du harnais ou un texte vide.
+_LONGUEUR_MIN_QUESTION = 3
+_NOMBRE_MIN_MOTS_QUESTION = 1
 
 
 class PleinMandats(Exception):
@@ -129,6 +131,43 @@ def extraire_harnais(prompt: str) -> str:
     for m in re.finditer(r"\b" + _NOMS + r"\b", prompt or "", re.IGNORECASE):
         return _NOMS_VERS_HARNAIS[m.group(1).lower()]
     return "Codex"
+
+
+# Whisper rend « Claude Code » par « cloud code » (séance du 23 sept). Les
+# deux mots accolés suffisent : « le cloud » seul reste « le cloud ».
+_CLAUDE_CODE_ENTENDU = re.compile(r"\bclo(?:u)?de?s?\s+codes?\b", re.IGNORECASE)
+
+# Verbes qui font d'un harnais nommé une demande, pas une question sur lui.
+# « Qu'est-ce que Codex ? » ne l'appelle pas ; « demande à Codex… » si.
+_DEMANDE_A_UN_HARNAIS = re.compile(
+    r"\b(?:demande[rsz]?|dis|dire|pose[rsz]?|envoie[rsz]?|transmet[s]?|"
+    r"transmettre|interroge[rsz]?|contacte[rsz]?|connecte[rsz]?|connecter|"
+    r"appelle[rsz]?|ping|fais|faire|ask|tell)\b",
+    re.IGNORECASE,
+)
+
+
+def redresser_harnais(transcription: str) -> str:
+    """Rend à un harnais le nom que Whisper a déformé."""
+    return _CLAUDE_CODE_ENTENDU.sub("Claude Code", transcription or "")
+
+
+def outil_exige(prompt: str, registre) -> Optional[str]:
+    """Outil à appeler d'office quand l'utilisateur demande à un harnais.
+
+    L'envoi reste décidé par l'utilisateur : il nomme le harnais et lui
+    adresse une demande. Le modèle ne peut alors plus répondre à sa place
+    (séance du 23 sept : « demande à Claude… ping » → « Pong. » inventé).
+    """
+    texte = prompt or ""
+    if not re.search(r"\b" + _NOMS + r"\b", texte, re.IGNORECASE):
+        return None
+    if not _DEMANDE_A_UN_HARNAIS.search(texte):
+        return None
+    nom = extraire_harnais(texte)
+    if not harnais_est_branche(nom, registre):
+        return None
+    return OUTIL_PAR_HARNAIS[nom]
 
 
 def nom_harnais_dit(prompt: str) -> str:
@@ -218,9 +257,9 @@ def extraire_sujet(prompt: str) -> str:
 def question_est_substantielle(question: str) -> bool:
     """Vrai si le mandat porte une demande, pas seulement un destinataire.
 
-    Deux mots et huit caractères laissent passer « la météo », « quel temps »
-    ou « relis transport.py », tout en arrêtant une chaîne vide, « Codex » et
-    « demande à Codex ».  Quand le texte mentionne un harnais, ``extraire_sujet``
+    Un mot de trois lettres laisse passer « ping », « la météo » ou « relis
+    transport.py », tout en arrêtant une chaîne vide, « Codex » et « demande à
+    Codex ».  Quand le texte mentionne un harnais, ``extraire_sujet``
     doit en outre en extraire autre chose que le pronom de repli ``ça``.
     """
     texte = " ".join((question or "").split())

@@ -491,6 +491,13 @@ def test_un_simple_destinataire_n_est_pas_un_mandat(question):
     assert question_est_substantielle(question) is False
 
 
+def test_un_seul_mot_reel_est_un_mandat():
+    """Séance du 23 sept : « fais juste un ping à Claude » rendait « ping »,
+    refusé comme trop court ; elle répondait « Que veux-tu que je demande ? »."""
+    assert question_est_substantielle("ping") is True
+    assert question_est_substantielle("Demande à Claude ping") is True
+
+
 def test_une_question_courte_mais_reelle_reste_substantielle():
     assert question_est_substantielle("la météo") is True
     assert question_est_substantielle("Demande à Codex de relire transport.py") is True
@@ -1013,3 +1020,47 @@ async def test_rappel_a_60s_seulement_si_silence(monkeypatch):
 def test_badge_i18n_sans_elevation():
     assert "prêt" in t("mandat.badge", n=1).lower() or "ready" in t("mandat.badge", n=1).lower()
     assert "foreground" not in t("mandat.badge", n=1).lower()
+
+
+# --- séance du 23 sept : « cloud code », et « Pong. » inventé ----------------
+
+def test_cloud_code_entendu_par_whisper_est_claude_code():
+    from src.brain.mandat import redresser_harnais
+
+    texte = redresser_harnais(
+        "Est-ce que tu arrives à connecter un cloud code et à lui dire ping ?"
+    )
+    assert "Claude Code" in texte
+    assert extraire_harnais(texte) == "Claude"
+    assert redresser_harnais("le cloud est lent") == "le cloud est lent"
+
+
+@pytest.mark.parametrize(
+    "prompt, attendu",
+    [
+        ("Demande à Claude justement, tu lui dis ping et tu attends sa réponse.", "ask_claude"),
+        ("Est-ce que tu arrives à connecter un Claude Code et à lui dire ping ?", "ask_claude"),
+        ("Demande à Codex combien de fichiers Python il y a.", "ask_codex"),
+        ("Fais juste un ping à Codex et donne moi sa réponse", "ask_codex"),
+    ],
+)
+def test_une_demande_explicite_a_un_harnais_force_son_outil(prompt, attendu):
+    from src.brain.mandat import outil_exige
+
+    assert outil_exige(prompt, _Registre({"ask_claude", "ask_codex"})) == attendu
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    ["Qu'est-ce que Codex ?", "Tu connais Claude ?", "Quel temps fait-il ?"],
+)
+def test_nommer_sans_demander_ne_force_rien(prompt):
+    from src.brain.mandat import outil_exige
+
+    assert outil_exige(prompt, _Registre({"ask_claude", "ask_codex"})) is None
+
+
+def test_harnais_non_branche_ne_force_rien():
+    from src.brain.mandat import outil_exige
+
+    assert outil_exige("Demande à Claude de relire.", _Registre({"ask_codex"})) is None

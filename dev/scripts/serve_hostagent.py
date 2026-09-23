@@ -44,8 +44,8 @@ from src.brain.contexte import (
     phrase_garde,
     question_d_outil,
 )
-from src.brain.tool_loop import run_tool_loop
-from src.brain.tools import MAX_TOOL_CONTENT_CHARS, ToolRegistry
+from src.brain.tool_loop import _execute, run_tool_loop
+from src.brain.tools import MAX_TOOL_CONTENT_CHARS, ToolCall, ToolRegistry
 from src.brain.tools_calculator import register_calculator
 from src.brain.tools_codex import register_ask_codex
 from src.brain.tools_cli import register_ask_claude
@@ -56,8 +56,10 @@ from src.brain.mandat import (
     NOMS_HARNAIS,
     OUTIL_PAR_HARNAIS,
     RegistreMandats,
+    outil_exige,
     phrase_arrivee,
     phrase_rappel,
+    redresser_harnais,
 )
 from src.ears.jev_reflexe import FenetreConversation, nom_du_produit_prononce
 from src.gate.permission import Gate
@@ -723,10 +725,34 @@ def recoller_prononce(morceaux) -> str:
     return texte.strip()
 
 
+async def _confier_sans_modele(outil, prompt, registre, porte):
+    """Dépose la demande dite par l'utilisateur, sans reformulation."""
+    appel = ToolCall(id="demande-directe", name=outil, arguments={"question": prompt})
+    yield {
+        "channel": "tool",
+        "tool": outil,
+        "phase": "call",
+        "delta": "",
+        "arguments": {"question": prompt},
+    }
+    resultat, phase = await _execute(appel, registre, porte)
+    yield {
+        "channel": "tool",
+        "tool": outil,
+        "phase": phase,
+        "delta": "",
+        "content": resultat.content,
+    }
+    contenu = (resultat.content or "").strip()
+    if contenu:
+        yield {"delta": contenu, "stop_reason": "mandat_depose", "ttft_ms": None}
+
+
 def flux_cerveau(brain, prompt, registre, porte, historique):
     """Le flux d'un tour : boucle d'outils si le registre est garni.
 
-    Pas de `tool_choice` forcé : le distant appelle l'outil de lui-même.
+    Pas de `tool_choice` forcé : le distant appelle l'outil de lui-même,
+    sauf demande explicite à un harnais (`outil_exige`), qui part sans lui.
     Un mandat déposé clôt le tour sans reformulation.
 
     Une seule annonce d'attente sur ce chemin : l'accusé du mandat. Il
@@ -748,6 +774,7 @@ def flux_cerveau(brain, prompt, registre, porte, historique):
                 re.search(r"\b" + NOMS_HARNAIS + r"\b", prompt or "", re.IGNORECASE)
             )
             tampon = []
+            exige = outil_exige(prompt, registre)
             async for chunk in run_tool_loop(
                 brain,
                 prompt,
@@ -783,6 +810,16 @@ def flux_cerveau(brain, prompt, registre, porte, historique):
                     tampon.append(chunk)
                 else:
                     yield chunk
+            if exige:
+                # Demande explicite à un harnais et aucun mandat déposé :
+                # le modèle a répondu à sa place. Mesure du 23 sept : MiniMax
+                # ignore tool_choice et dit « Pong. » au lieu d'appeler Claude.
+                # C'est l'utilisateur qui envoie : sa phrase part telle quelle.
+                async for piece in _confier_sans_modele(
+                    exige, prompt, registre, porte
+                ):
+                    yield piece
+                return
             for piece in tampon:
                 yield piece
 
@@ -1838,7 +1875,7 @@ class HostPipeline:
             t_ears = time.monotonic()
             result = await self.asr.transcribe(audio)
             ears_ms = (time.monotonic() - t_ears) * 1000.0
-            prompt = (result.get("text") or "").strip()
+            prompt = redresser_harnais((result.get("text") or "").strip())
             print(
                 f"C10 t={time.monotonic():.3f} TRANSCRIPT {prompt!r} "
                 f"ears_ms={ears_ms:.0f}",
