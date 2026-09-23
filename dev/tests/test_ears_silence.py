@@ -44,3 +44,23 @@ def test_rejet_uniquement_en_mains_libres():
     assert jeter_tour_bruit(texte, segments, mains_libres=True) is True
     assert jeter_tour_bruit(texte, segments, mains_libres=False) is False
     assert jeter_tour_bruit("Bonjour.", None, mains_libres=True) is False
+
+
+def test_une_pause_dans_une_longue_phrase_ne_jette_pas_toute_la_phrase():
+    """Séance du 23 sept : phrase de 10 s bien transcrite, un segment de
+    pause au no_speech_prob élevé, et tout le tour partait comme bruit."""
+    segments = [
+        {"no_speech_prob": 0.05, "avg_logprob": -0.2},
+        {"no_speech_prob": 0.72, "avg_logprob": -0.4},
+        {"no_speech_prob": 0.08, "avg_logprob": -0.3},
+    ]
+    texte = "Fais un test, envoie-lui par exemple. Bonjour Codex, comment vas-tu ?"
+    assert jeter_tour_bruit(texte, segments, mains_libres=True) is False
+
+
+def test_tous_les_segments_sans_parole_restent_du_bruit():
+    segments = [
+        {"no_speech_prob": 0.9, "avg_logprob": -0.4},
+        {"no_speech_prob": 0.2, "avg_logprob": -1.6},
+    ]
+    assert jeter_tour_bruit("Merci.", segments, mains_libres=True) is True

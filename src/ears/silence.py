@@ -74,7 +74,9 @@ def jeter_tour_bruit(texte, segments=None, *, mains_libres: bool) -> bool:
     """Hors mains libres, l'utilisateur a décidé de parler : on ne jette rien."""
     if not mains_libres:
         return False
-    for segment in segments or ():
-        if segment_sans_parole(segment):
-            return True
+    # Tous les segments, pas un seul : une pause dans une longue phrase donne
+    # un segment « sans parole », et jetait tout le tour (séance du 23 sept).
+    liste = [s for s in (segments or ()) if s is not None]
+    if liste and all(segment_sans_parole(s) for s in liste):
+        return True
     return est_hallucination_whisper(texte)
