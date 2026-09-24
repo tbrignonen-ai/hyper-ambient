@@ -251,6 +251,10 @@ class _Handler(BaseHTTPRequestHandler):
         )
 
     def do_GET(self):
+        if self.path == "/health":
+            if not authorized(self.headers.get("Authorization"), self.token):
+                return self._send(401, {"ok": False})
+            return self._send(200, {"ok": True, "service": "clibridge", "capability": "conversation"})
         if not self._conversation():
             self._send(501, {"ok": False, "error": "GET non pris en charge"})
 

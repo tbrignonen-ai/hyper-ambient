@@ -1,0 +1,354 @@
+{
+  "checked_utc": "2026-09-24T18:52:03.800162+00:00",
+  "models": {
+    "jev": {
+      "repo": "com-kotobalabs/open-jev-deberta-v3-large",
+      "revision": "19bf9a64815add579fbf6c907bef584d9277a8e4",
+      "api": "https://huggingface.co/api/models/com-kotobalabs/open-jev-deberta-v3-large/revision/19bf9a64815add579fbf6c907bef584d9277a8e4?blobs=true",
+      "license": "apache-2.0",
+      "files": {
+        "README.md": {
+          "size": 6005,
+          "sha256": null,
+          "git_blob_sha1": "facf77aa66b703460279f8336829488daec849d5"
+        },
+        "added_tokens.json": {
+          "size": 80,
+          "sha256": null,
+          "git_blob_sha1": "2591d0691a9567d296b4d428d63e8a9b201fa6e6"
+        },
+        "config.json": {
+          "size": 826,
+          "sha256": null,
+          "git_blob_sha1": "16e499e52d7afe3fce82d8689ee66f65dd7bcad9"
+        },
+        "head.safetensors": {
+          "size": 12591412,
+          "sha256": "f101be67c5808a810abbcede9ebe702f7e4af4aa6f7298bb243842ce9e3a295a",
+          "git_blob_sha1": "88757055171f6622ddd1ede9034633c539a7cee4"
+        },
+        "model.safetensors": {
+          "size": 1736094384,
+          "sha256": "3f1d5bc3b6d3dc412ea2c499446fcbd212242d79baf16bc0eda155b4ebbac806",
+          "git_blob_sha1": "47ea2ea1002fe18ec567871ec7266cb9c20df588"
+        },
+        "open_jev_config.json": {
+          "size": 734,
+          "sha256": null,
+          "git_blob_sha1": "b2a0b8c5e56548ab0a5b55d7316b92d2a76720ce"
+        },
+        "special_tokens_map.json": {
+          "size": 740,
+          "sha256": null,
+          "git_blob_sha1": "645339272947e5c95e8169c3c4cc2823863140a0"
+        },
+        "spm.model": {
+          "size": 2464616,
+          "sha256": "c679fbf93643d19aab7ee10c0b99e460bdbc02fedf34b92b05af343b4af586fd",
+          "git_blob_sha1": "b1b95e5b0fef33623979511f423eaeee465c46f0"
+        },
+        "tokenizer.json": {
+          "size": 8657170,
+          "sha256": null,
+          "git_blob_sha1": "433134650d3e197eeba5d12a81b436c551f54008"
+        },
+        "tokenizer_config.json": {
+          "size": 1907,
+          "sha256": null,
+          "git_blob_sha1": "11d034775b79fc59a780babb246cc660e9f81be6"
+        },
+        "typed_decisions/__init__.py": {
+          "size": 0,
+          "sha256": null,
+          "git_blob_sha1": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+        },
+        "typed_decisions/encoder.py": {
+          "size": 9907,
+          "sha256": null,
+          "git_blob_sha1": "5a6439f26080d9adbe3372033a538e09b9b6ce23"
+        },
+        "typed_decisions/open_jev.py": {
+          "size": 4382,
+          "sha256": null,
+          "git_blob_sha1": "d57106e63e28eab09312912640f5782a477e9906"
+        },
+        "typed_decisions/schema.py": {
+          "size": 3269,
+          "sha256": null,
+          "git_blob_sha1": "3acf92b3d5145a7dac61c2b39bf0d86ee4b6af63"
+        }
+      }
+    },
+    "jev_ru": {
+      "repo": "killkli/open-jev-laya-multilingual-onnx",
+      "revision": "643219b2b3a112ff1c40fb1143f050aa871f76f7",
+      "api": "https://huggingface.co/api/models/killkli/open-jev-laya-multilingual-onnx/revision/643219b2b3a112ff1c40fb1143f050aa871f76f7?blobs=true",
+      "license": "apache-2.0",
+      "files": {
+        "README.md": {
+          "size": 1872,
+          "sha256": null,
+          "git_blob_sha1": "34b60559ea57fbc2e0c34cbf2294ae15f7f8b1f2"
+        },
+        "config.json": {
+          "size": 93,
+          "sha256": null,
+          "git_blob_sha1": "5d8cedc05a4e7906ff5af72604ffa83da62c528c"
+        },
+        "laya_config.json": {
+          "size": 115,
+          "sha256": null,
+          "git_blob_sha1": "f6a5cd73df518e47436824f6495e56a8fb1e0d8a"
+        },
+        "onnx/laya.onnx": {
+          "size": 1290793955,
+          "sha256": "fadea80ba2ba655aa3dad7a758b5edacad8ca77d3d55d5c6fe3575a3ccc31c9f",
+          "git_blob_sha1": "3fbda50296e890a6c510c0005874d40d5c434eb6"
+        },
+        "tokenizer.json": {
+          "size": 34363188,
+          "sha256": "609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f",
+          "git_blob_sha1": "56d765858ed38eaabd35cd90759cbb1f89b0baa4"
+        },
+        "tokenizer_config.json": {
+          "size": 524,
+          "sha256": null,
+          "git_blob_sha1": "c255ac0c8cb34a37d066cd0dafe313fd769d27ae"
+        }
+      }
+    },
+    "stt": {
+      "repo": "moona3k/mlx-qwen3-asr-1.7b-8bit",
+      "revision": "22c8abe6a6772122dda5905967d7496d1d3e8dd2",
+      "api": "https://huggingface.co/api/models/moona3k/mlx-qwen3-asr-1.7b-8bit/revision/22c8abe6a6772122dda5905967d7496d1d3e8dd2?blobs=true",
+      "license": "apache-2.0",
+      "files": {
+        "README.md": {
+          "size": 2676,
+          "sha256": null,
+          "git_blob_sha1": "f83f73aa85bffc3c19f056ad8f2b0d5e278edf2c"
+        },
+        "config.json": {
+          "size": 6194,
+          "sha256": null,
+          "git_blob_sha1": "2bc16c9d4ca08963715cfb94d879799b9adbd0e9"
+        },
+        "merges.txt": {
+          "size": 1671853,
+          "sha256": null,
+          "git_blob_sha1": "31349551d90c7606f325fe0f11bbb8bd5fa0d7c7"
+        },
+        "quantization_config.json": {
+          "size": 35,
+          "sha256": null,
+          "git_blob_sha1": "e6eac67e9fa15d0f7936131151dcf0a29045caf7"
+        },
+        "tokenizer_config.json": {
+          "size": 12487,
+          "sha256": null,
+          "git_blob_sha1": "b93109843922a40c6654c5449d3bf95372267c66"
+        },
+        "vocab.json": {
+          "size": 2776833,
+          "sha256": null,
+          "git_blob_sha1": "4783fe10ac3adce15ac8f358ef5462739852c569"
+        },
+        "weights.safetensors": {
+          "size": 2169903389,
+          "sha256": "eba2bdb1ec74f5df99345f9f81492ba551f6b072eedfef564b353ef0dde90bb8",
+          "git_blob_sha1": "586b6c799da4139208b0d324edcf74d0d14ca9f7"
+        }
+      }
+    },
+    "stt_ru": {
+      "repo": "cstr/kyutai-stt-1b-GGUF",
+      "revision": "ab83b1b3c788a8842e5ce5deebc6f6491545ead8",
+      "api": "https://huggingface.co/api/models/cstr/kyutai-stt-1b-GGUF/revision/ab83b1b3c788a8842e5ce5deebc6f6491545ead8?blobs=true",
+      "license": "cc-by-4.0",
+      "files": {
+        "README.md": {
+          "size": 3144,
+          "sha256": null,
+          "git_blob_sha1": "ef84c1ad5f1bdce095a067941d236c8ff69f6e39"
+        },
+        "kyutai-stt-1b-q8_0.gguf": {
+          "size": 1173716544,
+          "sha256": "276f39cda5ea2c9d7705aee2103773cf7e696b3e6aa684c47c07d2efec3e39f5",
+          "git_blob_sha1": "e7f86d3414e8dc3fa6cdb643b418f848f90fd7bb"
+        }
+      }
+    },
+    "text": {
+      "repo": "mlx-community/LFM2.5-8B-A1B-OptiQ-4bit",
+      "revision": "5a5c595823cf26ab1068508eb5cf85816bb2db6b",
+      "api": "https://huggingface.co/api/models/mlx-community/LFM2.5-8B-A1B-OptiQ-4bit/revision/5a5c595823cf26ab1068508eb5cf85816bb2db6b?blobs=true",
+      "license": "other",
+      "files": {
+        "README.md": {
+          "size": 3428,
+          "sha256": null,
+          "git_blob_sha1": "c6a52f98a1f6e3a826e818a7c4c4fa0c22f960e0"
+        },
+        "chat_template.jinja": {
+          "size": 4815,
+          "sha256": null,
+          "git_blob_sha1": "01f622408cfa22542bc41e48de8b5a6f7b47e61a"
+        },
+        "config.json": {
+          "size": 37255,
+          "sha256": null,
+          "git_blob_sha1": "83bd1eb3410f82346f3b42b63e7fee629f6f0452"
+        },
+        "generation_config.json": {
+          "size": 318,
+          "sha256": null,
+          "git_blob_sha1": "ab5f011767446bd092c3739718f1f8615f3eadfd"
+        },
+        "kv_config.json": {
+          "size": 396,
+          "sha256": null,
+          "git_blob_sha1": "488f81ab7acf853f0951f1553f3b5d6937f3d2fb"
+        },
+        "model-00001-of-00002.safetensors": {
+          "size": 5330482974,
+          "sha256": "e063ee6b0545db683d418bb49b3b598b0051f6f1fe4597d29db913c583c5000a",
+          "git_blob_sha1": "15c90c7697f000c0ab0f76c9cd8351f2931126c1"
+        },
+        "model-00002-of-00002.safetensors": {
+          "size": 124793772,
+          "sha256": "bf7bab63ad839e53c634abd0617af2a2aa943375cdc72b18aa971f636ef14180",
+          "git_blob_sha1": "293b373d2f74981e9b4cc705e17f577902ee5e8c"
+        },
+        "model.safetensors.index.json": {
+          "size": 51834,
+          "sha256": null,
+          "git_blob_sha1": "240f9756390069984dd5c9ed1acec7f4d01b6b62"
+        },
+        "optiq_metadata.json": {
+          "size": 14355,
+          "sha256": null,
+          "git_blob_sha1": "a34b0a72075d9a2cd835c4e62e55899eee0c37b5"
+        },
+        "tokenizer.json": {
+          "size": 17905598,
+          "sha256": "695be7802a0e4b8a81048f0ff5ebb7fc811a0ba5a6be63dbb24deb5a81096f41",
+          "git_blob_sha1": "caab3a0ae45d59a9fe42fcd3b7e7c64011b55d13"
+        },
+        "tokenizer_config.json": {
+          "size": 344,
+          "sha256": null,
+          "git_blob_sha1": "efcc0a22a13c7c1c2f4dcc12d647392c03b8f0c9"
+        }
+      }
+    },
+    "text_ru": {
+      "repo": "Oscilla/Ministral-8B-Instruct-2410-mlx-4Bit",
+      "revision": "0a90a00572ac08cfff586c1035bd2f0614023977",
+      "api": "https://huggingface.co/api/models/Oscilla/Ministral-8B-Instruct-2410-mlx-4Bit/revision/0a90a00572ac08cfff586c1035bd2f0614023977?blobs=true",
+      "license": "other",
+      "files": {
+        "README.md": {
+          "size": 14336,
+          "sha256": null,
+          "git_blob_sha1": "04e048bcb96799a3b0476754b935c3a7318424b8"
+        },
+        "chat_template.jinja": {
+          "size": 3945,
+          "sha256": null,
+          "git_blob_sha1": "9c21a3f13ebf55994c64c93c9ae5361580570651"
+        },
+        "config.json": {
+          "size": 1922,
+          "sha256": null,
+          "git_blob_sha1": "945070b3bb4424537bade3103d319422639fc372"
+        },
+        "generation_config.json": {
+          "size": 116,
+          "sha256": null,
+          "git_blob_sha1": "9ef6c5a097a7c4207f9be9d3c9c38ce990f45af2"
+        },
+        "model.safetensors": {
+          "size": 4511667374,
+          "sha256": "b4c1b964a099c17ef29e1df8d920ac5e6786d3ad87cf7d887f15f9ebed5b5c7e",
+          "git_blob_sha1": "f3f8c2d921e1b6d4dfd53c7765b05b790a9ac247"
+        },
+        "model.safetensors.index.json": {
+          "size": 58941,
+          "sha256": null,
+          "git_blob_sha1": "d42a74f4eabc6408461a6afe9e29abcb6bc20203"
+        },
+        "tokenizer.json": {
+          "size": 17078136,
+          "sha256": "d7edbeaf20dd7f571b5dd1c54d9ace4f9b6299127cc7ba2afb14a6d51a4a79a4",
+          "git_blob_sha1": "ff212c416e627a1cd152c1ffa9c1cd0318658a7a"
+        },
+        "tokenizer_config.json": {
+          "size": 356,
+          "sha256": null,
+          "git_blob_sha1": "2716c364e8480017f45d8eefefc27d270ebcb2bc"
+        }
+      }
+    },
+    "tts": {
+      "repo": "mlx-community/chatterbox-multilingual-v3",
+      "revision": "03565773edd72e949572557597af8063bb49a18a",
+      "api": "https://huggingface.co/api/models/mlx-community/chatterbox-multilingual-v3/revision/03565773edd72e949572557597af8063bb49a18a?blobs=true",
+      "license": "mit",
+      "files": {
+        "Cangjie5_TC.json": {
+          "size": 1920163,
+          "sha256": null,
+          "git_blob_sha1": "d77891f84ca1db0d6f7058a4ee081d4bb0bfe88e"
+        },
+        "README.md": {
+          "size": 1289,
+          "sha256": null,
+          "git_blob_sha1": "1227f0d11d0e9b5c73b27acd19045d8954a42ba4"
+        },
+        "config.json": {
+          "size": 666,
+          "sha256": null,
+          "git_blob_sha1": "d53329554e3ca5e3cf7441a9e9cbe0893251b8b1"
+        },
+        "model.safetensors": {
+          "size": 2711113780,
+          "sha256": "e702f2c441e040bd360e59a86c85d462539759d665e41cfd1938adadd74187a3",
+          "git_blob_sha1": "462a37b759f51035f90c4943f528a74a43774cbd"
+        },
+        "tokenizer.json": {
+          "size": 69989,
+          "sha256": null,
+          "git_blob_sha1": "d27fb3f2fd38ca39b7bbfbf83a13b3c617e551df"
+        }
+      }
+    },
+    "tts_s3": {
+      "repo": "mlx-community/S3TokenizerV2",
+      "revision": "e0c9886f0e1c35ae85b1f27277416fb19fc72bec",
+      "api": "https://huggingface.co/api/models/mlx-community/S3TokenizerV2/revision/e0c9886f0e1c35ae85b1f27277416fb19fc72bec?blobs=true",
+      "license": null,
+      "files": {
+        "README.md": {
+          "size": 459,
+          "sha256": null,
+          "git_blob_sha1": "0f7d26c02743dc16f9ea37eff62dd1a38ff1aa6c"
+        },
+        "config.json": {
+          "size": 126,
+          "sha256": null,
+          "git_blob_sha1": "59938193a24f642ca668d3f692be0a4c2964afcc"
+        },
+        "model.safetensors": {
+          "size": 494868984,
+          "sha256": "928726bc1f206a613d36b8f49e297eae9c5593a21bf9b92ddfe2c23f85eb92cc",
+          "git_blob_sha1": "c6c4ce2a924a0e1de566ea16c9a44ede14b2437b"
+        }
+      }
+    }
+  },
+  "notes": {
+    "tts_s3": "Auxiliaire obligatoire Chatterbox, sans téléchargement implicite.",
+    "tts_voice": "Référence WAV consentie obligatoire, non incluse.",
+    "text_licenses": "Liquid et Ministral: other; lire les termes avant distribution."
+  }
+}

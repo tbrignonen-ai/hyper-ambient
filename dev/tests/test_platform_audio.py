@@ -391,6 +391,12 @@ def test_la_sonde_micro_ouvre_un_flux_aux_bons_parametres(monkeypatch):
     demandes: list[dict] = []
 
     class _Flux:
+        def start(self) -> None:
+            demandes[-1]["callback"](b"", 0, None, None)
+
+        def stop(self) -> None:
+            pass
+
         def close(self) -> None:
             pass
 
@@ -408,6 +414,52 @@ def test_la_sonde_micro_ouvre_un_flux_aux_bons_parametres(monkeypatch):
     assert demande["channels"] == 1
     assert demande["dtype"] == "int16"
     assert callable(demande["callback"])
+
+
+def test_repli_macos_48k_vers_16k_conserve_le_flux(monkeypatch):
+    macos = _charger_avec_plateforme(monkeypatch, "darwin")
+    faux_sd = types.ModuleType("sounddevice")
+    faux_soxr = types.ModuleType("soxr")
+    appels = []
+    recu = []
+
+    class Flux:
+        def __init__(self, callback):
+            self.callback = callback
+
+        def start(self):
+            self.callback(np.array([[0.25], [-0.25], [0.5]], dtype=np.float32), 3, None, None)
+
+        def stop(self):
+            pass
+
+        def close(self):
+            pass
+
+    def ouvrir(**kwargs):
+        appels.append(kwargs)
+        if kwargs["samplerate"] == 16000:
+            raise RuntimeError("format non supporté")
+        return Flux(kwargs["callback"])
+
+    class ResampleStream:
+        def __init__(self, *args, **kwargs):
+            assert args[:3] == (48000, 16000, 1)
+
+        def resample_chunk(self, source):
+            return source[:1]
+
+    faux_sd.InputStream = ouvrir
+    faux_sd.query_devices = lambda **_: {"default_samplerate": 48000}
+    faux_soxr.ResampleStream = ResampleStream
+    monkeypatch.setitem(sys.modules, "sounddevice", faux_sd)
+    monkeypatch.setitem(sys.modules, "soxr", faux_soxr)
+    stream = macos._fabrique_flux(lambda pcm, frames, *_: recu.append((pcm, frames)))
+    stream.start()
+    assert [x["samplerate"] for x in appels] == [16000, 48000]
+    assert recu[0][0].dtype == np.int16 and recu[0][1] == 1
+    stream.stop()
+    stream.close()
 
 
 def test_lister_les_entrees_sans_sounddevice_ne_parle_pas_de_windows(monkeypatch, capsys):

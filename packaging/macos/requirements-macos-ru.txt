@@ -1,0 +1,4 @@
+# Options RU seulement après décision et vérification du runtime.
+-r requirements-macos.txt
+onnxruntime==1.30.0
+# Kyutai GGUF Q8_0 : runtime de décodage non validé, pas de dépendance fictive.

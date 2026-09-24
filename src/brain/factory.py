@@ -63,6 +63,10 @@ def construire_distant(mode=None, modele=None, effort=None):
             effort=effort or os.getenv("BRAIN_ABONNEMENT_EFFORT") or "low",
             harnais=harnais,
         )
+    if os.getenv("MOTHER_PROFILE") == "mac-16g-voix-max":
+        from native.macos.profile import model_path
+
+        return OpenAICompatBrain(model=str(model_path("text")), max_tokens=256)
     return OpenAICompatBrain()  # BRAIN_API_* from the environment
 
 
@@ -106,12 +110,28 @@ async def build_router():
     """
     from src.brain.router import RouterBrain
 
-    reflex = LlamaCppBrain(
-        host=os.getenv("LLAMA_SERVER_HOST", LLAMA_HOST),
-        model=os.getenv("BRAIN_MODEL_LOCAL", "local"),
-    )
+    classifier = None
+    if os.getenv("MOTHER_PROFILE") == "mac-16g-voix-max" and os.getenv("BRAIN_LOCAL_BACKEND") == "mlx":
+        from native.macos.profile import model_path, require_platform
+
+        require_platform()
+        reflex = OpenAICompatBrain(
+            api_endpoint=os.getenv("BRAIN_API_ENDPOINT", "http://127.0.0.1:8080/v1/chat/completions"),
+            model=str(model_path("text")), max_tokens=256,
+        )
+
+        async def classifier(prompt: str) -> str:
+            result = await reflex.query(prompt, system="Réponds exclusivement REFLEXE ou ESCALADE.", temperature=0)
+            if result.get("stop_reason") == "error":
+                raise RuntimeError("classification MLX indisponible")
+            return str(result.get("response") or "").strip()
+    else:
+        reflex = LlamaCppBrain(
+            host=os.getenv("LLAMA_SERVER_HOST", LLAMA_HOST),
+            model=os.getenv("BRAIN_MODEL_LOCAL", "local"),
+        )
     deep = construire_distant()
-    router = RouterBrain(reflex=reflex, deep=deep)
+    router = RouterBrain(reflex=reflex, deep=deep, classifier=classifier)
     await router.initialize()
     return router
 

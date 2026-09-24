@@ -24,6 +24,12 @@ import numpy as np
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+if os.getenv("MOTHER_PROFILE") == "mac-16g-voix-max":
+    # Les modules des ponts figent leur URL à l'import ; poser le profil avant
+    # ces imports évite host.docker.internal dans le processus natif.
+    from native.macos.profile import apply as _apply_mac_profile
+
+    _apply_mac_profile()
 
 from src.hostagent.audio import (
     FRAME_SAMPLES,
@@ -88,7 +94,7 @@ MEMOIRE_MESSAGES = 12
 # Attente maximale de la suite d'un énoncé inachevé (fin de tour sémantique).
 DELAI_SUSPENS_S = 2.0
 
-HOST = "0.0.0.0"
+HOST = os.getenv("HOSTAGENT_HOST", "127.0.0.1" if os.getenv("MOTHER_PROFILE") == "mac-16g-voix-max" else "0.0.0.0")
 PORT = 8001
 SECRET_DEVELOPPEMENT = "partage-installation"
 VOIX_PIPER = "/workspace/models/piper/fr_FR-tom-medium.onnx"
@@ -377,6 +383,9 @@ def charger_carte_figee(
 
 def _appliquer_env_boot(environ: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
     """Jetons, carte, puis langue cohérente. C1 ne déplace pas les modèles."""
+    from native.macos.profile import apply
+
+    apply(environ if environ is not None else os.environ)
     outils = charger_env_local(environ=environ)
     carte = charger_carte_figee(environ=environ)
     cible_env = environ if environ is not None else os.environ
@@ -921,6 +930,13 @@ def construire_ears():
     backend absent n'empêche pas l'autre de démarrer.
     """
     backend = _texte_configuration("EARS_BACKEND", "faster-whisper").lower()
+    if backend == "mlx-qwen3-asr":
+        from native.macos.profile import model_path, require_platform
+        from src.ears.mlx_qwen3_asr import MLXQwen3ASR
+
+        require_platform()
+        language = _code_langue(_texte_configuration("EARS_LANGUAGE", "fr"), cle="EARS_LANGUAGE")
+        return backend, MLXQwen3ASR(model_size=str(model_path("stt")), language=language)
     if backend not in {"qwen3", "qwen3-asr", "faster-whisper", "faster_whisper", "whisper"}:
         _avertir_repli_configuration("EARS_BACKEND", backend, "faster-whisper")
         backend = "faster-whisper"
@@ -1506,18 +1522,25 @@ class HostPipeline:
         self._journal_conversation = nouveau_fichier_conversation()
         print(f"CONVO : {self._journal_conversation}", flush=True)
 
-        from src.ears.jev_reflexe import JevReflexe
+        from src.ears.jev_local import construire_jev
 
-        self._jev = JevReflexe()
-        print("JEV   : réflexe en entrée (repli silencieux sans clé)", flush=True)
+        self._jev = construire_jev()
+        print(f"JEV   : {type(self._jev).__name__} en entrée", flush=True)
 
         # MOUTH : Pocket TTS par défaut. Piper reste joignable par MOUTH_BACKEND=piper,
         # parce qu'il ne coûte aucune VRAM — c'est le repli si le GPU est saturé.
         backend = _texte_configuration("MOUTH_BACKEND", "pocket").lower()
-        if backend not in {"pocket", "supertonic", "magpie", "piper"}:
+        if backend not in {"pocket", "supertonic", "magpie", "piper", "mlx-chatterbox"}:
             _avertir_repli_configuration("MOUTH_BACKEND", backend, "piper")
             backend = "piper"
-        if backend == "pocket":
+        if backend == "mlx-chatterbox":
+            from native.macos.profile import require_platform
+            from src.mouth.mlx_chatterbox_tts import MLXChatterboxTTS
+
+            require_platform()
+            self.tts = MLXChatterboxTTS(language=_code_langue(_texte_configuration("MOUTH_LANGUAGE", "fr")))
+            print("MOUTH : Chatterbox multilingual v3 / MLX", flush=True)
+        elif backend == "pocket":
             from src.mouth.pocket_tts import PocketTTS
 
             langue = _texte_configuration("MOUTH_LANGUAGE", "french_24l")
@@ -1610,6 +1633,10 @@ class HostPipeline:
             tache.cancel()
         if self.brain is not None:
             await self.brain.close()
+        for moteur in (getattr(self, "asr", None), getattr(self, "tts", None), getattr(self, "_jev", None)):
+            close = getattr(moteur, "aclose", None)
+            if close is not None:
+                await close()
         if self._client_outils is not None:
             await self._client_outils.aclose()
             self._client_outils = None
@@ -2528,6 +2555,10 @@ def main(argv: list[str] | None = None) -> None:
     argv = list(sys.argv[1:] if argv is None else argv)
     if "--dry-run" in argv:
         raise SystemExit(dry_run())
+    if os.getenv("MOTHER_PROFILE") == "mac-16g-voix-max":
+        from native.macos.profile import require_platform
+
+        require_platform()
     injectees, cles_carte = _appliquer_env_boot()
     if injectees:
         print(

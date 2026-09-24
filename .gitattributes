@@ -1,0 +1,3 @@
+# Préserver le shebang Mac et les digests Git blob du code JeV épinglé.
+packaging/macos/*.command text eol=lf
+native/macos/typed_decisions/*.py text eol=lf

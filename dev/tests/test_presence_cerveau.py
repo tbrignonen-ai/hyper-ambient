@@ -39,6 +39,14 @@ def test_choix_de_bascule_gardent_le_modele_choisi(tmp_path):
     assert choix[2][1]["mode"] == "api"
 
 
+def test_profil_mac_ne_relance_pas_le_conteneur_windows(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOTHER_PROFILE", "mac-16g-voix-max")
+    env_local = tmp_path / ".env.local"
+    env_local.write_text("BRAIN_DEEP=api\n", encoding="utf-8")
+    assert cd.choix_bascule(env_local)[-1][0] == "Texte local MLX"
+    assert cd.relancer_host_agent() is False
+
+
 def test_la_bascule_n_envoie_pas_le_mode_mains_libres():
     """Renvoyer mains_libres=False refermerait la conversation côté host-agent."""
     import pytest

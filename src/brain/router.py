@@ -158,9 +158,11 @@ class RouterBrain:
         enable_filler: bool = True,
         deep_timeout_ms: Optional[int] = None,
         reflex_answers: Optional[bool] = None,
+        classifier=None,
     ):
         self.reflex = reflex
         self.deep = deep
+        self.classifier = classifier
         # False : le reflexe local trie mais ne repond plus. Mesure du 15 sept,
         # MiniCPM5-2B recopiait les exemples du prompt et se trompait sans eux.
         self.reflex_answers = (
@@ -239,7 +241,7 @@ class RouterBrain:
         if len(prompt.split()) > MAX_MOTS_REFLEXE:
             return {"route": "escalate", "latency_ms": 0.0, "verdict": "CONVERSATION"}
 
-        if self._client is None:
+        if self.classifier is None and self._client is None:
             return {"route": "escalate", "latency_ms": 0.0, "reason": "no client"}
 
         # « Oui, vas-y » n'est un reflexe que si rien ne precede. Apres une
@@ -259,9 +261,12 @@ class RouterBrain:
         }
         t0 = time.perf_counter()
         try:
-            r = await self._client.post(f"{self.classify_host}/completion", json=body)
+            if self.classifier is not None:
+                verdict = (await self.classifier(body["prompt"])).strip()
+            else:
+                r = await self._client.post(f"{self.classify_host}/completion", json=body)
+                verdict = (r.json().get("content") or "").strip()
             elapsed = (time.perf_counter() - t0) * 1000
-            verdict = (r.json().get("content") or "").strip()
             route = "reflex" if verdict == "REFLEXE" else "escalate"
             return {"route": route, "latency_ms": elapsed, "verdict": verdict}
         except Exception as e:

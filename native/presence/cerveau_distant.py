@@ -10,6 +10,7 @@ Logique pure, sans Tk : l'écran Réglages ne fait que l'afficher.
 from __future__ import annotations
 
 import json
+import os
 import urllib.request
 from pathlib import Path
 from typing import Callable, Optional
@@ -103,6 +104,11 @@ def relancer_host_agent() -> bool:
     le conteneur (relance officielle, jamais de `docker compose up`)."""
     import subprocess
 
+    # Le redémarrage Docker appartient au parcours Windows. Le profil Mac
+    # pilote un processus natif sous le superviseur, sans toucher à la démo.
+    if os.getenv("MOTHER_PROFILE") == "mac-16g-voix-max":
+        return False
+
     try:
         resultat = subprocess.run(
             ["docker", "exec", "mother-core-dev", "bash",
@@ -130,5 +136,9 @@ def choix_bascule(chemin: Path) -> list[tuple[str, dict]]:
     for mode in ("abonnement-claude", "abonnement-chatgpt"):
         modele = modele_actif if mode == mode_actif and modele_actif else MODELE_PAR_DEFAUT[mode]
         choix.append((libelle_modele(modele), {"mode": mode, "model": modele, "effort": effort}))
-    choix.append(("MiniMax (clé d'API)", {"mode": "api"}))
+    libelle_api = (
+        "Texte local MLX" if os.getenv("MOTHER_PROFILE") == "mac-16g-voix-max"
+        else "MiniMax (clé d'API)"
+    )
+    choix.append((libelle_api, {"mode": "api"}))
     return choix

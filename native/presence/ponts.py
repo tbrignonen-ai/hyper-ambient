@@ -18,6 +18,8 @@ import shutil
 import socket
 import subprocess
 import sys
+import json
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -46,19 +48,46 @@ def port_ouvert(port: int) -> bool:
         return False
 
 
+def pont_pret(pont: Pont, token: str) -> bool:
+    service = "codexbridge" if pont.executable == "codex" else "clibridge"
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{pont.port}/health",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=1.0) as response:
+            payload = json.load(response)
+        return payload.get("ok") is True and payload.get("service") == service
+    except Exception:
+        return False
+
+
+def trouver_cli(nom: str) -> str | None:
+    found = shutil.which(nom)
+    if found or sys.platform != "darwin":
+        return found
+    extra = ["/opt/homebrew/bin", "/usr/local/bin", str(Path.home() / ".local/bin")]
+    extra.extend(str(p) for p in sorted((Path.home() / ".nvm/versions/node").glob("*/bin"), reverse=True))
+    return shutil.which(nom, path=os.pathsep.join(extra + [os.environ.get("PATH", "")]))
+
+
 def ponts_a_demarrer(
     valeurs: dict[str, str],
     *,
     port_ouvert: Callable[[int], bool] = port_ouvert,
-    trouver: Callable[[str], str | None] = shutil.which,
+    trouver: Callable[[str], str | None] = trouver_cli,
 ) -> list[Pont]:
-    return [
-        pont
-        for pont in PONTS
-        if (valeurs.get(pont.cle_jeton) or "").strip()
-        and trouver(pont.executable)
-        and not port_ouvert(pont.port)
-    ]
+    choisis = []
+    for pont in PONTS:
+        token = (valeurs.get(pont.cle_jeton) or "").strip()
+        if not token or not trouver(pont.executable):
+            continue
+        if port_ouvert(pont.port):
+            if sys.platform == "darwin" and not pont_pret(pont, token):
+                raise RuntimeError(f"Port {pont.port} occupé par un service non reconnu : {pont.nom}")
+            continue
+        choisis.append(pont)
+    return choisis
 
 
 def _lire_env_local(chemin: Path) -> dict[str, str]:
@@ -85,7 +114,7 @@ def demarrer_ponts(
     *,
     journal_dir: Path | None = None,
     port_ouvert: Callable[[int], bool] = port_ouvert,
-    trouver: Callable[[str], str | None] = shutil.which,
+    trouver: Callable[[str], str | None] = trouver_cli,
     popen: Callable[..., object] = subprocess.Popen,
 ) -> list[str]:
     """Démarre les ponts configurés et absents ; rend leurs noms."""
@@ -103,6 +132,9 @@ def demarrer_ponts(
     for pont in ponts_a_demarrer(valeurs, port_ouvert=port_ouvert, trouver=trouver):
         env = dict(os.environ)
         env[pont.cle_jeton] = valeurs[pont.cle_jeton].strip()
+        if sys.platform == "darwin":
+            env["PATH"] = os.pathsep.join(["/opt/homebrew/bin", "/usr/local/bin", env.get("PATH", "/usr/bin:/bin")])
+            env["CODEX_BRIDGE_HOST" if pont.executable == "codex" else "CLI_BRIDGE_HOST"] = "127.0.0.1"
         journal = journal_dir / f"pont-{pont.executable}.log"
         with open(journal, "ab") as sortie:
             popen(

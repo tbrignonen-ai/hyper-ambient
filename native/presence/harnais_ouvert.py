@@ -14,7 +14,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import shlex
 import subprocess
+import sys
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -37,7 +40,14 @@ class _InfoDemarrage:
 
 
 def _exe(nom: str) -> str:
-    return shutil.which(nom) or nom
+    found = shutil.which(nom)
+    if found or sys.platform != "darwin":
+        return found or nom
+    home = Path.home()
+    extra = [Path("/opt/homebrew/bin"), Path("/usr/local/bin"),
+             home / ".local/bin", home / ".npm-global/bin"]
+    extra += sorted((home / ".nvm/versions/node").glob("*/bin"), reverse=True)
+    return shutil.which(nom, path=os.pathsep.join(map(str, extra))) or nom
 
 
 def mode_claude_par_defaut(reglages: Optional[Path] = None) -> str:
@@ -74,6 +84,11 @@ def commande(
 
 
 def options_console(racine: str, premier_plan: bool) -> dict[str, Any]:
+    if sys.platform == "darwin":
+        env = {k: v for k, v in os.environ.items() if k.upper() != "TERM"}
+        prefixes = ["/opt/homebrew/bin", "/usr/local/bin", str(Path.home() / ".local/bin")]
+        env["PATH"] = os.pathsep.join(prefixes + [env.get("PATH", "/usr/bin:/bin")])
+        return {"cwd": racine, "env": env, "premier_plan_mac": premier_plan}
     info = getattr(subprocess, "STARTUPINFO", _InfoDemarrage)()
     info.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 1)
     info.wShowWindow = SW_SHOWNORMAL if premier_plan else SW_SHOWMINNOACTIVE
@@ -139,6 +154,22 @@ def _montrer(avant: set[int], premier_plan: bool) -> None:
 
 
 def _lancer(cmd: list[str], **options: Any):
+    if sys.platform == "darwin":
+        premier_plan = options.pop("premier_plan_mac", True)
+        dossier = options["cwd"]
+        # LaunchServices ouvre une vraie session Terminal sans permission
+        # Automation. Tous les arguments, y compris apostrophes/accents, sont
+        # échappés pour sh ; aucun script AppleScript construit par concaténation.
+        script_dir = Path(tempfile.mkdtemp(prefix="mother-harnais-"))
+        script = script_dir / "reprendre.command"
+        content = "#!/bin/sh\ncd " + shlex.quote(dossier) + " || exit 1\nexec " + " ".join(map(shlex.quote, cmd)) + "\n"
+        script.write_text(content, encoding="utf-8", newline="\n")
+        script.chmod(0o700)
+        args = ["open", "-a", "Terminal"]
+        if not premier_plan:
+            args.append("-g")
+        args.append(str(script))
+        return subprocess.Popen(args, cwd=dossier, env=options["env"])
     if os.name != "nt":
         return subprocess.Popen(cmd, **options)
     # conhost : une vraie fenêtre à soi, pas un onglet de Windows Terminal
@@ -155,6 +186,11 @@ def _lancer(cmd: list[str], **options: Any):
 def _fermer(proc) -> None:
     """Ferme la console et ses enfants (claude.cmd, codex.cmd lancent node)."""
     if proc.poll() is not None:
+        return
+    if sys.platform != "win32":
+        # open(1) sort dès que Terminal a reçu le .command. La fenêtre appartient
+        # ensuite à l'utilisateur : nous ne tuons jamais un terminal existant.
+        proc.terminate()
         return
     try:
         subprocess.run(

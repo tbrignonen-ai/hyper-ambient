@@ -828,9 +828,16 @@ class SessionVocale(threading.Thread):
         secret = moteur.lire_secret()
         try:
             indice = moteur.choisir_peripherique(self.device, sd)
+            if sys.platform == "darwin":
+                from native.hostagent.platform_audio import micro_accessible
+
+                if not micro_accessible(device=indice):
+                    self.deposer({"type": "erreur", "texte":
+                                  "Accès micro non établi : vérifier le périphérique et la permission Microphone macOS."})
+                    return
             fabrique = moteur._fabrique_entree(indice, sd)
             capture = moteur.PushToTalkCapture(stream_factory=fabrique)
-            from native.hostagent.windows_audio import CaptureContinue
+            from native.hostagent.platform_audio import CaptureContinue
 
             self._capture_continue = CaptureContinue(stream_factory=fabrique)
             indice_sortie = moteur.choisir_sortie(self.nom_sortie, sd)

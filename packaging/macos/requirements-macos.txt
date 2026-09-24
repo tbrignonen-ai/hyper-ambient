@@ -1,0 +1,26 @@
+# Python 3.12 arm64 / macOS 14+. Dépendances directes distinctes de CUDA.
+# Versions PyPI et roues arm64 vérifiées par metadata le 2026-09-24 ;
+# résolution complète et installation sur Mac restent NOT_RUN.
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+websockets==17.1
+httpx==0.28.1
+pydantic==2.13.5
+numpy==2.5.3
+scipy==1.18.1
+librosa==1.0.0
+soundfile==0.14.0
+sounddevice==0.5.6
+soxr==1.1.0
+mlx==0.32.2
+mlx-audio==0.5.6
+mlx-lm==0.31.3
+mlx-qwen3-asr==0.4.4
+torch==2.14.0
+transformers==5.17.0
+safetensors==0.8.0
+sentencepiece==0.2.2
+protobuf==7.36.2
+huggingface-hub==1.33.0
+PyYAML==6.0.3
+jinja2==3.1.6

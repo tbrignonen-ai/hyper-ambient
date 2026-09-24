@@ -17,7 +17,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from native.hostagent.windows_audio import PushToTalkCapture
+from native.hostagent.platform_audio import PushToTalkCapture, ErreurMicroIndisponible
 from src.hostagent.audio import SAMPLE_RATE
 
 # Adresse en IPv4 explicite, jamais « localhost ». Sous Windows, localhost se
@@ -121,6 +121,8 @@ def lister_peripheriques(sd) -> str:
 
 def decrire_erreur_peripherique(exc: BaseException) -> str:
     """Traduit une exception audio en une phrase : le problème, et quoi taper ensuite."""
+    if sys.platform == "darwin" and isinstance(exc, ErreurMicroIndisponible):
+        return str(exc)
     texte = str(exc).lower()
     if "busy" in texte or "in use" in texte:
         return (
@@ -229,6 +231,8 @@ def _echouer_peripherique(exc: BaseException) -> None:
 
 def _est_erreur_audio(exc: BaseException) -> bool:
     """True si le texte ressemble à PortAudio, pas à un refus de connexion."""
+    if isinstance(exc, ErreurMicroIndisponible):
+        return True
     texte = str(exc).lower()
     return any(
         marqueur in texte
@@ -375,6 +379,11 @@ def choisir_peripherique(demande: str | None, sd) -> int:
 def _fabrique_entree(indice: int, sd):
     """Fabrique de flux injectée dans PushToTalkCapture, micro choisi inclus."""
 
+    if sys.platform == "darwin":
+        from native.hostagent.platform_audio import _fabrique_flux
+
+        return lambda callback: _fabrique_flux(callback, device=indice)
+
     def factory(callback):
         try:
             return sd.InputStream(
@@ -388,6 +397,68 @@ def _fabrique_entree(indice: int, sd):
             _echouer_peripherique(exc)
 
     return factory
+
+
+class _SortieMac:
+    """Sortie 16 kHz logique, avec SoXR continu si CoreAudio refuse ce format."""
+
+    def __init__(self, sd, kwargs, native_rate: int, stream=None):
+        self.sd = sd
+        self.kwargs = kwargs
+        self.channels = kwargs["channels"]
+        self.native_rate = native_rate
+        self.stream = stream
+        self.resampler = None
+        if stream is None:
+            self._fallback()
+
+    @property
+    def active(self):
+        return bool(getattr(self.stream, "active", False))
+
+    def _fallback(self):
+        import soxr
+
+        if self.native_rate < SAMPLE_RATE:
+            raise RuntimeError(f"Fréquence sortie invalide : {self.native_rate} Hz")
+        self.resampler = soxr.ResampleStream(SAMPLE_RATE, self.native_rate,
+                                             self.channels, dtype="float32", quality="HQ")
+        options = dict(self.kwargs, samplerate=self.native_rate)
+        self.stream = self.sd.OutputStream(**options)
+
+    def start(self):
+        try:
+            if self.resampler is not None:
+                self.resampler.clear()
+            return self.stream.start()
+        except Exception:
+            if self.resampler is not None:
+                raise
+            self.stream.close()
+            self._fallback()
+            return self.stream.start()
+
+    def write(self, pcm):
+        if self.resampler is None:
+            return self.stream.write(pcm)
+        import numpy as np
+
+        output = self.resampler.resample_chunk(np.asarray(pcm, dtype=np.float32))
+        if output.size:
+            return self.stream.write(output)
+
+    def stop(self):
+        if self.resampler is not None:
+            import numpy as np
+
+            shape = (0, self.channels) if self.channels > 1 else (0,)
+            tail = self.resampler.resample_chunk(np.zeros(shape, dtype=np.float32), last=True)
+            if tail.size:
+                self.stream.write(tail)
+        return self.stream.stop()
+
+    def close(self):
+        return self.stream.close()
 
 
 def _ouvrir_sortie(sd, indice: int | None = None):
@@ -426,7 +497,14 @@ def _ouvrir_sortie(sd, indice: int | None = None):
     try:
         flux = sd.OutputStream(**kwargs)
     except Exception as exc:
+        if sys.platform == "darwin":
+            try:
+                return _SortieMac(sd, kwargs, int(round(float(info["default_samplerate"]))))
+            except Exception:
+                pass
         _echouer_peripherique(exc)
+    if sys.platform == "darwin":
+        return _SortieMac(sd, kwargs, int(round(float(info["default_samplerate"]))), flux)
     # Volontairement PAS de `start()` ici. Le flux restait demarre depuis
     # l'ouverture jusqu'au premier mot de MOUTH, soit plusieurs secondes sans
     # une seule ecriture : en mode bloquant, MME et DirectSound font entendre
