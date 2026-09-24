@@ -14,6 +14,7 @@ Le pont est ferme sans jeton configure. Stdlib seulement.
     set CLI_BRIDGE_TOKEN=...   &&   python -m native.clibridge.bridge
 """
 import asyncio
+import functools
 import hmac
 import json
 import logging
@@ -21,6 +22,8 @@ import os
 import shlex
 import shutil
 import tempfile
+import threading
+from native import sans_console
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -68,7 +71,7 @@ def _exe_for(agent, exe=None):
 
 
 def build_command(question, agent="claude", workdir=DEFAULT_WORKDIR, exe=None,
-                  model=None):
+                  model=None, session=None, fourche=False):
     """`agent` choisit l'argv. `exe` : liste d'arguments, sinon $CLI_BRIDGE_*_EXE,
     sinon le nom court. `workdir` est le cwd du processus (voir run_cli), pas
     un flag dangereux."""
@@ -81,11 +84,22 @@ def build_command(question, agent="claude", workdir=DEFAULT_WORKDIR, exe=None,
     if agent == "claude":
         cmd += [
             "-p",
-            "--output-format", "text",
+            # JSON : la réponse porte l'identifiant de session, que
+            # Presence rouvre dans Claude Code (24/09).
+            "--output-format", "json",
             "--restricted",
-            "--permission-mode", "plan",
+            # « manual » + prompts refusés d'office : Claude lit et répond,
+            # toute écriture est refusée. « plan » lui faisait refuser la
+            # demande elle-même (séance du 24/09).
+            "--permission-mode", "manual",
             "--permission-prompts", "none",
         ]
+        if session:
+            cmd += ["--resume", session]
+            # Session rejointe : on la bifurque, on n'écrit pas dans celle
+            # que l'utilisateur a peut-être ouverte à côté (24/09).
+            if fourche:
+                cmd += ["--fork-session"]
     else:
         # Hermes : meme geste print. Pas de flag dangereux. Pas de processus
         # tant que lookup() dit absent — voir answer_question.
@@ -110,6 +124,7 @@ async def run_cli(cmd, out_file, timeout_s, workdir=DEFAULT_WORKDIR):
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
         cwd=workdir,
+        **sans_console.options(),
     )
     try:
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
@@ -124,7 +139,7 @@ async def run_cli(cmd, out_file, timeout_s, workdir=DEFAULT_WORKDIR):
 
 async def answer_question(question, runner=run_cli, workdir=DEFAULT_WORKDIR,
                           timeout_s=DEFAULT_TIMEOUT_S, agent="claude",
-                          lookup=shutil.which):
+                          lookup=shutil.which, session=None, fourche=False):
     question = (question or "").strip()[:MAX_QUESTION_CHARS]
     if not question:
         return {"ok": False, "error": "question vide"}
@@ -135,7 +150,8 @@ async def answer_question(question, runner=run_cli, workdir=DEFAULT_WORKDIR,
     with tempfile.TemporaryDirectory() as tmp:
         out_file = os.path.join(tmp, "last.txt")
         cmd = build_command(
-            _VOICE_PREFIX + question, agent=agent, workdir=workdir
+            _VOICE_PREFIX + question, agent=agent, workdir=workdir, session=session,
+            fourche=fourche,
         )
         # Hermes : chemin declare, processus refuse tant que CLI_BRIDGE_HERMES=1
         # n'arme pas explicitement. Un binaire present ne suffit pas.
@@ -154,11 +170,64 @@ async def answer_question(question, runner=run_cli, workdir=DEFAULT_WORKDIR,
                     else "claude introuvable"}
     if code != 0:
         return {"ok": False, "error": f"{agent} a echoue (code {code})"}
-    return {"ok": True, "answer": (text or "").strip()}
+    return _reponse(text)
+
+
+def _reponse(text):
+    """`--output-format json` : {"result", "session_id"} ; sinon texte brut."""
+    try:
+        donnees = json.loads(text or "")
+    except ValueError:
+        donnees = None
+    if not isinstance(donnees, dict) or "result" not in donnees:
+        return {"ok": True, "answer": (text or "").strip()}
+    if donnees.get("is_error"):
+        return {"ok": False, "error": "claude a echoue"}
+    reponse = {"ok": True, "answer": str(donnees.get("result") or "").strip()}
+    if donnees.get("session_id"):
+        reponse["session_id"] = str(donnees["session_id"])
+    return reponse
+
+
+_SESSIONS: dict = {}
+_VERROU_SESSIONS = threading.Lock()
+
+
+def session_pour(modele, effort="low"):
+    """Une session de conversation vivante par modèle et effort (mode abonnement)."""
+    from native.clibridge.conversation import SessionClaude
+
+    with _VERROU_SESSIONS:
+        cle = (modele, effort)
+        if cle not in _SESSIONS:
+            _SESSIONS[cle] = SessionClaude(modele=modele, effort=effort)
+        return _SESSIONS[cle]
+
+
+def _chercher_session(requete):
+    from native import sessions_harnais as sh
+
+    return sh.chercher(sh.sessions_claude(), requete)
+
+
+def _dossier_session(session):
+    from native import sessions_harnais as sh
+
+    if not session:
+        return DEFAULT_WORKDIR
+    dossier = sh.cwd_de_session("Claude", session)
+    return dossier if dossier and os.path.isdir(dossier) else DEFAULT_WORKDIR
+
+
+def _modeles():
+    from native.clibridge.conversation import MODELES_CLAUDE
+
+    return MODELES_CLAUDE
 
 
 class _Handler(BaseHTTPRequestHandler):
     token = ""
+    sessions = staticmethod(session_pour)
 
     def _send(self, status, payload):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -168,7 +237,26 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _conversation(self):
+        from native.clibridge.conversation import MODELE_PAR_DEFAUT
+        from native.conversation_http import servir
+
+        return servir(
+            self,
+            autorise=lambda entete: authorized(entete, self.token),
+            sessions=type(self).sessions,
+            modeles=_modeles,
+            defaut=MODELE_PAR_DEFAUT,
+            catalogue=_chercher_session,
+        )
+
+    def do_GET(self):
+        if not self._conversation():
+            self._send(501, {"ok": False, "error": "GET non pris en charge"})
+
     def do_POST(self):
+        if self._conversation():
+            return
         if self.path != "/ask":
             return self._send(404, {"ok": False, "error": "inconnu"})
         if not authorized(self.headers.get("Authorization"), self.token):
@@ -178,9 +266,16 @@ class _Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length) or b"{}")
             question = payload.get("question", "")
             agent = payload.get("agent", "claude")
+            session = payload.get("session") or None
+            fourche = payload.get("fork") is True
         except Exception:
             return self._send(400, {"ok": False, "error": "requete illisible"})
-        self._send(200, asyncio.run(answer_question(question, agent=agent)))
+        # Claude ne reprend une session que depuis son dossier de travail.
+        dossier = _dossier_session(session)
+        self._send(200, asyncio.run(answer_question(
+            question, agent=agent, session=session, fourche=fourche, workdir=dossier,
+            runner=functools.partial(run_cli, workdir=dossier),
+        )))
 
     def log_message(self, fmt, *args):
         logger.info(fmt % args)

@@ -17,6 +17,8 @@ import os
 import shlex
 import shutil
 import tempfile
+import threading
+from native import sans_console
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -35,7 +37,7 @@ _VOICE_PREFIX = (
 
 
 def build_command(question, workdir=DEFAULT_WORKDIR, out_file="last.txt",
-                  exe=None, model=None):
+                  exe=None, model=None, session=None):
     """`exe` : liste d'arguments (ex. `npx -y @openai/codex@0.154.0`), sinon
     $CODEX_BRIDGE_EXE, sinon `codex`. `model` : sinon $CODEX_BRIDGE_MODEL,
     sinon celui de ~/.codex/config.toml."""
@@ -47,12 +49,16 @@ def build_command(question, workdir=DEFAULT_WORKDIR, out_file="last.txt",
         "exec",
         "--sandbox", "read-only",
         "--skip-git-repo-check",
-        "--ephemeral",
+        # Plus d'--ephemeral : la session est gardée, Presence la rouvre
+        # (`codex resume <id>`). --json rend le thread_id (24/09).
+        "--json",
         "-C", workdir,
         "-o", out_file,
     ]
     if model:
         cmd += ["-m", model]
+    if session:
+        cmd += ["resume", session]
     return cmd + [question]
 
 
@@ -68,38 +74,117 @@ async def run_codex(cmd, out_file, timeout_s):
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
+        **sans_console.options(),
     )
     try:
-        code = await asyncio.wait_for(proc.wait(), timeout=timeout_s)
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
     except asyncio.TimeoutError:
         proc.kill()
         raise
     text = Path(out_file).read_text(encoding="utf-8") if Path(out_file).exists() else ""
-    return code, text
+    return proc.returncode, text, (stdout or b"").decode("utf-8", errors="replace")
+
+
+def _fil(sortie):
+    for ligne in (sortie or "").splitlines():
+        try:
+            evenement = json.loads(ligne)
+        except ValueError:
+            continue
+        if isinstance(evenement, dict) and evenement.get("type") == "thread.started":
+            return evenement.get("thread_id")
+    return None
 
 
 async def answer_question(question, runner=run_codex, workdir=DEFAULT_WORKDIR,
-                          timeout_s=DEFAULT_TIMEOUT_S):
+                          timeout_s=DEFAULT_TIMEOUT_S, session=None):
     question = (question or "").strip()[:MAX_QUESTION_CHARS]
     if not question:
         return {"ok": False, "error": "question vide"}
     with tempfile.TemporaryDirectory() as tmp:
         out_file = os.path.join(tmp, "last.txt")
-        cmd = build_command(_VOICE_PREFIX + question, workdir=workdir, out_file=out_file)
+        cmd = build_command(_VOICE_PREFIX + question, workdir=workdir,
+                            out_file=out_file, session=session)
         try:
-            code, text = await runner(cmd, out_file, timeout_s)
+            resultat = await runner(cmd, out_file, timeout_s)
+            code, text = resultat[0], resultat[1]
+            sortie = resultat[2] if len(resultat) > 2 else ""
         except (asyncio.TimeoutError, TimeoutError):
             return {"ok": False, "error": "delai depasse"}
         except FileNotFoundError:
             return {"ok": False, "error": "codex introuvable"}
     if code != 0:
         return {"ok": False, "error": f"codex a echoue (code {code})"}
-    return {"ok": True, "answer": (text or "").strip()}
+    reponse = {"ok": True, "answer": (text or "").strip()}
+    fil = _fil(sortie) or session
+    if fil:
+        reponse["session_id"] = str(fil)
+    return reponse
+
+
+_SESSIONS: dict = {}
+_VERROU_SESSIONS = threading.Lock()
+
+
+def session_pour(modele, effort="low"):
+    """Une session de conversation vivante par modèle et effort (mode abonnement)."""
+    from native.codexbridge.conversation import SessionCodex
+
+    with _VERROU_SESSIONS:
+        cle = (modele, effort)
+        if cle not in _SESSIONS:
+            _SESSIONS[cle] = SessionCodex(modele=modele, effort=effort)
+        return _SESSIONS[cle]
+
+
+def _chercher_session(requete):
+    from native import sessions_harnais as sh
+
+    return sh.chercher(sh.sessions_codex(), requete)
+
+
+def _dossier_session(session):
+    from native import sessions_harnais as sh
+
+    if not session:
+        return DEFAULT_WORKDIR
+    dossier = sh.cwd_de_session("Codex", session)
+    return dossier if dossier and os.path.isdir(dossier) else DEFAULT_WORKDIR
+
+
+def _modeles():
+    """La liste en direct, demandée à l'app-server (`model/list`)."""
+    from native.codexbridge.conversation import MODELE_PAR_DEFAUT
+
+    try:
+        return session_pour(MODELE_PAR_DEFAUT).modeles()
+    except Exception as exc:
+        logger.warning(f"model/list : {type(exc).__name__}: {exc}")
+        return [{"id": MODELE_PAR_DEFAUT, "label": MODELE_PAR_DEFAUT}]
 
 
 class _Handler(BaseHTTPRequestHandler):
+    sessions = staticmethod(session_pour)
+
+    def _conversation(self):
+        from native.codexbridge.conversation import MODELE_PAR_DEFAUT
+        from native.conversation_http import servir
+
+        return servir(
+            self,
+            autorise=lambda entete: authorized(entete, self.token),
+            sessions=type(self).sessions,
+            modeles=_modeles,
+            defaut=MODELE_PAR_DEFAUT,
+            catalogue=_chercher_session,
+        )
+
+    def do_GET(self):
+        if not self._conversation():
+            self._send(501, {"ok": False, "error": "GET non pris en charge"})
+
     token = ""
 
     def _send(self, status, payload):
@@ -111,16 +196,21 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        if self._conversation():
+            return
         if self.path != "/ask":
             return self._send(404, {"ok": False, "error": "inconnu"})
         if not authorized(self.headers.get("Authorization"), self.token):
             return self._send(401, {"ok": False, "error": "non autorise"})
         try:
             length = int(self.headers.get("Content-Length") or 0)
-            question = json.loads(self.rfile.read(length) or b"{}").get("question", "")
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            question = payload.get("question", "")
+            session = payload.get("session") or None
         except Exception:
             return self._send(400, {"ok": False, "error": "requete illisible"})
-        self._send(200, asyncio.run(answer_question(question)))
+        self._send(200, asyncio.run(answer_question(
+            question, session=session, workdir=_dossier_session(session))))
 
     def log_message(self, fmt, *args):
         logger.info(fmt % args)

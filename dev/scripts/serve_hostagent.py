@@ -34,7 +34,23 @@ from src.hostagent.audio import (
 from src.hostagent.transport import create_transport_app
 from src.hostagent.warmup import prechauffer
 from src.presence.etat import Presence
-from src.mouth.secours import LIMITE_ENONCE_S, est_silence, phrase_de_secours
+from src.brain.factory import construire_distant, libelle_distant, mode_distant
+from src.brain.mandat import annuler_mandats
+from src.brain.sessions_voix import demande_de_session, ponts_harnais
+from src.brain.sessions_voix import executer as executer_session
+from src.ears.fin_de_tour import enonce_incomplet
+from src.mouth.repetition import (
+    demande_de_repetition,
+    demande_resultat_harnais,
+    derniere_reponse,
+    dernier_resultat_harnais,
+)
+from src.mouth.secours import (
+    LIMITE_ENONCE_S,
+    est_micro_muet,
+    est_silence,
+    phrase_de_secours,
+)
 from src.ears.silence import jeter_tour_bruit
 from src.mouth.reveil import phrase_de_reveil, reveil_court_suffit
 from src.mouth.output_gain import appliquer_gain_doux
@@ -57,6 +73,7 @@ from src.brain.mandat import (
     OUTIL_PAR_HARNAIS,
     RegistreMandats,
     outil_exige,
+    outils_exiges,
     phrase_arrivee,
     phrase_rappel,
     redresser_harnais,
@@ -68,6 +85,8 @@ from src.gate.permission import Gate
 # conversation vocale, sans laisser le contexte du modele local croitre sans
 # borne d'un tour a l'autre.
 MEMOIRE_MESSAGES = 12
+# Attente maximale de la suite d'un énoncé inachevé (fin de tour sémantique).
+DELAI_SUSPENS_S = 2.0
 
 HOST = "0.0.0.0"
 PORT = 8001
@@ -155,6 +174,9 @@ _CLES_OUTILS = frozenset(
 # Presence pose HA_LANG sur Windows ; le host-agent (conteneur) doit le
 # relire depuis .env.local, sinon le cerveau et Magpie restent en FR.
 _CLES_LANGUE = frozenset({"HA_LANG", "HYPER_AMBIENT_LANG"})
+# Choix du distant (24/09) : clé d'API ou abonnement de l'utilisateur. Réglé
+# depuis Presence ; ce n'est pas la carte figée, qui reste maîtresse du reste.
+_CLES_DISTANT = frozenset({"BRAIN_DEEP", "BRAIN_ABONNEMENT_MODEL", "BRAIN_ABONNEMENT_EFFORT"})
 # Carte figée 19 sept : cerveau / oreille / voix. Aucun secret. Écrase
 # l'ancienne carte (router / Qwen3 / Supertonic) au boot, sauf CARTE_FIGEE=0
 # ou une variable *_FORCE déjà utile.
@@ -309,7 +331,9 @@ def charger_env_local(
         chemin = _ROOT / ".env.local"
     injectees: list[str] = []
     for cle, val in parser_env_local(Path(chemin)).items():
-        if (cle not in _CLES_OUTILS and cle not in _CLES_LANGUE) or _est_cle_modele(cle):
+        if cle not in _CLES_DISTANT and (
+            (cle not in _CLES_OUTILS and cle not in _CLES_LANGUE) or _est_cle_modele(cle)
+        ):
             continue
         if _valeur_utile(environ.get(cle, "")):
             continue
@@ -725,15 +749,50 @@ def recoller_prononce(morceaux) -> str:
     return texte.strip()
 
 
-async def _confier_sans_modele(outil, prompt, registre, porte):
+CONTEXTE_MESSAGES = 4
+CONTEXTE_CARACTERES = 240
+
+
+def question_avec_contexte(prompt: str, historique) -> str:
+    """La phrase de l'utilisateur, telle quelle, suivie des derniers échanges.
+
+    Sans reformulation par le modèle, « dis la même chose à Codex » arrivait
+    seul chez Codex, qui ne pouvait pas savoir de quoi il s'agissait (24/09).
+    """
+    echanges = [
+        m for m in (historique or [])
+        if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)
+        and m["content"].strip()
+    ][-CONTEXTE_MESSAGES:]
+    if not echanges:
+        return prompt
+    lignes = [
+        ("Utilisateur" if m["role"] == "user" else "hyper-ambient")
+        + " : " + " ".join(m["content"].split())[:CONTEXTE_CARACTERES]
+        for m in echanges
+    ]
+    return (
+        f"{prompt}\n\n(Contexte : les derniers échanges de la conversation vocale, "
+        "à n'utiliser que si la demande y renvoie.\n" + "\n".join(lignes) + ")"
+    )
+
+
+def distant_sans_outils(brain) -> bool:
+    """Le cerveau abonnement (Claude Code, Codex) ne sait pas appeler d'outil."""
+    distant = getattr(brain, "deep", brain)
+    return getattr(distant, "supporte_outils", True) is False
+
+
+async def _confier_sans_modele(outil, prompt, registre, porte, historique=None):
     """Dépose la demande dite par l'utilisateur, sans reformulation."""
-    appel = ToolCall(id="demande-directe", name=outil, arguments={"question": prompt})
+    question = question_avec_contexte(prompt, historique)
+    appel = ToolCall(id="demande-directe", name=outil, arguments={"question": question})
     yield {
         "channel": "tool",
         "tool": outil,
         "phase": "call",
         "delta": "",
-        "arguments": {"question": prompt},
+        "arguments": {"question": question},
     }
     resultat, phase = await _execute(appel, registre, porte)
     yield {
@@ -775,6 +834,19 @@ def flux_cerveau(brain, prompt, registre, porte, historique):
             )
             tampon = []
             exige = outil_exige(prompt, registre)
+            if exige and distant_sans_outils(brain):
+                # Le distant abonnement ne peut pas appeler l'outil : attendre
+                # sa réponse coûtait 10 à 16 s de silence avant l'accusé
+                # (séance du 24/09). La demande part tout de suite, à chaque
+                # harnais nommé.
+                for outil in outils_exiges(prompt, registre) or [exige]:
+                    async for piece in _confier_sans_modele(
+                        outil, prompt, registre, porte, historique
+                    ):
+                        yield piece
+                return
+            depose = False
+            garder_preambule = distant_sans_outils(brain)
             async for chunk in run_tool_loop(
                 brain,
                 prompt,
@@ -782,10 +854,20 @@ def flux_cerveau(brain, prompt, registre, porte, historique):
                 porte,
                 history=historique,
                 max_tool_calls=2,
+                # Deux harnais d'un coup (« Claude puis Codex »), et le
+                # modèle n'est pas rappelé après un dépôt : l'accusé suffit.
+                max_per_iteration=2,
+                terminal=est_handler_mandat,
             ):
                 if chunk.get("channel") == "tool":
                     nom = chunk.get("tool", "")
                     if chunk.get("phase") == "call" and est_handler_mandat(nom):
+                        # Le distant abonnement répond à sa part avant de
+                        # confier le reste (« oui, j'ai accès au web ») : on
+                        # le garde. Ailleurs, c'est une annonce en double.
+                        if garder_preambule:
+                            for piece in tampon:
+                                yield piece
                         tampon.clear()
                         yield chunk
                         continue
@@ -804,19 +886,23 @@ def flux_cerveau(brain, prompt, registre, porte, historique):
                                 "stop_reason": "mandat_depose",
                                 "ttft_ms": None,
                             }
-                        return
+                        depose = True
                     continue
+                if depose:
+                    return
                 if retenir:
                     tampon.append(chunk)
                 else:
                     yield chunk
+            if depose:
+                return
             if exige:
                 # Demande explicite à un harnais et aucun mandat déposé :
                 # le modèle a répondu à sa place. Mesure du 23 sept : MiniMax
                 # ignore tool_choice et dit « Pong. » au lieu d'appeler Claude.
                 # C'est l'utilisateur qui envoie : sa phrase part telle quelle.
                 async for piece in _confier_sans_modele(
-                    exige, prompt, registre, porte
+                    exige, prompt, registre, porte, historique
                 ):
                     yield piece
                 return
@@ -979,6 +1065,11 @@ class HostPipeline:
         self._jev = None
         self._mains_libres = False
         self._fenetre = FenetreConversation()
+        # Fin de tour sémantique (24/09) : audio d'un énoncé inachevé, gardé
+        # jusqu'au segment suivant ou jusqu'à DELAI_SUSPENS_S.
+        self._frames_en_suspens: list = []
+        self._minuteur_suspens: asyncio.Task | None = None
+        self._forcer_tour = False
         self._websocket = None
         self._tache_maintien_jev = None
         self._tache_indicateur_conversation = None
@@ -988,6 +1079,7 @@ class HostPipeline:
         self._mandats = RegistreMandats()
         self._dernier_parole_a = time.monotonic()
         self._tache_mandats = None
+        self._tache_cerveau = None
         self._badge_prets = -1
         self._tache_rechargement_mouth = None
         self._tache_surveillance_langue = None
@@ -1010,6 +1102,16 @@ class HostPipeline:
         if not isinstance(message, dict):
             return None
         statut = None
+        if message.get("type") == "hello":
+            # Presence affiche en permanence le distant actif (24/09).
+            self._tache_cerveau = asyncio.ensure_future(self._annoncer_cerveau())
+        choix = message.get("cerveau")
+        if isinstance(choix, dict):
+            distant = construire_distant(
+                mode=choix.get("mode"), modele=choix.get("model"), effort=choix.get("effort")
+            )
+            self._tache_cerveau = asyncio.ensure_future(self._basculer_cerveau(distant))
+            statut = {"type": "cerveau", "state": "switching", "nom": libelle_distant(distant)}
         langue = message.get("language", message.get("HA_LANG", message.get("HYPER_AMBIENT_LANG")))
         if langue is not None:
             accent = message.get("accent")
@@ -1050,6 +1152,40 @@ class HostPipeline:
                 self._arreter_maintien_jev()
                 self._arreter_indicateur_conversation()
         return statut
+
+    async def _annoncer_cerveau(self) -> None:
+        distant = getattr(self.brain, "deep", None)
+        if distant is None or self._websocket is None:
+            return
+        try:
+            await self._websocket.send_json(
+                {"type": "cerveau", "state": "ready", "nom": libelle_distant(distant),
+                 "mode": mode_distant(distant)}
+            )
+        except Exception as exc:
+            print(f"CERVEAU: annonce impossible ({type(exc).__name__})", flush=True)
+
+    async def _basculer_cerveau(self, distant) -> None:
+        """Change le distant du routeur à chaud, entre deux tours (24/09)."""
+        try:
+            await distant.initialize()
+        except Exception as exc:
+            print(f"CERVEAU: {libelle_distant(distant)} indisponible ({exc})", flush=True)
+            if self._websocket is not None:
+                await self._websocket.send_json(
+                    {"type": "cerveau", "state": "error", "nom": libelle_distant(distant)}
+                )
+            return
+        async with self._lock:
+            ancien = getattr(self.brain, "deep", None)
+            self.brain.deep = distant
+        if ancien is not None:
+            try:
+                await ancien.close()
+            except Exception:
+                pass
+        print(f"CERVEAU: distant actif {libelle_distant(distant)}", flush=True)
+        await self._annoncer_cerveau()
 
     def _appliquer_langue_aux_modeles(self, reglage: dict[str, object]) -> str:
         """Change les paramètres lus à chaque requête et rend son état honnête."""
@@ -1612,6 +1748,17 @@ class HostPipeline:
         for mandat in list(self._mandats.prets()):
             phrase = phrase_arrivee(mandat)
             self._noter_conversation(f"← {mandat.harnais}", phrase)
+            if mandat.session and mandat.etat == "fini":
+                # Presence ouvre la conversation dans le harnais pendant
+                # qu'elle annonce la réponse (24/09).
+                try:
+                    await websocket.send_json(
+                        {"type": "harnais_session", "harnais": mandat.harnais,
+                         "session": mandat.session}
+                    )
+                    print(f"MANDAT: session {mandat.harnais} {mandat.session}", flush=True)
+                except Exception as exc:
+                    print(f"MANDAT: session non envoyee ({type(exc).__name__})", flush=True)
             print(
                 f"MANDAT: arrivee {mandat.harnais} id={mandat.identifiant} — {phrase!r}",
                 flush=True,
@@ -1646,6 +1793,10 @@ class HostPipeline:
                 f"MANDAT: annonce fin_envoyee id={mandat.identifiant}", flush=True
             )
             self._mandats.marquer_annonce(mandat.identifiant)
+            self._retenir_mandat(mandat, phrase)
+            # Elle vient de parler : la reponse qui suit lui est destinee,
+            # JeV ne doit pas la rejuger (mesure du 23/09).
+            await self._ouvrir_conversation()
             await self._signaler_badge_mandat(websocket)
         silence_s = maintenant - self._dernier_parole_a
         for mandat in list(self._mandats.en_cours()):
@@ -1662,6 +1813,55 @@ class HostPipeline:
             # hors d'un tour termine explicitement.
             await self._envoyer(websocket, [])
             mandat.rappel_fait = True
+
+    async def _rejoindre_session(self, websocket, prompt: str) -> str | None:
+        """« Reprends la session Claude qui parle de X » : adoptée, puis ouverte
+        dans le harnais par Presence. None si ce n'est pas une telle demande."""
+        demande = demande_de_session(prompt)
+        if demande is None:
+            return None
+        resultat = await executer_session(demande, ponts_harnais(self.registre))
+        print(
+            f"SESSION: {demande.action} {demande.harnais or '*'} {demande.requete!r} "
+            f"-> {resultat.harnais} {resultat.session}",
+            flush=True,
+        )
+        if resultat.session and websocket is not None:
+            try:
+                await websocket.send_json(
+                    {"type": "harnais_session", "harnais": resultat.harnais,
+                     "session": resultat.session}
+                )
+            except Exception as exc:
+                print(f"SESSION: ouverture non envoyee ({type(exc).__name__})", flush=True)
+        return resultat.phrase
+
+    def _retenir_mandat(self, mandat, phrase: str) -> None:
+        """Verse la reponse du harnais dans la memoire du cerveau.
+
+        Sans cela, « Codex a fini » est dit puis oublie : au tour suivant
+        (« et donc ? »), le cerveau ne sait pas de quoi on parle. Le detail
+        est borne pour ne pas noyer la fenetre de contexte.
+        """
+        reponse = mandat.reponse
+        detail = ""
+        if reponse is not None:
+            detail = (
+                getattr(reponse, "detail_voix", "")
+                or getattr(reponse, "resultat_complet", "")
+                or ""
+            ).strip()[:1200]
+        contenu = f"{phrase}\n{detail}".strip() if detail else phrase
+        self._historique.extend(
+            [
+                {
+                    "role": "user",
+                    "content": f"(Tâche confiée à {mandat.harnais}) {mandat.question}",
+                },
+                {"role": "assistant", "content": contenu},
+            ]
+        )
+        del self._historique[:-MEMOIRE_MESSAGES]
 
     async def _envoyer(self, websocket, trames: list[AudioFrame]) -> None:
         """Envoie des paquets d'une seconde, ou un marqueur vide de fin de tour."""
@@ -1767,6 +1967,20 @@ class HostPipeline:
         )
         await self._envoyer(websocket, [])
 
+    async def _liberer_suspens(self, websocket) -> None:
+        """Sans suite après DELAI_SUSPENS_S, l'énoncé part tel quel."""
+        try:
+            await asyncio.sleep(DELAI_SUSPENS_S)
+        except asyncio.CancelledError:
+            return
+        frames, self._frames_en_suspens = self._frames_en_suspens, []
+        self._minuteur_suspens = None
+        if not frames:
+            return
+        print("TOUR  : pas de suite, l'énoncé part tel quel", flush=True)
+        self._forcer_tour = True
+        await self._tour(frames, websocket)
+
     async def _tour(self, frames, websocket) -> None:
         async with self._lock:
             await self._enchainer(frames, websocket)
@@ -1775,6 +1989,13 @@ class HostPipeline:
 
     async def _enchainer(self, frames, websocket) -> None:
         leftover = [np.zeros(0, dtype=np.float32)]
+        if self._frames_en_suspens:
+            # La suite d'un énoncé inachevé : on retranscrit le tout d'un bloc.
+            frames = list(self._frames_en_suspens) + list(frames or [])
+            self._frames_en_suspens = []
+            if self._minuteur_suspens is not None:
+                self._minuteur_suspens.cancel()
+                self._minuteur_suspens = None
         # Horloge monotone, jamais l'heure murale. BRAIN streame pendant
         # que MOUTH synthétise déjà les premiers tokens : les deux
         # étages se CHEVAUCHENT. ears / brain / mouth ne sont donc pas
@@ -1823,6 +2044,8 @@ class HostPipeline:
                     # un segment sans parole n'est pas une demande restee sans
                     # reponse. Annoncer le silence ferait parler en boucle.
                     mains_libres=self._mains_libres,
+                    # Zeros exacts : micro coupe ou pris ailleurs (dossier §10.1).
+                    micro_muet=est_micro_muet(audio),
                 )
                 if phrase:
                     await self._dire_secours(
@@ -1891,7 +2114,13 @@ class HostPipeline:
                 mains_libres=self._mains_libres,
             ):
                 print(
-                    f'EARS  : segment rejeté (bruit) "{prompt}"',
+                    f'EARS  : segment rejeté (bruit) "{prompt}" segments='
+                    + str([
+                        (round(float(seg.get("no_speech_prob") or 0), 2),
+                         round(float(seg.get("avg_logprob") or 0), 2))
+                        for seg in (result.get("segments") or [])
+                        if isinstance(seg, dict)
+                    ]),
                     flush=True,
                 )
                 await self._envoyer(websocket, [])
@@ -1916,6 +2145,18 @@ class HostPipeline:
                     )
                 else:
                     await self._envoyer(websocket, [])
+                return
+
+            forcer, self._forcer_tour = self._forcer_tour, False
+            if self._mains_libres and not forcer and enonce_incomplet(prompt):
+                # Pause au milieu d'une pensée : on attend la suite au lieu
+                # de répondre à une demi-phrase.
+                print(f"TOUR  : inachevé, attente de la suite {prompt!r}", flush=True)
+                self._frames_en_suspens = list(frames)
+                self._minuteur_suspens = asyncio.create_task(
+                    self._liberer_suspens(websocket)
+                )
+                await self._envoyer(websocket, [])
                 return
 
             jev = getattr(self, "_jev", None)
@@ -1981,6 +2222,35 @@ class HostPipeline:
                     presence.emettre("repos")
                     await presence.vider()
                     return
+
+            # Décisions locales, avant le cerveau (séance du 24/09) : rejoindre
+            # une session de harnais, annuler une demande, redire la dernière
+            # réponse. Le 3B ratait tout cela ; aucune n'est un jugement.
+            repetition = await self._rejoindre_session(websocket, prompt)
+            if repetition is None:
+                repetition = annuler_mandats(self._mandats, prompt)
+            if repetition is None and demande_resultat_harnais(prompt):
+                repetition = dernier_resultat_harnais(self._historique)
+            if repetition is None and demande_de_repetition(prompt):
+                repetition = derniere_reponse(self._historique)
+            if repetition:
+                print(f"LOCAL : {repetition!r}", flush=True)
+                self._noter_conversation("Toi", prompt)
+                self._noter_conversation("hyper-ambient", repetition)
+                presence.emettre("parole")
+                await presence.vider()
+                await self._dire_secours(
+                    websocket,
+                    leftover,
+                    phrase=repetition,
+                    transcript=prompt,
+                    t_tour=t_tour,
+                    ears_ms=ears_ms,
+                    brain_ms=0.0,
+                )
+                presence.emettre("repos")
+                await presence.vider()
+                return
 
             self._noter_conversation("Toi", prompt)
             if self._memoire.doit_fermer(

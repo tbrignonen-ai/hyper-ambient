@@ -69,15 +69,19 @@ Demande: """
 
 CLASSIFY_SUFFIX = "\nClasse:"
 
+# Le réflexe local n'a que les formules : au-delà de quatre mots, c'est une
+# conversation, et le 3B y répondait « Je suis là. » ou « Oui. » (séance du
+# 24/09). Le distant converse ; le local salue.
+MAX_MOTS_REFLEXE = 4
+
 # Canned, not generated. Generating a filler would cost a round-trip of the
 # very latency the filler exists to hide, and would risk a filler that does not
 # fit. These are short, level, and in hyper-ambient's register: never apologetic,
 # never chatty.
 FILLERS = [
-    "Un instant.",
+    "Je regarde.",
+    "Une seconde.",
     "Je vérifie.",
-    "Analyse en cours.",
-    "Je consulte les données.",
 ]
 
 # One filler covers about a second of audio. The remote channel was measured at
@@ -85,8 +89,7 @@ FILLERS = [
 # leaves ten seconds of silence, which reads as a crash, not as deliberation.
 # A second line keeps presence without turning into chatter.
 HOLDING = [
-    "Je traite toujours la demande.",
-    "Encore quelques instants.",
+    "C'est un peu plus long que prévu, je reste dessus.",
 ]
 
 
@@ -180,6 +183,9 @@ class RouterBrain:
         # comme de la presence. A 6000, un tour de 5,4 s ne declenche plus rien,
         # un tour de 13,8 s recoit toujours ses deux lignes (6 s, 12 s).
         self.holding_after_ms = int(os.getenv("BRAIN_HOLDING_AFTER_MS", "6000"))
+        # Sous ce délai, le distant répond avant qu'une phrase d'attente ait un
+        # sens : on se tait (notes voix/UX, 24/09).
+        self.progression_apres_ms = int(os.getenv("BRAIN_PROGRESSION_APRES_MS", "1500"))
         self._filler_i = 0
         self._client = None
         self.stats = {"reflex": 0, "escalate": 0, "deep_failed": 0}
@@ -229,6 +235,9 @@ class RouterBrain:
         # la seule ou la demande ne peut pas aboutir.
         if nomme_un_harnais(prompt):
             return {"route": "escalate", "latency_ms": 0.0, "verdict": "HARNAIS"}
+
+        if len(prompt.split()) > MAX_MOTS_REFLEXE:
+            return {"route": "escalate", "latency_ms": 0.0, "verdict": "CONVERSATION"}
 
         if self._client is None:
             return {"route": "escalate", "latency_ms": 0.0, "reason": "no client"}
@@ -307,11 +316,19 @@ class RouterBrain:
         # L'amorce ici dirait la même chose. est_une_suite_d_outil ne couvre
         # pas ce cas : les trois phrases naissent au premier query_streaming,
         # avant tout message role=tool — le garde du 13/09 ne les voit pas.
-        if (
+        # Notes voix/UX du 24/09 : la phrase d'attente n'est plus dite d'office.
+        # Elle part seulement si le distant n'a encore rien produit après
+        # `progression_apres_ms` — un état réel, pas un tic avant chaque réponse.
+        annoncer = (
             self.enable_filler
             and not est_une_suite_d_outil(kw.get("messages"))
             and not nomme_un_harnais(prompt)
-        ):
+        )
+
+        immediate = annoncer and self.progression_apres_ms <= 0
+        if immediate:
+            # BRAIN_PROGRESSION_APRES_MS=0 : l'ancien comportement, amorce dite
+            # avant même d'attendre le distant.
             yield {
                 "delta": self._next_filler(),
                 "stop_reason": None,
@@ -328,14 +345,17 @@ class RouterBrain:
             holding = 0
             async for chunk in _with_holding(
                 stream, self.deep_timeout_ms, self.holding_after_ms,
-                len(HOLDING) if self.enable_filler else 0,
+                (len(HOLDING) if immediate else 1 + len(HOLDING)) if annoncer else 0,
+                premier_ms=None if immediate else self.progression_apres_ms,
             ):
                 if chunk.get("_holding"):
+                    premiere = holding == 0 and not immediate
                     yield {
-                        "delta": HOLDING[holding % len(HOLDING)],
+                        "delta": self._next_filler() if premiere
+                        else HOLDING[max(0, holding - (0 if immediate else 1)) % len(HOLDING)],
                         "stop_reason": None,
                         "ttft_ms": None,
-                        "channel": "holding",
+                        "channel": "filler" if premiere else "holding",
                         "flush": True,
                     }
                     holding += 1
@@ -384,7 +404,8 @@ class RouterBrain:
 
 
 async def _with_holding(
-    agen: AsyncIterator, timeout_ms: int, holding_after_ms: int, max_holding: int
+    agen: AsyncIterator, timeout_ms: int, holding_after_ms: int, max_holding: int,
+    premier_ms: Optional[int] = None,
 ):
     """
     Forward an async generator, emitting a `_holding` marker whenever it stays
@@ -395,6 +416,7 @@ async def _with_holding(
     """
     deadline = time.perf_counter() + timeout_ms / 1000.0
     holdings = 0
+    a_parle = False
     pending: Optional[asyncio.Future] = None
 
     try:
@@ -406,7 +428,10 @@ async def _with_holding(
             if pending is None:
                 pending = asyncio.ensure_future(agen.__anext__())
 
-            step = holding_after_ms / 1000.0 if holdings < max_holding else remaining
+            attente_ms = holding_after_ms
+            if holdings == 0 and premier_ms is not None and not a_parle:
+                attente_ms = premier_ms
+            step = attente_ms / 1000.0 if holdings < max_holding else remaining
             # asyncio.wait — NOT wait_for. wait_for CANCELS its awaitable on
             # timeout, and cancelling __anext__() tears down the generator and
             # its HTTP stream: the holding line would kill the very channel it
@@ -427,7 +452,13 @@ async def _with_holding(
                 pending = None
                 return
             pending = None
-            holdings = 0  # it spoke; reset the silence clock
+            # Une fois qu'il parle, plus aucune relance : « Encore quelques
+            # instants » au milieu d'une réponse est du bruit (24/09).
+            if premier_ms is not None:
+                a_parle = True
+                holdings = max_holding
+            else:
+                holdings = 0  # it spoke; reset the silence clock
             yield item
     finally:
         if pending is not None and not pending.done():

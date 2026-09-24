@@ -111,13 +111,17 @@ class FakeClassify:
 
 
 def _router(reflex=None, deep=None, **kw):
-    return RouterBrain(
+    routeur = RouterBrain(
         reflex or FakeChan("reflex"),
         deep or FakeChan("deep"),
         enable_filler=kw.pop("enable_filler", True),
         deep_timeout_ms=kw.pop("deep_timeout_ms", 2000),
         **kw,
     )
+    # Depuis le 24/09 l'amorce attend `progression_apres_ms` sans réponse du
+    # distant. Ces tests vérifient la mécanique de l'amorce : délai nul.
+    routeur.progression_apres_ms = 0
+    return routeur
 
 
 # -- listes d'amorces --------------------------------------------------------
@@ -136,7 +140,7 @@ def test_fillers_sont_courts_sans_excuse():
 
 
 def test_holding_sont_courts_sans_excuse():
-    assert len(HOLDING) >= 2
+    assert len(HOLDING) >= 1
     for h in HOLDING:
         assert h.endswith(".")
         assert len(h) <= 50
@@ -286,8 +290,10 @@ async def test_contexte_joint_seulement_si_court():
     fake2 = FakeClassify("ESCALADE")
     r._client = fake2
     long_q = "Il est 14 heures 40, ma reunion commence dans 20 minutes et dure 40 minutes, a quelle heure je finis ?"
-    await r.classify(long_q, contexte=[{"role": "assistant", "content": "Bonjour"}])
-    assert "Tour precedent" not in fake2.bodies[0]["prompt"]
+    decision = await r.classify(long_q, contexte=[{"role": "assistant", "content": "Bonjour"}])
+    # 24/09 : au-delà de quatre mots, le classifieur n'est plus consulté.
+    assert decision["route"] == "escalate"
+    assert fake2.bodies == []
 
 
 @runs_async

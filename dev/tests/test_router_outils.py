@@ -74,11 +74,13 @@ class FakeClassify:
 
 
 def _router(deep=None, reflex=None):
-    return RouterBrain(
+    routeur = RouterBrain(
         reflex or FakeChan("reflex"),
         deep or FakeChan("deep"),
         deep_timeout_ms=2000,
     )
+    routeur.progression_apres_ms = 0  # amorce immédiate : mécanique testée
+    return routeur
 
 
 # Ce que `run_tool_loop` repasse au modele au second tour : la question, puis

@@ -236,6 +236,7 @@ def test_blocs_couvrent_les_quatre_services_et_leurs_variables():
         "outil_claude",
         "codex",
         "claude",
+        "cerveau_distant",
         "brain_distant",
         "jev",
         "recherche",
@@ -256,6 +257,9 @@ def test_blocs_couvrent_les_quatre_services_et_leurs_variables():
     assert par_id["jev"] == ("TYPESAFE_MODEL", "TYPESAFE_API_KEY")
     assert par_id["recherche"] == ()
     assert par_id["cles"] == ()
+    # 24/09 : mode (clé d'API / abonnement) et modèle, choisis par menu.
+    assert par_id["cerveau_distant"] == ()
+    assert ids.index("cerveau_distant") == ids.index("brain_distant") - 1
     assert ids.index("brain_distant") > ids.index("outil_claude")
     assert ids.index("brain_distant") > ids.index("codex")
     assert ids.index("modele_local") < ids.index("cles")
@@ -293,7 +297,7 @@ def test_categories_regroupent_les_blocs():
         "codex",
         "claude",
     )
-    assert CATEGORIES[2]["blocs"] == ("brain_distant", "jev", "recherche")
+    assert CATEGORIES[2]["blocs"] == ("cerveau_distant", "brain_distant", "jev", "recherche")
 
 
 def test_blocs_portent_un_libelle_donnees():
@@ -310,6 +314,7 @@ def test_blocs_portent_un_libelle_donnees():
         "outil_claude": False,
         "codex": False,
         "claude": False,
+        "cerveau_distant": True,
         "brain_distant": True,
         "jev": True,
         "recherche": True,
@@ -334,6 +339,7 @@ def test_blocs_portent_un_marqueur_de_sortie():
         "outil_claude": False,
         "codex": False,
         "claude": False,
+        "cerveau_distant": True,
         "brain_distant": True,
         "jev": True,
         "recherche": True,

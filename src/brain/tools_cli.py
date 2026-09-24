@@ -17,6 +17,7 @@ from typing import Any, Optional
 
 from src.brain.tools import MAX_TOOL_CONTENT_CHARS, ToolRegistry, ToolSpec
 from src.brain.mandat import RegistreMandats, deposer_depuis_outil
+from src.brain.pont_session import SessionDePont
 
 logger = logging.getLogger(__name__)
 
@@ -92,8 +93,10 @@ _EMPTY = {
 }
 
 
-class CliBridge:
+class CliBridge(SessionDePont):
     """Handler d'outil : une question en entree, une phrase en sortie."""
+
+    bifurquer_a_la_reprise = True
 
     def __init__(
         self,
@@ -110,6 +113,9 @@ class CliBridge:
         self.client = client
         self.endpoint = endpoint
         self.timeout_s = timeout_s
+        # Session courante du harnais : les demandes suivantes la reprennent,
+        # et Presence l'ouvre dans le harnais (24/09). Voir pont_session.
+        self.session: Optional[str] = None
 
     async def __call__(self, question: str) -> str:
         agent = self.agent
@@ -123,7 +129,7 @@ class CliBridge:
         try:
             response = await self.client.post(
                 self.endpoint,
-                json={"question": question, "agent": agent},
+                json=self._charge(question, {"question": question, "agent": agent}),
                 headers={
                     "Authorization": f"Bearer {self.token}",
                     "Content-Type": "application/json",
@@ -149,6 +155,7 @@ class CliBridge:
             logger.warning(f"ask_{agent}: echec annonce par le pont ({reason})")
             return _FAILED[agent]
 
+        self._retenir_session(payload)
         answer = payload.get("answer")
         text = answer.strip() if isinstance(answer, str) else ""
         if not text:

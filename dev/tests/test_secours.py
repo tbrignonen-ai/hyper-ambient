@@ -293,3 +293,40 @@ def test_silence_ne_parle_pas_en_ecoute_continue():
         duree_audio_s=1.0,
         mains_libres=True,
     )
+
+
+def test_micro_muet_annonce_la_phrase_du_dossier():
+    """Dossier technique §10.1 : micro rendu muet → phrase qui nomme la cause.
+
+    Un micro coupé dans Windows, ou pris par une autre application, rend des
+    zéros numériques exacts. Une pièce silencieuse, jamais : le souffle du
+    préampli suffit à décoller du zéro. On distingue donc « tu n'as rien dit »
+    de « je n'entends plus rien », et seule la seconde renvoie vers le micro.
+    """
+    from src.mouth.secours import phrase_de_secours
+
+    commun = dict(transcript="", reply="", brain_injoignable=False, duree_audio_s=0.0)
+
+    assert phrase_de_secours(micro_muet=True, **commun) == (
+        "Je n'entends plus rien, vérifie qu'aucune autre application "
+        "n'utilise ton micro."
+    )
+    # Sans micro muet, le silence ordinaire reste inchangé.
+    assert phrase_de_secours(**commun) == "Je n'ai rien entendu. Reprends, je suis là."
+    # En écoute continue, rien ne parle en boucle.
+    assert phrase_de_secours(micro_muet=True, mains_libres=True, **commun) is None
+    for langue in ("en", "es"):
+        _est_phrase_humaine(phrase_de_secours(micro_muet=True, langue=langue, **commun))
+
+
+def test_micro_muet_se_mesure_aux_zeros_exacts():
+    import numpy as np
+
+    from src.mouth.secours import est_micro_muet, est_silence
+
+    assert est_micro_muet(np.zeros(16000, dtype=np.float32))
+    assert est_micro_muet(np.array([], dtype=np.float32))
+    # Pièce calme : sous le seuil de silence, mais pas un micro coupé.
+    souffle = np.random.default_rng(0).normal(0, 1e-4, 16000).astype(np.float32)
+    assert est_silence(souffle)
+    assert not est_micro_muet(souffle)

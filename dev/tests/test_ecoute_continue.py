@@ -236,3 +236,26 @@ def test_instantane_donne_le_pic_depuis_la_derniere_lecture(monkeypatch):
     assert capture.instantane()["rms_max"] >= 70.0
     assert capture.instantane()["rms_max"] < 5.0
     capture.stop()
+
+
+def test_un_enonce_jete_comme_trop_court_se_voit_dans_le_pouls(monkeypatch):
+    """Séance du 24/09 : « hyper ambiant » en mains libres, rien ne se passe,
+    et le journal ne disait pas pourquoi. Le rejet doit se voir."""
+    capture, flux = _nouvelle_capture(monkeypatch)
+    flux.pousser(_parole(300))
+    flux.pousser(_silence(800))
+    assert capture.segment_pret() is False
+    inst = capture.instantane()
+    assert inst["rejets_courts"] == 1
+    assert 200.0 <= inst["dernier_rejet_ms"] < 400.0
+    capture.stop()
+
+
+def test_le_nom_seul_passe(monkeypatch):
+    """Mesure du 24/09 : « Hyper ambiant » dit seul dure 480 ms ; le plancher
+    de 700 ms le jetait, et le mode mains libres ne répondait pas à son nom."""
+    capture, flux = _nouvelle_capture(monkeypatch)
+    flux.pousser(_parole(480))
+    flux.pousser(_silence(800))
+    assert capture.segment_pret() is True
+    capture.stop()

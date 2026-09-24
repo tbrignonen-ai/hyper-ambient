@@ -54,8 +54,11 @@ _DEBUT_TOUR_MS = 150.0
 # Barge-in vocal : un « euh » ou un raclement ne doit pas couper la lecture.
 _DEBUT_BARGE_IN_MS = 400.0
 # Whisper hallucine sous ~1 s (segments 1,06–1,12 s → « Realise par Neo035 »).
-# Plancher porté de 400 ms à 700 ms pour ne plus envoyer ces salves.
-_MIN_SEGMENT_MS = 700.0
+# Le plancher avait été porté à 700 ms ; mesure du 24/09 : « Hyper ambiant »
+# dit seul dure 480 ms et était jeté — le mains libres ne répondait plus à son
+# nom. Retour à 400 ms : l'hôte jette désormais lui-même les segments de bruit
+# (src/ears/silence.py), le plancher n'a plus à le faire.
+_MIN_SEGMENT_MS = 400.0
 _MAX_SEGMENT_MS = 15_000.0
 _TRAME_MS = 1000.0 * FRAME_SAMPLES / SAMPLE_RATE
 
@@ -179,11 +182,11 @@ class PushToTalkCapture:
 
 
 def _silence_ms_tour() -> float:
-    brut = os.environ.get("TURN_SILENCE_MS", "1200")
+    brut = os.environ.get("TURN_SILENCE_MS", "800")
     try:
         return max(0.0, float(brut))
     except (TypeError, ValueError):
-        return 1200.0
+        return 800.0
 
 
 def _rms_int16(echantillons: np.ndarray) -> float:
@@ -255,6 +258,9 @@ class CaptureContinue:
         self._rms_max = 0.0
         self._on_barge_in = None
         self.barge_in.clear()
+        # Énoncés jetés comme trop courts : visibles dans le pouls (24/09).
+        self._rejets_courts = 0
+        self._dernier_rejet_ms = 0.0
 
     def start(self) -> None:
         """Ouvre le flux et le laisse ouvert jusqu'à stop()."""
@@ -351,6 +357,8 @@ class CaptureContinue:
                 "accumulation": bool(self._tour or self._preambule),
                 "suspendue": bool(self._suspendu),
                 "regime_lecture": bool(self._regime_lecture),
+                "rejets_courts": int(self._rejets_courts),
+                "dernier_rejet_ms": float(self._dernier_rejet_ms),
             }
 
     def segment_pret(self) -> bool:
@@ -455,6 +463,8 @@ class CaptureContinue:
         # Le silence qui clôt le tour ne compte pas : 500 ms de voix + 700 ms
         # de silence ne doivent pas passer le plancher (Whisper hallucine).
         if not forcer and (duree - silence_final) < _MIN_SEGMENT_MS:
+            self._rejets_courts += 1
+            self._dernier_rejet_ms = duree - silence_final
             return
         self._prets.append(trames)
 

@@ -363,6 +363,7 @@ def test_arrivee_lit_le_resume_pas_le_detail():
         sujet="s",
         depose_a=0.0,
         etat="fini",
+        session="th-1",  # invitation vraie : la session s'ouvre (24/09)
         reponse=_reponse(),
     )
     phrase = phrase_arrivee(m)
@@ -399,7 +400,19 @@ def _mandat_fini(harnais="Codex", **reponse_kw):
         depose_a=0.0,
         etat="fini",
         reponse=_reponse(**reponse_kw),
+        session="s-1",
     )
+
+
+def test_sans_session_ouverte_pas_d_invitation():
+    """24/09 : « Le détail est dans Claude » était faux quand rien ne s'ouvrait."""
+    mandat = _mandat_fini()
+    mandat.session = None
+    assert "tail est dans" not in phrase_arrivee(mandat)
+
+
+def test_l_invitation_dit_que_c_est_ouvert():
+    assert "ouvert" in phrase_arrivee(_mandat_fini(harnais="Claude"))
 
 
 def test_resultat_riche_produit_l_invitation():
@@ -1064,3 +1077,89 @@ def test_harnais_non_branche_ne_force_rien():
     from src.brain.mandat import outil_exige
 
     assert outil_exige("Demande à Claude de relire.", _Registre({"ask_codex"})) is None
+
+
+@runs_async
+async def test_reponse_du_harnais_reste_en_memoire_au_tour_suivant():
+    """Après « Codex a fini », on peut demander « et donc ? » : la réponse
+    du harnais doit être dans l'historique remis au cerveau."""
+    pipeline = serve_hostagent.HostPipeline()
+    pipeline.tts = _MOUTHDouble()
+    socket = _SocketDouble()
+    mandat = Mandat(
+        identifiant="m-memoire",
+        harnais="Codex",
+        question="quelle est la capitale du Pérou",
+        sujet="s",
+        depose_a=time.monotonic(),
+        etat="fini",
+        reponse=_reponse(),
+    )
+    pipeline._mandats.deposer(mandat)
+
+    await pipeline.annoncer_mandats_prets(socket, [np.zeros(0, dtype=np.float32)])
+
+    historique = pipeline._historique_pour_modele()
+    texte = " ".join(message["content"] for message in historique)
+    assert "quelle est la capitale du Pérou" in texte
+    assert "Codex a fini" in texte
+    assert [m["role"] for m in historique[-2:]] == ["user", "assistant"]
+
+
+@runs_async
+async def test_annonce_de_mandat_ouvre_la_conversation():
+    """Mesure du 23/09 : après « Codex a fini », « je n'ai pas eu ton retour »
+    était jugé non adressé par JeV. Elle vient de parler : ce qui suit lui
+    répond, la fenêtre de conversation doit s'ouvrir."""
+    pipeline = serve_hostagent.HostPipeline()
+    pipeline.tts = _MOUTHDouble()
+    pipeline._fenetre.fermer()
+    mandat = Mandat(
+        identifiant="m-fenetre",
+        harnais="Codex",
+        question="q",
+        sujet="s",
+        depose_a=time.monotonic(),
+        etat="fini",
+        reponse=_reponse(),
+    )
+    pipeline._mandats.deposer(mandat)
+
+    await pipeline.annoncer_mandats_prets(_SocketDouble(), [np.zeros(0, dtype=np.float32)])
+
+    assert pipeline._fenetre.engagee()
+
+
+def test_lecteur_windows_dicte_est_redresse():
+    """Séance du 24/09 : « compte les répertoires dans D deux-points » est
+    transcrit « dans D2. » et Codex cherche un dossier nommé D2."""
+    from src.brain.mandat import redresser_harnais
+
+    assert redresser_harnais(
+        "Tu peux demander à Codex de compter le nombre de répertoires dans D2."
+    ) == "Tu peux demander à Codex de compter le nombre de répertoires dans D:\."
+    assert redresser_harnais("regarde dans C deux points") == "regarde dans C:\\"
+    assert redresser_harnais("le lecteur D 2 points") == "le lecteur D:\\"
+    # Une vraie référence reste intacte.
+    assert redresser_harnais("la vitamine D2 est utile") == "la vitamine D2 est utile"
+    assert redresser_harnais("le dossier D2 contient trois fichiers") == (
+        "le dossier D2 contient trois fichiers"
+    )
+
+
+def test_deux_harnais_nommes_deux_demandes():
+    """Séance du 24/09 : « fais apparaître à la fois Codex et Claude Code en
+    leur disant bonjour » n'atteignait aucun des deux."""
+    from src.brain.mandat import outils_exiges
+
+    class Registre:
+        def get(self, nom):
+            return object() if nom in ("ask_claude", "ask_codex") else None
+
+    phrase = ("Je voudrais que tu fasses apparaître à la fois Codex et Claude Code "
+              "en leur disant à tous les deux bonjour.")
+    assert outils_exiges(phrase, Registre()) == ["ask_codex", "ask_claude"]
+    assert outils_exiges("Salue Claude de ma part.", Registre()) == ["ask_claude"]
+    assert outils_exiges("Qu'est-ce que Codex ?", Registre()) == []
+    # Une question sur ce qu'un harnais a fait n'est pas une demande.
+    assert outils_exiges("Qu'est-ce que Claude a fait ?", Registre()) == []

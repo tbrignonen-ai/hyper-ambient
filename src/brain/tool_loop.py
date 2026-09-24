@@ -18,7 +18,7 @@ Trois regles vocales gouvernent le fichier :
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional
+from typing import Callable, TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional
 
 from src.brain.mandat import phrase_si_harnais_non_branche, respecter_harnais_nomme
 from src.brain.tools import ToolCall, ToolRegistry, ToolResult
@@ -81,10 +81,13 @@ def _build_messages(prompt, system, history) -> List[Dict[str, Any]]:
     return messages
 
 
-def _assistant_message(calls: List[ToolCall]) -> Dict[str, Any]:
+def _assistant_message(calls: List[ToolCall], content: str = "") -> Dict[str, Any]:
+    # `content` porte ce qui a deja ete dit avant l'appel. Vide, le modele
+    # croit ouvrir la conversation a la reformulation et salue (« Bonsoir. »,
+    # mesure du 23/09).
     return {
         "role": "assistant",
-        "content": "",
+        "content": content,
         "tool_calls": [
             {
                 "id": call.id,
@@ -173,6 +176,8 @@ async def run_tool_loop(
     max_iterations: int = 3,
     max_tool_calls: int = MAX_TOOL_CALLS_PER_TURN,
     tool_choice: Optional[Any] = None,
+    max_per_iteration: int = MAX_TOOL_CALLS_PER_ITERATION,
+    terminal: Optional[Callable[[str], bool]] = None,
 ) -> AsyncIterator[Dict[str, Any]]:
     """Stream de chunks BRAIN, outils executes sous permission entre deux tours.
 
@@ -180,6 +185,10 @@ async def run_tool_loop(
     plus d'un appel par iteration — meme si le modele en pose trente d'un coup.
     Apres cet unique appel, les schemas ne sont plus renvoyes : le modele doit
     formuler une reponse, pas encherir.
+
+    ``max_per_iteration`` : « teste Claude puis Codex » pose deux mandats d'un
+    coup (24/09). ``terminal`` : un outil qui clôt le tour (un mandat déposé
+    a déjà son accusé) — le modèle n'est pas rappelé après lui.
     """
     # Un harnais nommé et non branché se dit tout de suite : on n'appelle
     # pas le modèle, on ne dépose pas de mandat, on ne saisit pas un autre
@@ -217,7 +226,10 @@ async def run_tool_loop(
         if iteration == 0 and tools_this_round and tool_choice is not None:
             query_kw["tool_choice"] = tool_choice
 
+        dit: List[str] = []
         async for chunk in brain.query_streaming(prompt, **query_kw):
+            if chunk.get("channel") is None and chunk.get("delta"):
+                dit.append(chunk["delta"])
             if chunk.get("stop_reason") == "tool_calls":
                 pending = list(chunk.get("tool_calls") or [])
                 continue  # ce chunk ne sort pas : il n'est pas parlable
@@ -237,7 +249,7 @@ async def run_tool_loop(
             }
             return
 
-        to_run = pending[:MAX_TOOL_CALLS_PER_ITERATION]
+        to_run = pending[:max(1, min(max_per_iteration, max_tool_calls - executed))]
         if len(pending) > len(to_run):
             logger.warning(
                 "tool_loop: %s appels demandes, %s executes (plafond par iteration)",
@@ -257,7 +269,7 @@ async def run_tool_loop(
 
         # L'historique ne porte que les appels vraiment executes : le protocole
         # exige un message `tool` par `tool_call` de l'assistant.
-        messages.append(_assistant_message(to_run))
+        messages.append(_assistant_message(to_run, "".join(dit).strip()))
         for call in to_run:
             yield {
                 "channel": "tool",
@@ -278,3 +290,5 @@ async def run_tool_loop(
             }
             messages.append(result.to_message())
             executed += 1
+        if terminal is not None and all(terminal(call.name) for call in to_run):
+            return

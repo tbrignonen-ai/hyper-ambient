@@ -29,7 +29,11 @@ def test_la_commande_claude_epingle_le_mode_print_et_la_lecture_seule():
     assert cmd[0] == "claude"
     assert "-p" in cmd
     assert "--restricted" in cmd
-    assert cmd[cmd.index("--permission-mode") + 1] == "plan"
+    # 24/09 : « plan » faisait refuser à Claude toute demande (« je suis en
+    # mode planification ») et la console rouverte restait en /plan. La
+    # lecture seule tient à --restricted et aux permissions refusées d'office.
+    assert cmd[cmd.index("--permission-mode") + 1] == "manual"
+    assert cmd[cmd.index("--permission-prompts") + 1] == "none"
     for flag in _FLAGS_INTERDITS:
         assert flag not in cmd
     assert cmd[-1] == "q"

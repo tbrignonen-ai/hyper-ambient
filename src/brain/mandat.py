@@ -89,6 +89,8 @@ class Mandat:
     reponse: Optional[ReponseHarnais] = None
     annonce_faite: bool = False
     rappel_fait: bool = False
+    # Identifiant de session du harnais : Presence l'ouvre à l'arrivée.
+    session: Optional[str] = None
     tache: Optional[asyncio.Task] = field(default=None, repr=False)
 
 
@@ -142,14 +144,24 @@ _CLAUDE_CODE_ENTENDU = re.compile(r"\bclo(?:u)?de?s?\s+codes?\b", re.IGNORECASE)
 _DEMANDE_A_UN_HARNAIS = re.compile(
     r"\b(?:demande[rsz]?|dis|dire|pose[rsz]?|envoie[rsz]?|transmet[s]?|"
     r"transmettre|interroge[rsz]?|contacte[rsz]?|connecte[rsz]?|connecter|"
-    r"appelle[rsz]?|ping|fais|faire|ask|tell)\b",
+    r"appelle[rsz]?|ping|fais|fasses?|faire|disant|dites|salue[rsz]?|"
+    r"ask|tell)\b",
     re.IGNORECASE,
 )
 
 
+# Lecteur Windows dicté (séance du 24/09) : « D deux-points » devient « D2. »
+# chez Whisper, et Codex cherche un dossier nommé D2. Seules deux formes sont
+# redressées : « points » dit en toutes lettres, ou « X2. » en fin de phrase.
+_LECTEUR_DIT = re.compile(r"\b([A-Z]) ?(?:2|deux)[ -]?points?\b")
+_LECTEUR_FIN = re.compile(r"\b([A-Z])2(?=\.\s*$)")
+
+
 def redresser_harnais(transcription: str) -> str:
-    """Rend à un harnais le nom que Whisper a déformé."""
-    return _CLAUDE_CODE_ENTENDU.sub("Claude Code", transcription or "")
+    """Rend à un harnais le nom que Whisper a déformé, et au lecteur ses deux-points."""
+    texte = _CLAUDE_CODE_ENTENDU.sub("Claude Code", transcription or "")
+    texte = _LECTEUR_DIT.sub(lambda m: m.group(1) + ":\\", texte)
+    return _LECTEUR_FIN.sub(lambda m: m.group(1) + ":\\", texte)
 
 
 def outil_exige(prompt: str, registre) -> Optional[str]:
@@ -168,6 +180,23 @@ def outil_exige(prompt: str, registre) -> Optional[str]:
     if not harnais_est_branche(nom, registre):
         return None
     return OUTIL_PAR_HARNAIS[nom]
+
+
+def outils_exiges(prompt: str, registre) -> list[str]:
+    """Tous les harnais nommés dans une demande, dans l'ordre où ils sont dits.
+
+    « Dis bonjour à Codex et à Claude » : une demande à chacun (24/09).
+    """
+    texte = prompt or ""
+    if not _DEMANDE_A_UN_HARNAIS.search(texte):
+        return []
+    outils: list[str] = []
+    for m in re.finditer(r"\b" + _NOMS + r"\b", texte, re.IGNORECASE):
+        nom = _NOMS_VERS_HARNAIS[m.group(1).lower()]
+        outil = OUTIL_PAR_HARNAIS.get(nom)
+        if outil and outil not in outils and harnais_est_branche(nom, registre):
+            outils.append(outil)
+    return outils
 
 
 def nom_harnais_dit(prompt: str) -> str:
@@ -355,6 +384,9 @@ def phrase_renvoi_outil(mandat: Mandat) -> str:
     reponse = mandat.reponse
     if reponse is None:
         return ""
+    # Sans session, rien ne s'ouvre dans le harnais : la phrase serait fausse.
+    if not mandat.session:
+        return ""
     resume = (getattr(reponse, "resume_voix", None) or "").strip()
     complet = (getattr(reponse, "resultat_complet", None) or "").strip()
     if not resultat_est_une_reduction(resume, complet):
@@ -387,6 +419,7 @@ async def _courir(mandat: Mandat, appel: Callable[[str], Awaitable[str]]) -> Non
         # (« Je répondrai uniquement en français avec un objet JSON »).
         # Le résumé vocal vient de la réponse du harnais, parsée ensuite.
         texte = await asyncio.wait_for(appel(mandat.question), timeout=DELAI_EXPIRATION_S)
+        mandat.session = getattr(appel, "session", None) or None
         mandat.reponse = analyser(texte)
         mandat.etat = "fini"
     except asyncio.CancelledError:
@@ -437,3 +470,46 @@ async def deposer_depuis_outil(
     except PleinMandats as exc:
         return exc.phrase
     return phrase_depot(harnais)
+
+
+# Annulation : décision locale, prise avant le cerveau (séance du 24 sept :
+# « Annule la demande à Codex. » repartait chez Codex comme une question).
+_ANNULATION = re.compile(
+    r"^(?:(?:hyper ambient|hyper ambiant|ok|non|bon|euh|alors|et)\s+)*"
+    r"(?:tu peux\s+|peux tu\s+)?"
+    r"(?:annule|annuler|annules|laisse tomber|oublie|arrete|stoppe|stop|cancel)\b"
+)
+_MAX_MOTS_ANNULATION = 12
+
+
+def _normaliser_annulation(texte: str) -> str:
+    import unicodedata
+
+    decompose = unicodedata.normalize("NFKD", texte or "")
+    sans_accents = "".join(c for c in decompose if not unicodedata.combining(c))
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", sans_accents.lower()).split())
+
+
+def annuler_mandats(registre: RegistreMandats, prompt: str) -> Optional[str]:
+    """Annule les demandes en cours si la phrase le demande ; rend la phrase à dire.
+
+    None : ce n'est pas une annulation, le tour suit son cours normal.
+    Un harnais nommé restreint l'annulation à ses seules demandes.
+    """
+    normalise = _normaliser_annulation(prompt)
+    if not normalise or len(normalise.split()) > _MAX_MOTS_ANNULATION:
+        return None
+    if not _ANNULATION.search(normalise):
+        return None
+    nomme = re.search(r"\b" + _NOMS + r"\b", normalise)
+    cibles = [
+        m
+        for m in registre.en_cours()
+        if nomme is None or m.harnais.lower() == nomme.group(1).lower()
+    ]
+    if not cibles:
+        return "Il n'y a aucune demande en cours à annuler."
+    for mandat in cibles:
+        registre.oublier(mandat.identifiant)
+    noms = sorted({m.harnais for m in cibles})
+    return f"J'ai annulé la demande à {' et '.join(noms)}."

@@ -132,9 +132,11 @@ def test_silence_ne_compte_pas(monkeypatch):
     capture.stop()
 
 
-def test_segment_voise_500ms_rejete_sous_plancher(monkeypatch):
+def test_segment_voise_300ms_rejete_sous_plancher(monkeypatch):
+    # Plancher ramené de 700 à 400 ms le 24/09 : « Hyper ambiant » seul dure
+    # 480 ms et doit passer. Une salve de 300 ms reste jetée.
     capture, flux = _nouvelle_capture(monkeypatch)
-    flux.pousser(_voix(500))
+    flux.pousser(_voix(300))
     flux.pousser(_silence(700))
     assert capture.segment_pret() is False
     capture.stop()

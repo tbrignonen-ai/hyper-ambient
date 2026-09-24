@@ -83,7 +83,9 @@ def test_terminer_onboarding_enregistre_le_raccourci_choisi():
 def test_eclair_reste_eteint_tant_que_l_appel_est_local():
     for etat in ("repos", "ecoute", "reflexion", "parole"):
         assert eclair_allume(etat) is False
-        assert "local" in libelle_eclair(etat).lower()
+        # 24/09 : le libellé coiffe le menu du cerveau distant ; « Modèle
+        # local » au-dessus de « Claude Sonnet 5 » se contredisait.
+        assert libelle_eclair(etat) == "Cerveau distant"
 
 
 def test_eclair_s_allume_quand_le_modele_parle_au_distant():

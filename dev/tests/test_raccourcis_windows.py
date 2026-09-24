@@ -152,3 +152,11 @@ def test_readme_tient_en_dix_lignes_et_reste_honnete(readme: str):
     assert "mother-core-dev" in texte
     assert "pyinstaller" not in texte
     assert ".exe" not in texte
+
+
+def test_presence_demarre_les_ponts_quel_que_soit_le_chemin():
+    """Mesure du 24/09 : « le pont Claude ne répond pas ». Le lanceur montait
+    la pile mais aucun pont. C'est Presence qui les démarre : raccourci,
+    lanceur ou double-clic, tous passent par elle."""
+    app = (RACINE / "native" / "presence" / "app.py").read_text(encoding="utf-8")
+    assert "demarrer_ponts" in app

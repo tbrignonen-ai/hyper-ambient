@@ -18,18 +18,21 @@ LIMITE_ENONCE_S = 30.0
 _PHRASES: dict[str, dict[str, str]] = {
     "fr": {
         "silence": "Je n'ai rien entendu. Reprends, je suis là.",
+        "micro_muet": "Je n'entends plus rien, vérifie qu'aucune autre application n'utilise ton micro.",
         "trop_long": "C'était un peu long. Plus court, je t'écoute.",
         "injoignable": "Je n'arrive pas à réfléchir. Reprends dans un instant.",
         "muet": "Je n'ai rien à dire. Reprends, je t'écoute.",
     },
     "en": {
         "silence": "I didn't hear anything. I'm here, take your time.",
+        "micro_muet": "I can't hear anything, check that no other app is using your microphone.",
         "trop_long": "That ran a little long. Shorter, and I'm listening.",
         "injoignable": "I can't quite think right now. Try again in a moment.",
         "muet": "I have nothing to say. I'm here when you're ready.",
     },
     "es": {
         "silence": "No he oído nada. Tómate tu tiempo, estoy aquí.",
+        "micro_muet": "Ya no oigo nada, comprueba que ninguna otra aplicación use tu micrófono.",
         "trop_long": "Ha sido un poco largo. Dilo más corto, te escucho.",
         "injoignable": "No consigo pensar ahora. Vuelve a intentarlo en un momento.",
         "muet": "No tengo nada que decir. Cuando quieras, estoy aquí.",
@@ -50,6 +53,7 @@ def phrase_de_secours(
     duree_audio_s: float,
     langue: str = "fr",
     mains_libres: bool = False,
+    micro_muet: bool = False,
 ) -> str | None:
     """Rend la phrase à prononcer quand le tour a mal tourné, ou None si tout va bien.
 
@@ -70,7 +74,9 @@ def phrase_de_secours(
     if duree_audio_s > LIMITE_ENONCE_S:
         return voix["trop_long"]
     if not transcript.strip():
-        return None if mains_libres else voix["silence"]
+        if mains_libres:
+            return None
+        return voix["micro_muet"] if micro_muet else voix["silence"]
     if brain_injoignable:
         return voix["injoignable"]
     if not reply.strip():
@@ -100,3 +106,16 @@ def est_silence(audio, seuil: float = SEUIL_SILENCE_RMS) -> bool:
     if tableau.size == 0:
         return True
     return bool(float(np.sqrt(np.mean(np.square(tableau)))) < seuil)
+
+
+def est_micro_muet(audio) -> bool:
+    """Vrai si le signal n'est fait que de zeros numeriques exacts.
+
+    C'est la signature d'un micro coupe dans Windows ou tenu par une autre
+    application : le pilote livre des trames nulles. Une piece silencieuse
+    n'en donne jamais, le souffle du preampli suffit a decoller du zero.
+    """
+    import numpy as np
+
+    tableau = np.asarray(audio, dtype=np.float32).ravel()
+    return bool(tableau.size == 0 or not np.any(tableau))

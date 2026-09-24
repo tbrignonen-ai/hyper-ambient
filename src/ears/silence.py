@@ -8,6 +8,8 @@ import unicodedata
 # faster-whisper : mêmes seuils que le décodeur (no_speech_threshold / logprob_threshold).
 SEUIL_NON_PAROLE = 0.6
 SEUIL_LOGPROB = -1.0
+# À partir de ce nombre de mots, un doute de décodage seul ne jette plus.
+MOTS_PHRASE_REELLE = 4
 
 # Filet textuel, pas la défense principale : no_speech_prob / avg_logprob d'abord.
 # Couvre le cas où les probabilités passent et que Whisper récite un crédit
@@ -20,6 +22,7 @@ _MOTIFS_HALLUCINATION = (
     "abonnez vous",
     "subtitles by",
     "thanks for watching",
+    "realise par neo",
 )
 
 
@@ -78,5 +81,31 @@ def jeter_tour_bruit(texte, segments=None, *, mains_libres: bool) -> bool:
     # un segment « sans parole », et jetait tout le tour (séance du 23 sept).
     liste = [s for s in (segments or ()) if s is not None]
     if liste and all(segment_sans_parole(s) for s in liste):
-        return True
+        # Une vraie phrase n'est pas jetée sur la seule incertitude du
+        # décodage (séance du 24 sept : « mains libres » entendu « ma lèvre »,
+        # tout le tour perdu). Il faut alors que Whisper doute aussi que ce
+        # soit de la parole. Un bruit court (« Merci. ») reste jeté.
+        if len(_normaliser(texte).split()) < MOTS_PHRASE_REELLE:
+            return True
+        # Règle du décodeur Whisper : non-parole probable ET décodage
+        # incertain. Le no_speech_prob seul ment (séance du 24 sept, 20 h :
+        # « Demande à Codex comment il va. » à 0,95, décodé à -0,34).
+        if all(_non_parole_probable(s) and _decodage_incertain(s) for s in liste):
+            return True
     return est_hallucination_whisper(texte)
+
+
+def _decodage_incertain(segment) -> bool:
+    if isinstance(segment, dict):
+        logprob = segment.get("avg_logprob")
+    else:
+        logprob = getattr(segment, "avg_logprob", None)
+    return logprob is not None and float(logprob) < SEUIL_LOGPROB
+
+
+def _non_parole_probable(segment) -> bool:
+    if isinstance(segment, dict):
+        no_speech = segment.get("no_speech_prob")
+    else:
+        no_speech = getattr(segment, "no_speech_prob", None)
+    return no_speech is not None and float(no_speech) >= SEUIL_NON_PAROLE

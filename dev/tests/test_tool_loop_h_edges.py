@@ -732,3 +732,25 @@ def test_smoke_script_cible_ipv4_alias_lfm_sans_kill():
     ).lower()
     for interdit in ("stop-process", "taskkill", "os.kill", "signal.pid", "pkill"):
         assert interdit not in code
+
+
+@runs_async
+async def test_phrase_dite_avant_l_outil_est_rendue_au_modele():
+    """Mesure du 23/09 : « Je note, je m'en occupe. Bonsoir. Les champs… ».
+
+    La phrase dite avant l'appel d'outil doit figurer dans le message
+    assistant renvoyé au modèle : sinon, au tour de reformulation, il croit
+    ouvrir la conversation et salue.
+    """
+    brain = FakeBrain([
+        [
+            {"delta": "Je note, je m'en occupe.", "stop_reason": None, "ttft_ms": 1.0},
+            tool_calls_chunk([_call()]),
+        ],
+        [{"delta": "Les champs fleurissent en avril.", "stop_reason": "stop", "ttft_ms": 1.0}],
+    ])
+    [c async for c in run_tool_loop(brain, "tulipes 2026", make_registry(), FakeGate())]
+
+    assistants = [m for m in brain.calls[1]["messages"] if m.get("role") == "assistant"]
+    assert assistants[-1]["tool_calls"]
+    assert assistants[-1]["content"] == "Je note, je m'en occupe."

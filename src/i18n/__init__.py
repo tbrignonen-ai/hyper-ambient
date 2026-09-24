@@ -58,8 +58,9 @@ _FR: dict[str, str] = {
     "ui.reply": "Réponse",
     "ui.shortcut": "Espace",
     "ui.shortcut_ctrl": "Ctrl + Espace",
-    "ui.local_model": "Modèle local",
-    "ui.remote_call": "Appel distant",
+    "ui.local_model": "Cerveau distant",
+    "ui.remote_call": "Appel distant…",
+    "ui.harness_front": "Harnais au premier plan",
     "ui.remote_status": (
         "Appel distant en cours — le modèle local interroge un modèle distant."
     ),
@@ -109,7 +110,22 @@ _FR: dict[str, str] = {
     "mandat.rappel": "{harnais} prend du temps, je te préviens dès que c'est prêt.",
     "mandat.fini": "{harnais} a fini.",
     "mandat.offre": "Tu veux le détail, ou que je te l'ouvre ?",
-    "mandat.renvoi_outil": "Le détail est dans {harnais} si tu veux le lire.",
+    "mandat.renvoi_outil": "Le détail est dans {harnais}, je te l'ai ouvert.",
+    "session.reprise": (
+        "Je reprends la session {harnais} « {titre} ». "
+        "Tes prochaines demandes à {harnais} iront dedans."
+    ),
+    "session.reprise_sans_titre": (
+        "Je reprends la dernière session {harnais}. "
+        "Tes prochaines demandes à {harnais} iront dedans."
+    ),
+    "session.introuvable": "Je n'ai trouvé aucune session {harnais} qui parle de {sujet}.",
+    "session.introuvable_partout": "Je n'ai trouvé aucune session qui parle de {sujet}.",
+    "session.aucune": "Je n'ai trouvé aucune session {harnais}.",
+    "session.nouvelle": "D'accord, ta prochaine demande à {harnais} ouvrira une nouvelle session.",
+    "session.absent": "{harnais} n'est pas branché, je ne peux pas rejoindre ses sessions.",
+    "session.aucun_pont": "Aucun harnais n'est branché, je ne peux rejoindre aucune session.",
+    "session.et": " et à ",
     "mandat.echoue": "{harnais} n'a pas répondu. J'arrête d'attendre.",
     "mandat.plein": "J'ai déjà trois mandats en cours. Je ne peux pas en prendre un de plus.",
     "mandat.sans_resume": (
@@ -264,6 +280,27 @@ _FR: dict[str, str] = {
         "un rechargement des modèles peut être nécessaire."
     ),
     "reglages.langue_en_cours": "Changement de langue…",
+    "reglages.cerveau_titre": "Cerveau distant",
+    "reglages.cerveau_aide": (
+        "Qui converse quand la question dépasse le modèle local : une clé "
+        "d'API, ou votre abonnement Claude ou ChatGPT, par le harnais déjà "
+        "connecté. La liste des modèles vient du harnais."
+    ),
+    "reglages.donnees.cerveau_distant": (
+        "Données envoyées au service choisi : votre clé d'API, ou votre "
+        "abonnement Claude ou ChatGPT."
+    ),
+    "reglages.cerveau_mode": "Qui converse",
+    "reglages.cerveau_mode.api": "Clé d'API (MiniMax ou compatible)",
+    "reglages.cerveau_mode.abonnement-claude": "Abonnement Claude (Claude Code)",
+    "reglages.cerveau_mode.abonnement-chatgpt": "Abonnement ChatGPT (Codex)",
+    "reglages.cerveau_modele": "Modèle",
+    "reglages.cerveau_appliquer": "Appliquer",
+    "reglages.cerveau_api": "La clé d'API se règle dans le bloc suivant.",
+    "reglages.cerveau_liste": "Lecture des modèles disponibles…",
+    "reglages.cerveau_en_cours": "Application… la voix redémarre (une minute).",
+    "reglages.cerveau_applique": "Appliqué. La voix utilise ce modèle.",
+    "reglages.cerveau_echec": "Échec de la relance. Vérifiez que Docker tourne.",
     "reglages.langue.fr": "Français",
     "reglages.langue.en": "Anglais",
     "reglages.recherche_titre": "Recherche web",
@@ -351,8 +388,9 @@ _EN: dict[str, str] = {
     "ui.reply": "Reply",
     "ui.shortcut": "Space",
     "ui.shortcut_ctrl": "Ctrl + Space",
-    "ui.local_model": "Local model",
-    "ui.remote_call": "Remote call",
+    "ui.local_model": "Remote brain",
+    "ui.remote_call": "Remote call…",
+    "ui.harness_front": "Bring harness to front",
     "ui.remote_status": (
         "Remote call in progress — the local model is asking a remote one."
     ),
@@ -402,7 +440,22 @@ _EN: dict[str, str] = {
     "mandat.rappel": "{harnais} is taking a while — I'll let you know as soon as it's ready.",
     "mandat.fini": "{harnais} is done.",
     "mandat.offre": "Want the detail, or shall I open it?",
-    "mandat.renvoi_outil": "The detail is in {harnais} if you want to read it.",
+    "mandat.renvoi_outil": "The detail is in {harnais}, I've opened it for you.",
+    "session.reprise": (
+        "I'm back in the {harnais} session “{titre}”. "
+        "Your next requests to {harnais} will go there."
+    ),
+    "session.reprise_sans_titre": (
+        "I'm back in the latest {harnais} session. "
+        "Your next requests to {harnais} will go there."
+    ),
+    "session.introuvable": "I found no {harnais} session about {sujet}.",
+    "session.introuvable_partout": "I found no session about {sujet}.",
+    "session.aucune": "I found no {harnais} session.",
+    "session.nouvelle": "Okay, your next request to {harnais} will start a new session.",
+    "session.absent": "{harnais} isn't connected, I can't join its sessions.",
+    "session.aucun_pont": "No harness is connected, I can't join any session.",
+    "session.et": " and ",
     "mandat.echoue": "{harnais} didn't answer. I'll stop waiting.",
     "mandat.plein": "I already have three mandates in progress. I can't take another.",
     "mandat.sans_resume": (
@@ -557,6 +610,27 @@ _EN: dict[str, str] = {
         "the models may need to reload."
     ),
     "reglages.langue_en_cours": "Changing language…",
+    "reglages.cerveau_titre": "Remote brain",
+    "reglages.cerveau_aide": (
+        "Who converses when a question goes beyond the local model: an API "
+        "key, or your Claude or ChatGPT subscription through the harness you "
+        "already connected. The model list comes from the harness."
+    ),
+    "reglages.donnees.cerveau_distant": (
+        "Data sent to the chosen service: your API key, or your Claude or "
+        "ChatGPT subscription."
+    ),
+    "reglages.cerveau_mode": "Who converses",
+    "reglages.cerveau_mode.api": "API key (MiniMax or compatible)",
+    "reglages.cerveau_mode.abonnement-claude": "Claude subscription (Claude Code)",
+    "reglages.cerveau_mode.abonnement-chatgpt": "ChatGPT subscription (Codex)",
+    "reglages.cerveau_modele": "Model",
+    "reglages.cerveau_appliquer": "Apply",
+    "reglages.cerveau_api": "The API key is set in the next block.",
+    "reglages.cerveau_liste": "Reading available models…",
+    "reglages.cerveau_en_cours": "Applying… the voice restarts (one minute).",
+    "reglages.cerveau_applique": "Applied. The voice uses this model.",
+    "reglages.cerveau_echec": "Restart failed. Check that Docker is running.",
     "reglages.langue.fr": "French",
     "reglages.langue.en": "English",
     "reglages.recherche_titre": "Web search",
@@ -897,6 +971,7 @@ def ui() -> dict[str, str]:
         "shortcut_ctrl": t("ui.shortcut_ctrl"),
         "local_model": t("ui.local_model"),
         "remote_call": t("ui.remote_call"),
+        "harness_front": t("ui.harness_front"),
         "remote_status": t("ui.remote_status"),
         "start": t("ui.start"),
         "start_and_hide": t("ui.start_and_hide"),

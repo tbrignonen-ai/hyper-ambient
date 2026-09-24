@@ -22,6 +22,11 @@ import threading
 import time
 import ctypes
 import tkinter as tk
+
+try:
+    from tkinter import ttk
+except ImportError:  # pragma: no cover
+    ttk = None
 from pathlib import Path
 from typing import Any, Callable
 
@@ -198,6 +203,39 @@ def relayer_conversation(
     return True
 
 
+def relayer_harnais(
+    message: Any, deposer: Callable[[dict[str, Any]], None]
+) -> bool:
+    """Relaye ``{"type":"harnais_session", ...}`` : ouvrir la conversation du harnais."""
+    if not isinstance(message, dict) or message.get("type") != "harnais_session":
+        return False
+    deposer(
+        {
+            "type": "harnais_session",
+            "harnais": str(message.get("harnais") or ""),
+            "session": str(message.get("session") or ""),
+        }
+    )
+    return True
+
+
+def relayer_cerveau(
+    message: Any, deposer: Callable[[dict[str, Any]], None]
+) -> bool:
+    """Relaye ``{"type":"cerveau", ...}`` (distant actif) vers l'UI. True si consommé."""
+    if not isinstance(message, dict) or message.get("type") != "cerveau":
+        return False
+    deposer(
+        {
+            "type": "cerveau",
+            "state": str(message.get("state") or ""),
+            "nom": str(message.get("nom") or ""),
+            "mode": str(message.get("mode") or ""),
+        }
+    )
+    return True
+
+
 def libelle_indicateur_conversation(
     *,
     mains_libres: bool,
@@ -313,6 +351,10 @@ def consommer_reponse(
             continue
         if relayer_conversation(message, deposer):
             continue
+        if relayer_cerveau(message, deposer):
+            continue
+        if relayer_harnais(message, deposer):
+            continue
         recues = message.get("frames")
         if recues is None:
             continue
@@ -348,6 +390,22 @@ def consommer_reponse(
     return barge_in
 
 
+def ligne_lecture(capture, *, barge: bool) -> str:
+    """Ce que le micro a capté pendant que MOTHER parlait, et le seuil
+    d'interruption vocale : de quoi régler le « stop » sans deviner (24/09)."""
+    instantane = getattr(capture, "instantane", None)
+    if not callable(instantane):
+        return ""
+    from native.hostagent.windows_audio import FACTEUR_SEUIL_LECTURE, PLANCHER_LECTURE_RMS
+
+    inst = instantane()
+    seuil = max(float(inst.get("seuil", 0.0)) * FACTEUR_SEUIL_LECTURE, PLANCHER_LECTURE_RMS)
+    return (
+        f"LECTURE : rms_max={float(inst.get('rms_max', 0.0)):.0f} "
+        f"seuil_interruption={seuil:.0f} coupee={'oui' if barge else 'non'}"
+    )
+
+
 def ligne_pouls_ml(capture, *, n_segments: int, en_lecture: bool, couper: bool) -> str:
     """Pouls ML : tranche entendue / pas fermée / pas revenue."""
     inst: dict[str, Any] = {}
@@ -360,7 +418,8 @@ def ligne_pouls_ml(capture, *, n_segments: int, en_lecture: bool, couper: bool) 
     suspendue = bool(inst.get("suspendue", getattr(capture, "_suspendu", False)))
     return (
         "ML : vivante, %d segment(s) envoye(s), lecture=%s, suspendue=%s, "
-        "seuil=%.0f, rms=%.0f, pic=%.0f, accumulation=%s, couper=%s"
+        "seuil=%.0f, rms=%.0f, pic=%.0f, accumulation=%s, couper=%s, "
+        "trop_courts=%d (dernier %.0f ms)"
         % (
             n_segments,
             "oui" if en_lecture else "non",
@@ -370,6 +429,8 @@ def ligne_pouls_ml(capture, *, n_segments: int, en_lecture: bool, couper: bool) 
             float(inst.get("rms_max") or 0.0),
             "oui" if inst.get("accumulation") else "non",
             "oui" if couper else "non",
+            int(inst.get("rejets_courts") or 0),
+            float(inst.get("dernier_rejet_ms") or 0.0),
         )
     )
 
@@ -545,25 +606,45 @@ class SessionVocale(threading.Thread):
         self.en_lecture = threading.Event()
         self.canal_pret = threading.Event()
         self._options_a_envoyer = threading.Event()
+        # Bascule du cerveau distant, envoyée seule : renvoyer mains_libres
+        # refermerait la conversation côté host-agent.
+        self._ml_a_envoyer = False
+        self._cerveau_a_envoyer: dict[str, Any] | None = None
         self._attendre_jev = False
         self.ws = None
         self.sortie = None
         self._capture_continue = None
 
     def demander_envoi_options(self) -> None:
+        self._ml_a_envoyer = True
+        self._options_a_envoyer.set()
+
+    def demander_bascule_cerveau(self, choix: dict[str, Any]) -> None:
+        self._cerveau_a_envoyer = dict(choix)
         self._options_a_envoyer.set()
 
     def _pousser_options(self, ws) -> None:
+        choix, self._cerveau_a_envoyer = self._cerveau_a_envoyer, None
+        envoyer_ml = self._ml_a_envoyer or choix is None
+        self._ml_a_envoyer = False
         try:
-            ws.send(json.dumps(message_options(self.mains_libres)))
-            journaliser(f"OPTIONS mains_libres={self.mains_libres}")
+            if choix is not None:
+                ws.send(json.dumps({"type": "options", "cerveau": choix}))
+                journaliser(f"OPTIONS cerveau={choix}")
+            if envoyer_ml:
+                ws.send(json.dumps(message_options(self.mains_libres)))
+                journaliser(f"OPTIONS mains_libres={self.mains_libres}")
         except Exception as exc:
             journaliser(f"options : {exc}")
         self._options_a_envoyer.clear()
-        self._attendre_jev = bool(self.mains_libres)
+        if envoyer_ml:
+            self._attendre_jev = bool(self.mains_libres)
 
-    def _aspirer_jev_pret(self, ws, timeout: float = 0.2) -> None:
-        """Lit un jev_pret hors tour, sans bloquer l'attente PTT."""
+    def _aspirer_jev_pret(self, ws, timeout: float = 0.2) -> dict[str, Any] | None:
+        """Lit un jev_pret hors tour, sans bloquer l'attente PTT.
+
+        Rend le message qu'il n'a pas su relayer (des trames d'annonce), pour
+        que la boucle mains libres le joue au lieu de le perdre (24/09)."""
         try:
             brut = ws.recv(timeout=timeout)
         except TimeoutError:
@@ -586,6 +667,54 @@ class SessionVocale(threading.Thread):
             return
         if relayer_conversation(message, self.deposer):
             return
+        if relayer_cerveau(message, self.deposer):
+            return
+        if relayer_harnais(message, self.deposer):
+            return
+        return message if isinstance(message, dict) else None
+
+    def _jouer_annonce_ml(self, ws, capture, sortie, trames: list) -> None:
+        """Annonce de mandat hors tour, en mains libres (séance du 24/09).
+
+        Micro en régime lecture, comme pour une réponse : il ne s'enregistre
+        pas lui-même, et la voix ou Stop coupent l'annonce. Le reste de
+        l'annonce, jusqu'au marqueur vide, passe par ``consommer_reponse``.
+        """
+        journaliser(f"annonce hors tour (mains libres) : {len(trames)} trames")
+        ligne_lecture(capture, barge=False)  # remet le pic à zéro
+        if hasattr(capture, "regime_lecture"):
+            capture.regime_lecture(True, on_barge_in=lambda: _abort_sortie(sortie))
+        else:
+            capture.suspendre()
+        self.couper.clear()
+        self.en_lecture.set()
+        barge = False
+        try:
+            try:
+                moteur._jouer(sortie, [x for bloc in trames for x in bloc])
+            except Exception as exc:
+                journaliser(f"restitution : {exc}")
+            barge = (
+                consommer_reponse(
+                    ws, sortie, time.perf_counter(), self.deposer, self.arreter,
+                    interrompre=evenement_interruption_lecture(self.tenu, capture),
+                    couper=self.couper,
+                    sur_interruption=lambda: apres_barge_in(capture),
+                )
+                is True
+            )
+        finally:
+            mesure = ligne_lecture(capture, barge=barge)
+            if mesure:
+                journaliser(mesure)
+            self.en_lecture.clear()
+            self.couper.clear()
+            if hasattr(capture, "regime_lecture"):
+                capture.regime_lecture(False)
+        if not barge and not self.arreter.is_set() and self.mains_libres:
+            reprendre = getattr(capture, "reprendre", None)
+            if callable(reprendre):
+                reprendre()
 
     def _aspirer_hors_tour(
         self, ws, capture, sortie, timeout: float = 0.2
@@ -619,6 +748,10 @@ class SessionVocale(threading.Thread):
             self._attendre_jev = False
             return False
         if relayer_conversation(message, self.deposer):
+            return False
+        if relayer_cerveau(message, self.deposer):
+            return False
+        if relayer_harnais(message, self.deposer):
             return False
         recues = message.get("frames")
         if not recues:
@@ -896,10 +1029,13 @@ class SessionVocale(threading.Thread):
                     )
                 if self._options_a_envoyer.is_set():
                     self._pousser_options(ws)
-                if self._attendre_jev:
-                    self._aspirer_jev_pret(ws)
-                else:
-                    self._aspirer_jev_pret(ws, timeout=0.03)
+                reste = self._aspirer_jev_pret(
+                    ws, timeout=0.2 if self._attendre_jev else 0.03
+                )
+                if reste is not None and reste.get("frames"):
+                    self._jouer_annonce_ml(ws, capture, sortie, reste["frames"])
+                    tenu_etait = self.tenu.is_set()
+                    continue
                 if not self.en_lecture.is_set() and self.couper.is_set():
                     # Stop pressé hors lecture : ne pas armer le tour suivant.
                     self.couper.clear()
@@ -946,6 +1082,7 @@ class SessionVocale(threading.Thread):
             )
         )
         self.couper.clear()
+        ligne_lecture(capture, barge=False)  # remet le pic à zéro
         if hasattr(capture, "regime_lecture"):
             capture.regime_lecture(True, on_barge_in=lambda: _abort_sortie(sortie))
         else:
@@ -969,6 +1106,9 @@ class SessionVocale(threading.Thread):
             )
             stop_pendant = self.couper.is_set()
         finally:
+            mesure = ligne_lecture(capture, barge=barge)
+            if mesure:
+                journaliser(mesure)
             self.en_lecture.clear()
             stop_pendant = stop_pendant or self.couper.is_set()
             self.couper.clear()
@@ -1765,6 +1905,10 @@ class Application:
             justify="center",
         )
         self.ligne_eclair.pack(pady=(4, 0))
+        # Indicateur et bascule du cerveau distant (24/09) : on sait toujours
+        # qui converse, et on en change sans ouvrir les Réglages.
+        self._monter_bascule_cerveau(cote_eclair)
+        self._monter_choix_harnais(cote_eclair)
 
         raccourci = raccourcis_lisibles()[self.configuration.raccourci_ptt]
         u = ui_presence()
@@ -2067,6 +2211,114 @@ class Application:
             f"{ui_presence()['first_sound'].format(ms=self.dernier_delai_ms)}"
         )
 
+    def _monter_bascule_cerveau(self, parent: tk.Misc) -> None:
+        from native.presence import cerveau_distant as cd
+        from native.presence.reglages_ui import chemin_env_local
+
+        self._chemin_env = chemin_env_local()
+        try:
+            self._choix_cerveau = cd.choix_bascule(self._chemin_env)
+        except Exception as exc:
+            journaliser(f"bascule cerveau : {exc}")
+            self._choix_cerveau = []
+        self.var_cerveau = tk.StringVar(self.racine, value="…")
+        if ttk is None or not self._choix_cerveau:
+            self.combo_cerveau = None
+            return
+        self.combo_cerveau = ttk.Combobox(
+            parent,
+            textvariable=self.var_cerveau,
+            values=[libelle for libelle, _ in self._choix_cerveau],
+            state="readonly",
+            width=18,
+            takefocus=1,
+            font=("Segoe UI", 9),
+        )
+        self.combo_cerveau.pack(pady=(4, 2), padx=4)
+        self.combo_cerveau.bind("<<ComboboxSelected>>", lambda _e: self._basculer_cerveau())
+
+    def _monter_choix_harnais(self, parent: tk.Misc) -> None:
+        """« Harnais au premier plan » : la console du harnais s'ouvre devant,
+        ou réduite. La conversation y est affichée dans les deux cas (24/09)."""
+        from native.presence.harnais_ouvert import OuvreurHarnais
+
+        self._ouvreur_harnais = OuvreurHarnais(str(Path(__file__).resolve().parents[2]))
+        self.var_harnais_devant = tk.BooleanVar(
+            self.racine, value=self.configuration.harnais_premier_plan
+        )
+        fond = parent.cget("bg")
+        tk.Checkbutton(
+            parent,
+            text=ui_presence()["harness_front"],
+            variable=self.var_harnais_devant,
+            command=self._basculer_harnais_devant,
+            bg=fond,
+            activebackground=fond,
+            fg="#c8c8d0",
+            activeforeground="#ffffff",
+            selectcolor=fond,
+            font=("Segoe UI", 9),
+            takefocus=1,
+        ).pack(pady=(0, 2))
+
+    def _basculer_harnais_devant(self) -> None:
+        from dataclasses import replace
+
+        self.configuration = replace(
+            self.configuration, harnais_premier_plan=bool(self.var_harnais_devant.get())
+        )
+        try:
+            enregistrer_configuration(self.configuration, self.chemin_configuration)
+        except OSError as exc:
+            journaliser(f"configuration non enregistrée : {exc}")
+
+    def _ouvrir_harnais(self, message: dict[str, Any]) -> None:
+        ouvreur = getattr(self, "_ouvreur_harnais", None)
+        if ouvreur is None:
+            return
+        harnais, session = message.get("harnais", ""), message.get("session", "")
+        devant = self.configuration.harnais_premier_plan
+
+        def _ouvrir() -> None:
+            # Hors du fil de l'UI : trouver la fenêtre prend jusqu'à 1 s.
+            try:
+                ouvert = ouvreur.ouvrir(harnais, session, premier_plan=devant)
+            except Exception as exc:
+                journaliser(f"harnais non ouvert : {exc}")
+                return
+            journaliser(f"HARNAIS {harnais} session={session} ouvert={ouvert}")
+
+        threading.Thread(target=_ouvrir, name="harnais", daemon=True).start()
+
+    def _basculer_cerveau(self) -> None:
+        from native.presence import cerveau_distant as cd
+
+        libelle = self.var_cerveau.get()
+        choix = dict(self._choix_cerveau).get(libelle)
+        if choix is None or getattr(self, "session", None) is None:
+            return
+        self.session.demander_bascule_cerveau(choix)
+        self.var_cerveau.set(f"{libelle}…")
+        # Le choix survit au redémarrage : écrit hors du fil de l'UI.
+        threading.Thread(
+            target=cd.enregistrer_choix,
+            args=(self._chemin_env, choix["mode"], choix.get("model", ""), choix.get("effort", "low")),
+            daemon=True,
+        ).start()
+
+    def _afficher_cerveau(self, message: dict[str, Any]) -> None:
+        if getattr(self, "combo_cerveau", None) is None:
+            return
+        nom = str(message.get("nom") or "")
+        etat = str(message.get("state") or "")
+        if message.get("mode") == "api" and nom:
+            nom = f"{nom} (clé d'API)"
+        if etat == "switching":
+            nom = f"{nom}…"
+        elif etat == "error":
+            nom = f"{nom} — indisponible"
+        self.var_cerveau.set(nom)
+
     def _afficher_statut(self, texte: str | None = None) -> None:
         if texte is not None:
             self.texte_statut = texte
@@ -2329,6 +2581,10 @@ class Application:
         elif kind == "jev_pret":
             self._annuler_repli_jev_pret()
             self._afficher_jev_pret_si_en_connexion()
+        elif kind == "cerveau":
+            self._afficher_cerveau(message)
+        elif kind == "harnais_session":
+            self._ouvrir_harnais(message)
         elif kind == "conversation":
             self._conversation_ouverte = message.get("ouverte") is True
             try:
@@ -2508,7 +2764,20 @@ def main(argv: list[str] | None = None) -> None:
     assurer_stdio(args.journal)
     if args.sante is None:
         args.sondes = True
+    threading.Thread(target=_demarrer_ponts, name="ponts", daemon=True).start()
     Application(args).boucler()
+
+
+def _demarrer_ponts() -> None:
+    """Codex et Claude Code configurés : leurs ponts partent avec Presence."""
+    try:
+        import ponts
+
+        lances = ponts.demarrer_ponts(Path(__file__).resolve().parents[2])
+        if lances:
+            print(f"PONTS : demarres {', '.join(lances)}", flush=True)
+    except Exception as exc:  # un pont absent ne doit jamais fermer Presence
+        print(f"PONTS : echec {type(exc).__name__}: {exc}", flush=True)
 
 
 if __name__ == "__main__":

@@ -13,7 +13,9 @@ def test_cerveau_local_porte_identite_et_style_vocal():
     assert "français" in system
     assert "texte brut" in system
     assert "Markdown" in system
-    assert "courte" in system
+    # 24/09 : la consigne « réponse courte » rendait « Oui. » ; le fichier de
+    # conversation interdit désormais la réponse d'un seul mot.
+    assert "seul mot" in system
     assert "demande explicite" in system
 
 

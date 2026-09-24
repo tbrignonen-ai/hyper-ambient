@@ -64,6 +64,9 @@ class ConfigurationPresence:
     langue: str = "fr"
     contraste: bool = False
     mains_libres: bool = False
+    # À l'arrivée d'une réponse de harnais, sa console passe au premier plan
+    # (sinon elle s'ouvre réduite ; la conversation y est affichée de toute façon).
+    harnais_premier_plan: bool = True
 
 
 def chemin_configuration() -> Path:
@@ -90,6 +93,7 @@ def normaliser_configuration(brut: Mapping[str, Any] | None) -> ConfigurationPre
         langue=langue,
         contraste=brut.get("contraste") is True,
         mains_libres=brut.get("mains_libres") is True,
+        harnais_premier_plan=brut.get("harnais_premier_plan") is not False,
     )
 
 

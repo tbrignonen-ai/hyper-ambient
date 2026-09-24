@@ -121,6 +121,19 @@ BLOCS: tuple[dict[str, Any], ...] = (
         "sortie": False,
     },
     {
+        # 24/09 : l'utilisateur choisit qui converse à distance — sa clé d'API
+        # ou son abonnement Claude / ChatGPT — et le modèle, dans une liste
+        # lue en direct auprès du pont.
+        "id": "cerveau_distant",
+        "cles": (),
+        "titre": "reglages.cerveau_titre",
+        "aide": "reglages.cerveau_aide",
+        "donnees": "reglages.donnees.cerveau_distant",
+        "sortie": True,
+        "info": True,
+        "menu_cerveau": True,
+    },
+    {
         "id": "brain_distant",
         "cles": ("BRAIN_MODEL", "BRAIN_API_ENDPOINT", "BRAIN_API_KEY"),
         "titre": "reglages.brain_titre",
@@ -161,7 +174,7 @@ CATEGORIES: tuple[dict[str, Any], ...] = (
     {
         "id": "distants",
         "titre": "reglages.categorie.distants",
-        "blocs": ("brain_distant", "jev", "recherche"),
+        "blocs": ("cerveau_distant", "brain_distant", "jev", "recherche"),
     },
 )
 
@@ -991,6 +1004,10 @@ class FenetreReglages:
             self._monter_menu_langue(parent)
             if bloc.get("info"):
                 return
+        if bloc.get("menu_cerveau"):
+            self._monter_menu_cerveau(parent)
+            if bloc.get("info"):
+                return
         if service == "recherche":
             self._monter_reco_tavily(parent)
         interieur = parent
@@ -1322,6 +1339,103 @@ class FenetreReglages:
                 self._langue = str(resultat)
             if self.ligne_langue_etat is not None:
                 self.ligne_langue_etat.configure(text="")
+
+        lancer_hors_fil(travail, rendre, planifier=self._planifier)
+
+    def _monter_menu_cerveau(self, parent: tk.Misc) -> None:
+        """Mode du cerveau distant et modèle, la liste lue en direct au pont."""
+        from native.presence import cerveau_distant as cd
+
+        mode, modele, effort = cd.choix_courant(self.chemin)
+        self._cerveau_effort = effort
+        libelles = {code: t(f"reglages.cerveau_mode.{code}") for code, _l in cd.MODES}
+        libelles_modes = list(libelles.values())
+        self._codes_modes = {libelle: code for code, libelle in libelles.items()}
+        self.var_cerveau_mode = tk.StringVar(
+            self.fenetre, value=libelles.get(mode, libelles_modes[0])
+        )
+        tk.Label(parent, text=t("reglages.cerveau_mode"), bg=FOND_VITRE,
+                 fg=ENCRE_SOURDE, font=("Segoe UI", 9), anchor="w").pack(fill=tk.X)
+        self.combo_cerveau_mode = self._combo_voix(parent, self.var_cerveau_mode, libelles_modes)
+        tk.Label(parent, text=t("reglages.cerveau_modele"), bg=FOND_VITRE,
+                 fg=ENCRE_SOURDE, font=("Segoe UI", 9), anchor="w").pack(fill=tk.X, pady=(6, 0))
+        self.var_cerveau_modele = tk.StringVar(self.fenetre, value=modele)
+        self._codes_modeles: dict[str, str] = {modele: modele} if modele else {}
+        self.combo_cerveau_modele = self._combo_voix(
+            parent, self.var_cerveau_modele, [modele] if modele else []
+        )
+        self.ligne_cerveau_etat = tk.Label(
+            parent, text="", bg=FOND_VITRE, fg=ENCRE_SOURDE, font=("Segoe UI", 8),
+            wraplength=440, justify="left", anchor="w",
+        )
+        self.ligne_cerveau_etat.pack(fill=tk.X, pady=(2, 2))
+        tk.Button(
+            parent, text=t("reglages.cerveau_appliquer"), command=self._appliquer_cerveau,
+            font=("Segoe UI", 9), takefocus=1,
+        ).pack(anchor="w", pady=(2, 4))
+        try:
+            self.combo_cerveau_mode.bind(
+                "<<ComboboxSelected>>", lambda _e: self._rafraichir_modeles_cerveau()
+            )
+        except tk.TclError:
+            pass
+        self._rafraichir_modeles_cerveau(garder=modele)
+
+    def _mode_cerveau(self) -> str:
+        return self._codes_modes.get(self.var_cerveau_mode.get(), "api")
+
+    def _rafraichir_modeles_cerveau(self, garder: str | None = None) -> None:
+        from native.presence import cerveau_distant as cd
+
+        mode = self._mode_cerveau()
+        valeurs = self._valeurs_effectives()
+        if mode == "api":
+            self.combo_cerveau_modele.configure(values=[], state="disabled")
+            self.var_cerveau_modele.set("")
+            self.ligne_cerveau_etat.configure(text=t("reglages.cerveau_api"))
+            return
+        self.ligne_cerveau_etat.configure(text=t("reglages.cerveau_liste"))
+
+        def travail() -> Any:
+            return cd.lister_modeles(mode, valeurs)
+
+        def rendre(resultat: Any) -> None:
+            if not self._vivante() or isinstance(resultat, Exception):
+                return
+            self._codes_modeles = {m.get("label") or m["id"]: m["id"] for m in resultat}
+            libelles = list(self._codes_modeles)
+            self.combo_cerveau_modele.configure(values=libelles, state="readonly")
+            voulu = garder or cd.MODELE_PAR_DEFAUT.get(mode, "")
+            choisi = next(
+                (lib for lib, ident in self._codes_modeles.items() if ident == voulu),
+                libelles[0] if libelles else "",
+            )
+            self.var_cerveau_modele.set(choisi)
+            self.ligne_cerveau_etat.configure(text="")
+
+        lancer_hors_fil(travail, rendre, planifier=self._planifier)
+
+    def _appliquer_cerveau(self) -> None:
+        """Enregistre le choix puis relance le host-agent, qui le lit au démarrage."""
+        from native.presence import cerveau_distant as cd
+
+        mode = self._mode_cerveau()
+        libelle = self.var_cerveau_modele.get()
+        modele = self._codes_modeles.get(libelle, libelle)
+        effort = getattr(self, "_cerveau_effort", cd.EFFORT_PAR_DEFAUT)
+        self.ligne_cerveau_etat.configure(text=t("reglages.cerveau_en_cours"))
+
+        def travail() -> Any:
+            cd.enregistrer_choix(self.chemin, mode, modele, effort)
+            return cd.relancer_host_agent()
+
+        def rendre(resultat: Any) -> None:
+            if not self._vivante():
+                return
+            ok = resultat is True
+            self.ligne_cerveau_etat.configure(
+                text=t("reglages.cerveau_applique" if ok else "reglages.cerveau_echec")
+            )
 
         lancer_hors_fil(travail, rendre, planifier=self._planifier)
 

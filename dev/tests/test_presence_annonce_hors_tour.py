@@ -127,3 +127,83 @@ def test_socket_fermee_hors_tour_remonte_pour_se_reconnecter():
     with pytest.raises(ConnectionClosed):
         session._boucle_tours(ws, CaptureMuette(), SortieNotee())
     assert ws.lectures == 1
+
+
+class CaptureContinue:
+    """Capture mains libres : note les régimes, ne produit jamais de segment."""
+
+    def __init__(self) -> None:
+        self.regimes: list[bool] = []
+        self.reprises = 0
+        self.barge_in = threading.Event()
+
+    def start(self) -> None:
+        return None
+
+    def stop(self):
+        return []
+
+    def segment_pret(self) -> bool:
+        return False
+
+    def regime_lecture(self, actif: bool, on_barge_in=None) -> None:
+        self.regimes.append(actif)
+
+    def reprendre(self) -> None:
+        self.reprises += 1
+
+
+def test_mains_libres_joue_l_annonce_sans_s_entendre(monkeypatch):
+    """Séance du 24/09 : en mains libres, l'annonce « Claude a fini » était
+    lue sur la socket puis jetée. Elle doit être jouée, micro en régime
+    lecture (on peut la couper à la voix, elle ne s'enregistre pas)."""
+    from native.presence import app
+
+    sortie = SortieNotee()
+
+    class FauxMoteur:
+        @staticmethod
+        def _jouer(s, echantillons):
+            s.jouees.append(list(echantillons))
+
+        @staticmethod
+        def _reposer(_s):
+            return None
+
+    monkeypatch.setattr(app, "moteur", FauxMoteur)
+    session = app.SessionVocale(
+        queue.Queue(), url="ws://127.0.0.1:9/hostagent", device=None, sortie=None,
+        raccourci_label="Espace", mains_libres=True,
+    )
+    ws = WsScripte([
+        {"type": "harnais_session", "harnais": "Claude", "session": "s-1"},
+        {"frames": [[0.1, 0.2]]},
+        {"frames": [[0.3]]},
+        {"frames": []},
+    ])
+    capture = CaptureContinue()
+
+    def tuer() -> None:
+        time.sleep(0.6)
+        session.arreter.set()
+
+    threading.Thread(target=tuer, daemon=True).start()
+    session._boucle_tours_continus(ws, capture, sortie)
+
+    assert ws.messages == []
+    assert [x for bloc in sortie.jouees for x in bloc] == [0.1, 0.2, 0.3]
+    assert capture.regimes == [True, False]
+    assert capture.reprises == 1
+
+
+def test_ligne_lecture_mesure_l_echo_et_le_seuil_d_interruption():
+    """Pour régler l'interruption à la voix, il faut savoir ce que le micro
+    capte de la voix de MOTHER pendant qu'elle parle (24/09)."""
+    from native.presence.app import ligne_lecture
+
+    class Capture:
+        def instantane(self):
+            return {"seuil": 45.0, "rms_max": 812.4}
+
+    assert ligne_lecture(Capture(), barge=False) == "LECTURE : rms_max=812 seuil_interruption=375 coupee=non"
+    assert ligne_lecture(object(), barge=True) == ""

@@ -421,6 +421,7 @@ async def test_annonce_mandat_riche_prononce_l_invitation(tmp_path, capsys):
         sujet="s",
         depose_a=0.0,
         etat="fini",
+        session="th-1",  # invitation vraie : la session s'ouvre (24/09)
         reponse=ReponseHarnais(
             verdict="fait",
             resume_voix="Le routeur departage local et distant.",
@@ -489,3 +490,111 @@ async def test_demande_explicite_a_claude_part_sans_laisser_le_modele_repondre()
     assert "Pong." not in deltas
     assert brain.appels == 1
     assert "Je demande à Claude" in "".join(deltas)
+
+
+class _DistantSansOutils:
+    """Le cerveau abonnement (Claude Code, Codex) ne sait pas appeler d'outil."""
+
+    supporte_outils = False
+
+
+class _RouteurAbonnement(_BrainQuiInvente):
+    deep = _DistantSansOutils()
+
+
+def _registre_claude(recus):
+    from src.brain.mandat import RegistreMandats
+    from src.brain.tools import ToolRegistry, ToolSpec
+
+    class Mandat:
+        registre_mandats = RegistreMandats()
+
+        async def __call__(self, question: str) -> str:
+            recus.append(question)
+            return "Je demande à Claude. Je te préviens dès qu'il répond."
+
+    registre = ToolRegistry()
+    registre.register(
+        ToolSpec(
+            name="ask_claude",
+            description="Claude",
+            parameters={"type": "object", "properties": {"question": {"type": "string"}}},
+            danger="read",
+            handler=Mandat(),
+        )
+    )
+    return registre
+
+
+@runs_async
+async def test_abonnement_la_demande_au_harnais_part_sans_attendre_le_modele():
+    """Séance du 24/09 : 16 s de silence avant « Je demande à Claude » — le
+    distant abonnement rédigeait une réponse que personne n'entendait."""
+    from src.gate.permission import Gate
+
+    recus = []
+    brain = _RouteurAbonnement()
+    prompt = "Demande à Claude de lire le README."
+    deltas = []
+    async for chunk in serve_hostagent.flux_cerveau(
+        brain, prompt, _registre_claude(recus), Gate(mode="auto"), []
+    ):
+        if chunk.get("delta"):
+            deltas.append(chunk["delta"])
+    assert brain.appels == 0
+    assert recus == [prompt]
+    assert "Je demande à Claude" in "".join(deltas)
+
+
+@runs_async
+async def test_la_demande_directe_emporte_le_contexte_recent():
+    """« Dis la même chose à Codex » : le harnais reçoit de quoi comprendre."""
+    from src.gate.permission import Gate
+
+    recus = []
+    historique = [
+        {"role": "system", "content": "consignes"},
+        {"role": "user", "content": "Dis bonjour à Claude et vois s'il répond."},
+        {"role": "assistant", "content": "Claude a fini. Bonjour !"},
+    ]
+    prompt = "Demande à Claude la même chose."
+    async for _ in serve_hostagent.flux_cerveau(
+        _RouteurAbonnement(), prompt, _registre_claude(recus), Gate(mode="auto"), historique
+    ):
+        pass
+    (question,) = recus
+    assert question.startswith(prompt)
+    assert "Dis bonjour à Claude et vois s'il répond." in question
+    assert "consignes" not in question
+
+
+@runs_async
+async def test_abonnement_deux_harnais_nommes_deux_mandats():
+    from src.brain.mandat import RegistreMandats
+    from src.brain.tools import ToolRegistry, ToolSpec
+    from src.gate.permission import Gate
+
+    recus = []
+
+    def mandat(nom):
+        class Mandat:
+            registre_mandats = RegistreMandats()
+
+            async def __call__(self, question: str) -> str:
+                recus.append((nom, question))
+                return f"Je demande à {nom}."
+        return Mandat()
+
+    registre = ToolRegistry()
+    for outil, nom in (("ask_claude", "Claude"), ("ask_codex", "Codex")):
+        registre.register(ToolSpec(name=outil, description=nom, parameters={"type": "object"},
+                                   danger="read", handler=mandat(nom)))
+    prompt = "Dis bonjour à Codex et à Claude."
+    deltas = []
+    async for chunk in serve_hostagent.flux_cerveau(
+        _RouteurAbonnement(), prompt, registre, Gate(mode="auto"), []
+    ):
+        if chunk.get("delta"):
+            deltas.append(chunk["delta"])
+    assert [nom for nom, _ in recus] == ["Codex", "Claude"]
+    assert "Je demande à Codex." in deltas and "Je demande à Claude." in deltas

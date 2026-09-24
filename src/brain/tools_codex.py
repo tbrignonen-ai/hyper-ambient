@@ -17,6 +17,7 @@ from typing import Any, Optional
 
 from src.brain.tools import MAX_TOOL_CONTENT_CHARS, ToolRegistry, ToolSpec
 from src.brain.mandat import RegistreMandats, deposer_depuis_outil
+from src.brain.pont_session import SessionDePont
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ _FAILED = "Codex n'a pas pu repondre a cette question."
 _EMPTY = "Codex n'a rien trouve a dire la-dessus."
 
 
-class CodexBridge:
+class CodexBridge(SessionDePont):
     """Handler d'outil : une question en entree, une phrase en sortie."""
 
     def __init__(
@@ -63,6 +64,9 @@ class CodexBridge:
         self.client = client
         self.endpoint = endpoint
         self.timeout_s = timeout_s
+        # Session courante du harnais : les demandes suivantes la reprennent,
+        # et Presence l'ouvre dans le harnais (24/09). Voir pont_session.
+        self.session: Optional[str] = None
 
     async def __call__(self, question: str) -> str:
         if not self.token:
@@ -75,7 +79,7 @@ class CodexBridge:
         try:
             response = await self.client.post(
                 self.endpoint,
-                json={"question": question},
+                json=self._charge(question, {"question": question}),
                 headers={
                     "Authorization": f"Bearer {self.token}",
                     "Content-Type": "application/json",
@@ -101,6 +105,7 @@ class CodexBridge:
             logger.warning(f"ask_codex: echec annonce par le pont ({reason})")
             return _FAILED
 
+        self._retenir_session(payload)
         answer = payload.get("answer")
         text = answer.strip() if isinstance(answer, str) else ""
         if not text:

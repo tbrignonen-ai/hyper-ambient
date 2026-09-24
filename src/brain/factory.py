@@ -40,6 +40,60 @@ def build_brain(service: Optional[str] = None) -> OpenAICompatBrain:
     raise ValueError(f"Unknown BRAIN_SERVICE: {service!r}")
 
 
+def construire_distant(mode=None, modele=None, effort=None):
+    """Le distant du routeur : clé d'API (défaut) ou abonnement de l'utilisateur.
+
+    BRAIN_DEEP=abonnement-claude : la conversation passe par le Claude Code de
+    l'utilisateur, via le pont hôte, sans clé d'API (mode abonnement, 24/09).
+    Un choix explicite (bascule depuis Presence) prime sur l'environnement.
+    """
+    mode = (mode or os.getenv("BRAIN_DEEP") or "api").strip().lower()
+    ponts = {
+        "abonnement-claude": ("claude", "CLI_BRIDGE_URL", "CLI_BRIDGE_TOKEN", 8766, "claude-sonnet-5"),
+        "abonnement-chatgpt": ("chatgpt", "CODEX_BRIDGE_URL", "CODEX_BRIDGE_TOKEN", 8765, "gpt-6-luna"),
+    }
+    if mode in ponts:
+        from src.brain.abonnement import SubscriptionBrain
+
+        harnais, cle_url, cle_jeton, port, defaut = ponts[mode]
+        return SubscriptionBrain(
+            bridge_url=os.getenv(cle_url, f"http://host.docker.internal:{port}/ask"),
+            token=os.getenv(cle_jeton, ""),
+            model=modele or os.getenv("BRAIN_ABONNEMENT_MODEL") or defaut,
+            effort=effort or os.getenv("BRAIN_ABONNEMENT_EFFORT") or "low",
+            harnais=harnais,
+        )
+    return OpenAICompatBrain()  # BRAIN_API_* from the environment
+
+
+_LIBELLES_MODELES = {
+    "claude-sonnet-5": "Claude Sonnet 5",
+    "sonnet": "Claude Sonnet",
+    "haiku": "Claude Haiku",
+    "opus": "Claude Opus",
+    "fable": "Claude Fable",
+}
+
+
+def libelle_distant(distant) -> str:
+    """Nom lisible du distant actif, pour l'indicateur de Presence."""
+    nom = str(getattr(distant, "name", "") or "")
+    if nom.startswith("abonnement-") and "/" in nom:
+        modele = nom.split("/", 1)[1]
+        if modele in _LIBELLES_MODELES:
+            return _LIBELLES_MODELES[modele]
+        if modele.lower().startswith("gpt-"):
+            return "GPT-" + "-".join(p.capitalize() for p in modele[4:].split("-"))
+        return modele
+    modele = str(getattr(distant, "model", "") or nom)
+    return modele.rsplit("/", 1)[-1]
+
+
+def mode_distant(distant) -> str:
+    nom = str(getattr(distant, "name", "") or "")
+    return nom.split("/", 1)[0] if nom.startswith("abonnement-") else "api"
+
+
 async def build_router():
     """
     Two-channel hyper-ambient: local reflexes + remote deliberation.
@@ -56,7 +110,7 @@ async def build_router():
         host=os.getenv("LLAMA_SERVER_HOST", LLAMA_HOST),
         model=os.getenv("BRAIN_MODEL_LOCAL", "local"),
     )
-    deep = OpenAICompatBrain()  # BRAIN_API_* from the environment
+    deep = construire_distant()
     router = RouterBrain(reflex=reflex, deep=deep)
     await router.initialize()
     return router

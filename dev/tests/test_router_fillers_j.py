@@ -95,26 +95,30 @@ class FakeClassify:
 
 
 def _router(reflex=None, deep=None, **kw):
-    return RouterBrain(
+    routeur = RouterBrain(
         reflex or FakeChan("reflex"),
         deep or FakeChan("deep"),
         enable_filler=kw.pop("enable_filler", True),
         deep_timeout_ms=kw.pop("deep_timeout_ms", 2000),
         **kw,
     )
+    # Mécanique de l'amorce testée en mode immédiat (24/09 : par défaut,
+    # l'amorce attend `progression_apres_ms` sans réponse du distant).
+    routeur.progression_apres_ms = 0
+    return routeur
 
 
 # -- listes : regression de registre -----------------------------------------
 
 
-def test_fillers_sont_quatre_uniques_sans_excuse():
+def test_fillers_sont_trois_uniques_sans_excuse():
+    # 24/09 : phrases d'état brèves (« je regarde »), plus de jargon d'atelier.
     assert FILLERS == [
-        "Un instant.",
+        "Je regarde.",
+        "Une seconde.",
         "Je vérifie.",
-        "Analyse en cours.",
-        "Je consulte les données.",
     ]
-    assert len(set(FILLERS)) == 4
+    assert len(set(FILLERS)) == 3
     for f in FILLERS:
         assert f.endswith(".")
         assert f.count(".") == 1
@@ -125,12 +129,12 @@ def test_fillers_sont_quatre_uniques_sans_excuse():
         assert "REFLEXE" not in f and "ESCALADE" not in f
 
 
-def test_holding_sont_deux_uniques_sans_excuse():
+def test_holding_est_une_seule_ligne_informative():
+    # 24/09 : une relance ne répète pas l'attente, elle dit ce qui se passe.
     assert HOLDING == [
-        "Je traite toujours la demande.",
-        "Encore quelques instants.",
+        "C'est un peu plus long que prévu, je reste dessus.",
     ]
-    assert len(set(HOLDING)) == 2
+    assert len(set(HOLDING)) == 1
     assert set(FILLERS).isdisjoint(HOLDING)
     for h in HOLDING:
         assert h.endswith(".")
@@ -217,8 +221,8 @@ async def test_escalades_consecutives_rotent_les_fillers():
         chunks = [c async for c in r.query_streaming("capitale ?")]
         firsts.append(chunks[0]["delta"])
         r._client = FakeClassify("ESCALADE")
-    assert firsts[:4] == FILLERS
-    assert firsts[4] == FILLERS[0]
+    assert firsts[: len(FILLERS)] == FILLERS
+    assert firsts[len(FILLERS)] == FILLERS[0]
 
 
 @runs_async
@@ -251,7 +255,7 @@ async def test_sans_filler_pas_de_holding_non_plus():
 
 
 @runs_async
-async def test_holding_plafonne_a_deux_lignes_meme_si_le_deep_est_plus_lent():
+async def test_holding_plafonne_a_une_ligne_meme_si_le_deep_est_plus_lent():
     """max_holding = len(HOLDING) : une 3e ligne serait du bavardage, pas de la presence."""
     deep = FakeChan("deep", delay=0.12, scripts=[[
         {"delta": "fin.", "stop_reason": None, "ttft_ms": 1.0},
@@ -262,7 +266,7 @@ async def test_holding_plafonne_a_deux_lignes_meme_si_le_deep_est_plus_lent():
     r._client = FakeClassify("ESCALADE")
     chunks = [c async for c in r.query_streaming("dur")]
     holdings = [c for c in chunks if c.get("channel") == "holding"]
-    assert len(holdings) == len(HOLDING) == 2
+    assert len(holdings) == len(HOLDING) == 1
     assert [c["delta"] for c in holdings] == list(HOLDING)
     assert all(c["flush"] is True for c in holdings)
     assert all(c["stop_reason"] is None for c in holdings)
