@@ -32,6 +32,7 @@ import json
 import logging
 import os
 import re
+import unicodedata
 import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -98,6 +99,19 @@ HOLDING = [
 # « et alors ? » ne veulent rien dire seuls. Au-dela, l'enonce porte sa propre
 # difficulte et le tour precedent n'est plus qu'un parasite.
 LONGUEUR_ANAPHORIQUE = 25
+
+
+def normaliser_verdict(brut: str) -> str:
+    """Forme du verdict d'un classifieur chat (sans grammaire GBNF).
+
+    Un modèle chat écrit « Réflexe. » ou « Classe : REFLEXE » ; l'exiger nu
+    enverrait tout au distant. La forme est tolérée, pas le fond : « REFLEXE
+    ou ESCALADE » reste indécidable, donc escalade.
+    """
+    texte = unicodedata.normalize("NFKD", brut or "")
+    texte = "".join(c for c in texte if not unicodedata.combining(c)).upper()
+    texte = re.sub(r"^\s*CLASSE\s*:", "", texte)
+    return " ".join(re.sub(r"[^A-Z ]", " ", texte).split())
 
 
 def nomme_un_harnais(prompt: str) -> bool:
@@ -262,7 +276,7 @@ class RouterBrain:
         t0 = time.perf_counter()
         try:
             if self.classifier is not None:
-                verdict = (await self.classifier(body["prompt"])).strip()
+                verdict = normaliser_verdict(await self.classifier(body["prompt"]))
             else:
                 r = await self._client.post(f"{self.classify_host}/completion", json=body)
                 verdict = (r.json().get("content") or "").strip()

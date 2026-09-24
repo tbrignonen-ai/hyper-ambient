@@ -121,7 +121,7 @@ async def test_jev_local_refuse_reponse_incomplete(tmp_path):
 
 @run_async
 async def test_runtime_serialize_et_evince_apres_annulation():
-    runtime = ModelRuntime()
+    runtime = ModelRuntime(residents=1)
     events = []
     began = asyncio.Event()
 
@@ -137,9 +137,7 @@ async def test_runtime_serialize_et_evince_apres_annulation():
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    with pytest.raises(RuntimeError, match="déjà en cours"):
-        await runtime.run("tts", lambda: "voice")
-    await asyncio.sleep(0.1)
+    # Le tour suivant attend la fin du calcul abandonné, sans chevauchement.
     assert await runtime.run("tts", lambda: "voice") == "voice"
     assert events == ["slow", "evict"]
     await runtime.close()

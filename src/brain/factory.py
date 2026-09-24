@@ -40,6 +40,9 @@ def build_brain(service: Optional[str] = None) -> OpenAICompatBrain:
     raise ValueError(f"Unknown BRAIN_SERVICE: {service!r}")
 
 
+MODELE_MLX_CHARGE = "default_model"
+
+
 def construire_distant(mode=None, modele=None, effort=None):
     """Le distant du routeur : clé d'API (défaut) ou abonnement de l'utilisateur.
 
@@ -64,9 +67,9 @@ def construire_distant(mode=None, modele=None, effort=None):
             harnais=harnais,
         )
     if os.getenv("MOTHER_PROFILE") == "mac-16g-voix-max":
-        from native.macos.profile import model_path
-
-        return OpenAICompatBrain(model=str(model_path("text")), max_tokens=256)
+        # « default_model » : le modèle que le serveur Mac a chargé au boot.
+        # Un chemin écrit autrement déclencherait un second chargement MLX.
+        return OpenAICompatBrain(model=MODELE_MLX_CHARGE, max_tokens=256)
     return OpenAICompatBrain()  # BRAIN_API_* from the environment
 
 
@@ -110,18 +113,18 @@ async def build_router():
     """
     from src.brain.router import RouterBrain
 
-    classifier = None
+    classifier = trieur = None
     if os.getenv("MOTHER_PROFILE") == "mac-16g-voix-max" and os.getenv("BRAIN_LOCAL_BACKEND") == "mlx":
-        from native.macos.profile import model_path, require_platform
+        from native.macos.profile import require_platform
 
         require_platform()
-        reflex = OpenAICompatBrain(
-            api_endpoint=os.getenv("BRAIN_API_ENDPOINT", "http://127.0.0.1:8080/v1/chat/completions"),
-            model=str(model_path("text")), max_tokens=256,
-        )
+        endpoint = os.getenv("BRAIN_API_ENDPOINT", "http://127.0.0.1:8080/v1/chat/completions")
+        reflex = OpenAICompatBrain(api_endpoint=endpoint, model=MODELE_MLX_CHARGE, max_tokens=256)
+        # Un mot attendu : borner la sortie évite qu'un bavardage retarde le tour.
+        trieur = OpenAICompatBrain(api_endpoint=endpoint, model=MODELE_MLX_CHARGE, max_tokens=8)
 
         async def classifier(prompt: str) -> str:
-            result = await reflex.query(prompt, system="Réponds exclusivement REFLEXE ou ESCALADE.", temperature=0)
+            result = await trieur.query(prompt, system="Réponds exclusivement REFLEXE ou ESCALADE.", temperature=0)
             if result.get("stop_reason") == "error":
                 raise RuntimeError("classification MLX indisponible")
             return str(result.get("response") or "").strip()
@@ -133,6 +136,15 @@ async def build_router():
     deep = construire_distant()
     router = RouterBrain(reflex=reflex, deep=deep, classifier=classifier)
     await router.initialize()
+    if trieur is not None:
+        await trieur.initialize()
+        fermer_routeur = router.close
+
+        async def fermer():
+            await trieur.close()
+            await fermer_routeur()
+
+        router.close = fermer
     return router
 
 

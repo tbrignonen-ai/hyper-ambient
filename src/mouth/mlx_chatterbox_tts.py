@@ -76,11 +76,11 @@ class MLXChatterboxTTS:
             raise RuntimeError("Référence vocale Chatterbox absente")
         started = time.perf_counter()
         pcm = await asyncio.wait_for(
-            runtime.run("tts", self._load, lambda model: self._render(model, text),
+            runtime.run("tts", self._load, lambda model: (model, self._render(model, text)),
                         on_evict=lambda: setattr(self, "engine", None)),
             timeout=max(1.0, min(180.0, float(os.getenv("MOTHER_MAC_TTS_TIMEOUT_S", "90")))),
         )
-        self.engine = runtime._model
+        self.engine, pcm = pcm
         self.sample_rate = int(self.engine.sample_rate)
         elapsed = (time.perf_counter() - started) * 1000
         return {"audio": pcm, "sample_rate": self.sample_rate,

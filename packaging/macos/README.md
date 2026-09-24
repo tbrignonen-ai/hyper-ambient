@@ -42,8 +42,13 @@ bloque le lancement. Une session Claude/Codex ouverte dans Terminal appartient
   questions françaises en plusieurs passes. Le budget de 600 ms et les seuils
   d'adressage doivent être vérifiés sur le corpus FR/EN ; un timeout rend
   `None` et n'ouvre aucun droit. Aucun LLM ne remplace JeV.
-- STT et TTS se partagent un résident MLX et un worker borné. Le texte MLX-LM
-  et le JeV MPS restent dans d'autres moteurs. Les pics mémoire, la recharge,
+- STT et TTS passent par un worker MLX unique. `MOTHER_MAC_MLX_RESIDENTS=1`
+  (défaut) garde une seule famille chargée et recharge à chaque bascule
+  ASR↔TTS ; `=2` garde les deux (~5,4 Go de poids) et supprime ces
+  recharges. Trancher sur Mac par la pression mémoire et la latence perçue.
+  Un tour peut attendre derrière le calcul en cours (après une interruption,
+  la synthèse abandonnée finit d'abord) ; au-delà d'un tour en attente, rejet
+  explicite. Le texte MLX-LM et le JeV MPS restent dans d'autres moteurs. Les pics mémoire, la recharge,
   l'annulation de calcul Metal déjà lancé restent à mesurer. Le lanceur utilise
   `native.macos.text_server`, adaptateur strict de MLX-LM 0.31.3 : après le
   template et la tokenisation réels, entrée + budget de sortie doivent tenir
@@ -63,18 +68,20 @@ bloque le lancement. Une session Claude/Codex ouverte dans Terminal appartient
   lance Presence, puis au bundle signé si un `.app` est créé. Le helper
   Terminal de reprise n'utilise pas Automation ; Accessibilité n'est pas
   nécessaire pour la capture.
-- Le routeur Mac classe via `/v1/chat/completions` et accepte seulement
-  `REFLEXE` exact ; toute autre sortie escalade. Tester les flux d'outils et
+- Le routeur Mac classe via `/v1/chat/completions` (8 tokens au plus) ; la
+  forme est normalisée (« Classe : Réflexe. » → `REFLEXE`) mais toute autre
+  réponse escalade. Les requêtes visent `default_model`, le modèle chargé au
+  boot, pour ne jamais déclencher un second chargement. Tester les flux d'outils et
   l'historique avec la conversion LFM réelle avant de considérer ce chemin
   prêt. La licence du texte est `other` (`lfm1.0`) et celle du RU Ministral
   aussi `other` : lire leurs conditions avant toute distribution. Kyutai RU
   est CC-BY-4.0 avec attribution à préparer. Aucun `.app` signé/notarisé
   n'est livré ici.
 - La bascule rapide de cerveau passe par les options WebSocket. Le bouton
-  « Appliquer » du panneau Réglages persiste le choix mais ne relance pas le
-  host-agent natif sous Mac ; la garde retourne un échec explicite et ne
-  touche pas au conteneur Windows. Relancer le superviseur pour prendre en
-  compte ce réglage, ou utiliser la bascule rapide pendant une session.
+  « Appliquer » du panneau Réglages persiste le choix puis demande la relance
+  au superviseur (fichier de demande 0600 dans le dossier de journaux, pas de
+  port ni de signal) ; le superviseur relance son host-agent et répond. Sans
+  superviseur, échec explicite après 240 s ; jamais le conteneur Windows.
 
 ## Révisions
 

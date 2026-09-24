@@ -266,6 +266,9 @@ else:
         _lister_base()
 
 
+DELAI_SONDE_MICRO_S = 2.5
+
+
 def micro_accessible(device=None) -> bool:
     """Sonde bornée : ouverture, démarrage, puis callback observé.
 
@@ -294,7 +297,9 @@ def micro_accessible(device=None) -> bool:
         return False
     try:
         flux.start()
-        if not event.wait(0.5):
+        # AirPods et micros USB mettent parfois plus d'une seconde à livrer
+        # le premier bloc ; 0,5 s bloquait la séance sur un faux refus.
+        if not event.wait(DELAI_SONDE_MICRO_S):
             print("[micro] Accès non établi : aucun callback audio observé.", flush=True)
             return False
         return True

@@ -105,9 +105,12 @@ def relancer_host_agent() -> bool:
     import subprocess
 
     # Le redémarrage Docker appartient au parcours Windows. Le profil Mac
-    # pilote un processus natif sous le superviseur, sans toucher à la démo.
+    # demande la relance au superviseur, seul propriétaire du processus natif.
     if os.getenv("MOTHER_PROFILE") == "mac-16g-voix-max":
-        return False
+        from native.macos import controle
+        from native.macos.profile import paths
+
+        return controle.demander_relance(paths()["logs"])
 
     try:
         resultat = subprocess.run(

@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT))
 
 from dev.scripts.preflight_macos import inspect, read_env  # noqa: E402
 from native.macos.profile import apply, model_path, paths, require_platform  # noqa: E402
+from native.macos.controle import traiter_demande  # noqa: E402
 
 
 def port_busy(port: int) -> bool:
@@ -35,6 +36,12 @@ def json_get(url: str, token: str | None = None) -> dict | None:
             return json.load(response)
     except Exception:
         return None
+
+
+def texte_pret(payload: dict | None, text_path: Path) -> bool:
+    """mlx_lm.server 0.31.3 annonce le modèle CLI par son chemin résolu."""
+    attendus = {str(text_path), str(Path(text_path).resolve()), Path(text_path).name}
+    return any(str(item.get("id", "")) in attendus for item in (payload or {}).get("data", []))
 
 
 def wait_ready(proc, probe, timeout: float, label: str) -> None:
@@ -114,16 +121,17 @@ def run(config: Path) -> int:
             if port_busy(port):
                 raise RuntimeError(f"Port {port} déjà occupé : identité du service non garantie")
         text_path = model_path("text", env)
+        # /v1/models parcourt le cache HF : absent, il lève après l'en-tête 200
+        # et la readiness n'aboutit jamais.
+        (paths(env)["hf_home"] / "hub").mkdir(parents=True, exist_ok=True)
         text_proc = start([sys.executable, "-m", "native.macos.text_server", "--model", str(text_path),
                            "--host", "127.0.0.1", "--port", "8080",
                            "--max-tokens", "256", "--decode-concurrency", "1",
                            "--prompt-concurrency", "1", "--prompt-cache-size", "1",
                            "--prompt-cache-bytes", "268435456"], env, log_dir, "mlx-text")
         children.append(text_proc)
-        wait_ready(text_proc, lambda: any(
-            str(item.get("id", "")) in {str(text_path), text_path.name}
-            for item in (json_get("http://127.0.0.1:8080/v1/models") or {}).get("data", [])),
-            120, "Texte MLX")
+        wait_ready(text_proc, lambda: texte_pret(json_get("http://127.0.0.1:8080/v1/models"), text_path),
+                   120, "Texte MLX")
         local = read_env(ROOT / ".env.local")
         for label, port, module, token_key, cli, service in (
             ("codex", 8765, "native.codexbridge.bridge", "CODEX_BRIDGE_TOKEN", "codex", "codexbridge"),
@@ -142,16 +150,36 @@ def run(config: Path) -> int:
             wait_ready(proc, lambda p=port, t=token, s=service:
                        (json_get(f"http://127.0.0.1:{p}/health", t) or {}).get("service") == s,
                        15, "Pont " + label)
-        host = start([sys.executable, "-u", str(ROOT / "dev/scripts/serve_hostagent.py")], env,
-                     log_dir, "hostagent")
-        children.append(host)
-        wait_ready(host, lambda: json_get("http://127.0.0.1:8001/") ==
-                   {"status": "ready", "transport": "hostagent"}, 180, "Host-agent")
+        def lancer_host():
+            host = start([sys.executable, "-u", str(ROOT / "dev/scripts/serve_hostagent.py")], env,
+                         log_dir, "hostagent")
+            children.append(host)
+            wait_ready(host, lambda: json_get("http://127.0.0.1:8001/") ==
+                       {"status": "ready", "transport": "hostagent"}, 180, "Host-agent")
+            return host
+
+        host = lancer_host()
+
+        def relancer_host():
+            # Réglages → Appliquer : le host-agent relit le choix au démarrage.
+            nonlocal host
+            stop_owned([host])
+            children.remove(host)
+            try:
+                host = lancer_host()
+                return True
+            except Exception as exc:
+                print(f"Relance du host-agent échouée : {exc}", file=sys.stderr, flush=True)
+                return False
+
         print("MOTHER Mac prêt ; ouverture de Presence. Journaux :", log_dir, flush=True)
         presence = subprocess.Popen([sys.executable, "-u", str(ROOT / "native/presence/app.py")],
                                     cwd=ROOT, env=env, start_new_session=True)
         children.append(presence)
-        return presence.wait()
+        while presence.poll() is None:
+            traiter_demande(log_dir, relancer_host)
+            time.sleep(0.25)
+        return presence.returncode
     finally:
         stop_owned(children)
         if lock.exists() and lock.read_text(encoding="ascii").strip() == str(os.getpid()):

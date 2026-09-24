@@ -60,11 +60,11 @@ class MLXQwen3ASR:
         started = time.perf_counter()
         raw = await asyncio.wait_for(
             runtime.run("stt", self._load,
-                        lambda model: self._transcribe(model, samples),
+                        lambda model: (model, self._transcribe(model, samples)),
                         on_evict=lambda: setattr(self, "model", None)),
             timeout=max(1.0, min(120.0, float(os.getenv("MOTHER_MAC_ASR_TIMEOUT_S", "30")))),
         )
-        self.model = runtime._model
+        self.model, raw = raw
         elapsed = time.perf_counter() - started
         text = str(getattr(raw, "text", "") or "").strip()
         duration = samples.size / SAMPLE_RATE
