@@ -207,11 +207,11 @@ def relayer_harnais(
     message: Any, deposer: Callable[[dict[str, Any]], None]
 ) -> bool:
     """Relaye ``{"type":"harnais_session", ...}`` : ouvrir la conversation du harnais."""
-    if not isinstance(message, dict) or message.get("type") != "harnais_session":
+    if not isinstance(message, dict) or message.get("type") not in ("harnais_session", "harnais_fermer"):
         return False
     deposer(
         {
-            "type": "harnais_session",
+            "type": message.get("type"),
             "harnais": str(message.get("harnais") or ""),
             "session": str(message.get("session") or ""),
         }
@@ -2593,6 +2593,12 @@ class Application:
             self._afficher_cerveau(message)
         elif kind == "harnais_session":
             self._ouvrir_harnais(message)
+        elif kind == "harnais_fermer":
+            ouvreur = getattr(self, "_ouvreur_harnais", None)
+            harnais = str(message.get("harnais") or "")
+            if ouvreur is not None and harnais:
+                ferme = ouvreur.fermer_harnais(harnais)
+                journaliser(f"HARNAIS {harnais} fermé={ferme}")
         elif kind == "conversation":
             self._conversation_ouverte = message.get("ouverte") is True
             try:

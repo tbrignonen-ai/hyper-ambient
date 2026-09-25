@@ -1179,3 +1179,15 @@ def test_un_harnais_exclu_n_est_pas_exige():
     assert outils_exiges(phrase, Registre()) == []
     assert outils_exiges("Fais-le toi-même, pas avec Codex.", Registre()) == []
     assert outils_exiges("Demande à Codex, pas à Claude.", Registre()) == ["ask_codex"]
+
+
+def test_whisper_cloud_et_codec_redresses():
+    """25/09, veille du jury : « session Cloud », « session codec »."""
+    from src.brain.mandat import redresser_harnais
+
+    assert redresser_harnais("Ouvre une nouvelle session Cloud et dis à Cloud") == (
+        "Ouvre une nouvelle session Claude et dis à Claude")
+    assert redresser_harnais("Ouvre une nouvelle session codec et demande-lui") == (
+        "Ouvre une nouvelle session Codex et demande-lui")
+    # Le mot « cloud » hors contexte de harnais reste tel quel.
+    assert redresser_harnais("Le cloud est cher") == "Le cloud est cher"

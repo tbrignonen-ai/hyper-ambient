@@ -1895,8 +1895,8 @@ class HostPipeline:
         if resultat.session and websocket is not None:
             try:
                 await websocket.send_json(
-                    {"type": "harnais_session", "harnais": resultat.harnais,
-                     "session": resultat.session}
+                    {"type": "harnais_fermer" if resultat.fermer else "harnais_session",
+                     "harnais": resultat.harnais, "session": resultat.session}
                 )
             except Exception as exc:
                 print(f"SESSION: ouverture non envoyee ({type(exc).__name__})", flush=True)

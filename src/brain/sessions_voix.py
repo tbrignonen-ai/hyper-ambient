@@ -52,7 +52,7 @@ _FIN_TITRE = re.compile(r"\s+dans (?:le|son) titre\s*$", re.I)
 @dataclass(frozen=True)
 class DemandeSession:
     harnais: Optional[str]
-    action: str  # "derniere" | "chercher" | "nouvelle" | "ambigu"
+    action: str  # "derniere" | "chercher" | "nouvelle" | "ambigu" | "fermer"
     requete: str
 
 
@@ -61,6 +61,7 @@ class ResultatSession:
     phrase: str
     harnais: Optional[str] = None
     session: Optional[str] = None
+    fermer: bool = False
 
 
 def _normaliser(texte: str) -> str:
@@ -83,6 +84,14 @@ def demande_de_session(prompt: str) -> Optional[DemandeSession]:
         return None
     trouve = _HARNAIS.search(norme)
     harnais = trouve.group(1).capitalize() if trouve else None
+    # « Ferme la session Claude », « ferme la session de l'Afrique du Sud »
+    # (25/09) : on ferme celle qui est nommée, jamais une autre.
+    if _FERMER.search(norme):
+        sujet = _SUJET_FERMER.search(norme)
+        requete = ""
+        if sujet and not harnais:
+            requete = texte[sujet.end():].strip(" .?!,;")
+        return DemandeSession(harnais, "fermer", requete)
     # « Claude et Codex », « pour les deux » : les deux harnais (25/09).
     if len(set(_HARNAIS.findall(norme))) > 1 or re.search(r"\bles deux\b", norme):
         harnais = None
@@ -111,6 +120,8 @@ def demande_de_session(prompt: str) -> Optional[DemandeSession]:
     return DemandeSession(harnais, "derniere", "")
 
 
+_FERMER = re.compile(r"\b(?:ferm\w*|clos\w*)\b")
+_SUJET_FERMER = re.compile(r"session (?:de |d'|du |des |sur |qui parle (?:de |d'|du ))")
 _ACTION_FLOUE = re.compile(
     r"\b(?:fai\w*|lanc\w*|cre\w*|demarr\w*|mets?|veux|voudrais|besoin|il te plait|stp)\b"
 )
@@ -163,6 +174,29 @@ async def executer(demande: DemandeSession, ponts: dict[str, Any]) -> ResultatSe
     cibles = [demande.harnais] if demande.harnais else [h for h, _ in _OUTILS if h in ponts]
     if not cibles:
         return ResultatSession(t("session.aucun_pont"))
+
+    if demande.action == "fermer":
+        cible = None
+        if demande.requete:
+            trouvees = []
+            for harnais in cibles:
+                session = await ponts[harnais].chercher_session(demande.requete)
+                if session:
+                    trouvees.append((harnais, str(session["id"])))
+            cible = trouvees[0] if trouvees else None
+        else:
+            for harnais in cibles:
+                if getattr(ponts[harnais], "session", None):
+                    cible = (harnais, ponts[harnais].session)
+                    break
+        if cible is None:
+            return ResultatSession(t("session.rien_a_fermer"))
+        harnais, session = cible
+        pont = ponts[harnais]
+        if getattr(pont, "session", None) == session:
+            pont.oublier_session()
+        return ResultatSession(t("session.fermee", harnais=harnais),
+                               harnais=harnais, session=session, fermer=True)
 
     if demande.action == "ambigu":
         return ResultatSession(t("session.laquelle", harnais=_et(cibles)))

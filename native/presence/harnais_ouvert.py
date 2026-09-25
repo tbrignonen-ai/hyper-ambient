@@ -244,6 +244,14 @@ class OuvreurHarnais:
         self._exe = exe
         self._consoles: dict[str, Any] = {}
 
+    def fermer_harnais(self, harnais: str) -> bool:
+        """Ferme la console de CE harnais, ouverte par Presence (25/09)."""
+        console = self._consoles.pop(harnais, None)
+        if console is None:
+            return False
+        self._fermer(console)
+        return True
+
     def ouvrir(self, harnais: str, session: str, *, premier_plan: bool) -> bool:
         cmd = commande(harnais, session, exe=self._exe, mode_claude=self._mode_claude)
         if cmd is None:

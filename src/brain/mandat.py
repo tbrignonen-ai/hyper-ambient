@@ -138,6 +138,9 @@ def extraire_harnais(prompt: str) -> str:
 # Whisper rend « Claude Code » par « cloud code » (séance du 23 sept). Les
 # deux mots accolés suffisent : « le cloud » seul reste « le cloud ».
 _CLAUDE_CODE_ENTENDU = re.compile(r"\bclo(?:u)?de?s?\s+codes?\b", re.IGNORECASE)
+_APRES_HARNAIS = r"(\b(?:session|sessions|à|a|avec|au|par|et)\s+)"
+_CLOUD_ENTENDU = re.compile(_APRES_HARNAIS + r"clouds?\b", re.IGNORECASE)
+_CODEC_ENTENDU = re.compile(_APRES_HARNAIS + r"codecs?\b", re.IGNORECASE)
 
 # Verbes qui font d'un harnais nommé une demande, pas une question sur lui.
 # « Qu'est-ce que Codex ? » ne l'appelle pas ; « demande à Codex… » si.
@@ -160,6 +163,10 @@ _LECTEUR_FIN = re.compile(r"\b([A-Z])2(?=\.\s*$)")
 def redresser_harnais(transcription: str) -> str:
     """Rend à un harnais le nom que Whisper a déformé, et au lecteur ses deux-points."""
     texte = _CLAUDE_CODE_ENTENDU.sub("Claude Code", transcription or "")
+    # « session Cloud », « dis à Cloud », « session codec » (25/09) : seulement
+    # après session / à / avec, pour laisser « le cloud est cher » tranquille.
+    texte = _CLOUD_ENTENDU.sub(lambda m: m.group(1) + "Claude", texte)
+    texte = _CODEC_ENTENDU.sub(lambda m: m.group(1) + "Codex", texte)
     texte = _LECTEUR_DIT.sub(lambda m: m.group(1) + ":\\", texte)
     return _LECTEUR_FIN.sub(lambda m: m.group(1) + ":\\", texte)
 

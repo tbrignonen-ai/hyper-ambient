@@ -55,3 +55,40 @@ def test_les_deux_harnais_ensemble():
     assert demande_de_session(
         "Connecte-toi à Claude et à Codex, s'il te plaît. Nouvelle session pour les deux."
     ) == DemandeSession(None, "nouvelle", "")
+
+
+def test_fermer_une_session_nommee():
+    assert demande_de_session("Ferme la session que tu viens d'ouvrir de Claude.") == DemandeSession("Claude", "fermer", "")
+    d = demande_de_session("Tu fermes la session de l'Afrique du Sud.")
+    assert d.action == "fermer" and d.harnais is None and "Afrique du Sud" in d.requete
+
+
+def test_fermer_oublie_la_session_et_rend_la_cible():
+    class _Pont:
+        session = "c-1"
+
+        def oublier_session(self):
+            self.session = None
+
+        async def chercher_session(self, q):
+            return {"id": "c-9", "titre": "Afrique du Sud", "score": 3, "date": 1} if q else None
+
+    pont = _Pont()
+    r = asyncio.run(executer(DemandeSession("Claude", "fermer", ""), {"Claude": pont}))
+    assert r.fermer and r.harnais == "Claude" and r.session == "c-1" and pont.session is None
+    r = asyncio.run(executer(DemandeSession(None, "fermer", "l'Afrique du Sud"), {"Claude": _Pont()}))
+    assert r.fermer and r.harnais == "Claude" and r.session == "c-9"
+
+
+def test_presence_ferme_seulement_la_console_du_harnais_nomme():
+    from native.presence.harnais_ouvert import OuvreurHarnais
+
+    fermees = []
+    o = OuvreurHarnais("/x", lancer=lambda cmd, **k: cmd[-1] if cmd[-1] != "manual" else cmd[2],
+                       fermer=fermees.append, exe=lambda n: n, dossier_de=lambda h, s: None,
+                       mode_claude="")
+    o.ouvrir("Codex", "x-1", premier_plan=False)
+    o.ouvrir("Claude", "c-1", premier_plan=False)
+    assert o.fermer_harnais("Claude") is True
+    assert fermees == ["c-1"]
+    assert o.fermer_harnais("Claude") is False
