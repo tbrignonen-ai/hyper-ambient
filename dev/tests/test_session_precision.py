@@ -92,3 +92,26 @@ def test_presence_ferme_seulement_la_console_du_harnais_nomme():
     assert o.fermer_harnais("Claude") is True
     assert fermees == ["c-1"]
     assert o.fermer_harnais("Claude") is False
+
+
+def test_fermer_harnais_sur_mac_passe_par_la_liberation_de_la_console(monkeypatch):
+    """Sur macOS, la console est une fenêtre Terminal : fermer_harnais doit
+    passer par liberer_console_macos (dossier du .command), pas par taskkill."""
+    import sys
+    from native import consoles_presence
+    from native.presence import harnais_ouvert
+
+    liberees = []
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(consoles_presence, "liberer_console_macos", liberees.append)
+
+    class _Open:
+        _mother_script_dir = "/tmp/mother-harnais-x"
+
+        def poll(self):
+            return 0
+
+    o = harnais_ouvert.OuvreurHarnais("/x")
+    o._consoles["Claude"] = _Open()
+    assert o.fermer_harnais("Claude") is True
+    assert liberees == ["/tmp/mother-harnais-x"]
