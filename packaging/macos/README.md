@@ -52,7 +52,8 @@ bloque le lancement. Une session Claude/Codex ouverte dans Terminal appartient
   l'annulation de calcul Metal déjà lancé restent à mesurer. Le lanceur utilise
   `native.macos.text_server`, adaptateur strict de MLX-LM 0.31.3 : après le
   template et la tokenisation réels, entrée + budget de sortie doivent tenir
-  dans 2 048 tokens. La sortie est plafonnée à 256 tokens. Un dépassement est
+  dans 2 048 tokens. La sortie réflexe est plafonnée à 512 tokens (8 pour
+  le classifieur). Un dépassement est
   rejeté avant cache/prefill, sans tronquer les consignes ni les outils ; le
   serveur amont renvoie une erreur HTTP 404 JSON, y compris en mode streaming.
   La concurrence serveur reste à 1. Ce budget par requête ne borne pas la RAM
@@ -66,8 +67,10 @@ bloque le lancement. Une session Claude/Codex ouverte dans Terminal appartient
   permission TCC ni qualité de capture. Tester les périphériques, retraits et
   retours sur place. La permission Microphone est liée à l'interpréteur qui
   lance Presence, puis au bundle signé si un `.app` est créé. Le helper
-  Terminal de reprise n'utilise pas Automation ; Accessibilité n'est pas
-  nécessaire pour la capture.
+  Terminal de reprise n'utilise pas Automation pour l'ouverture ; sa fermeture
+  ciblée par onglet utilise AppleScript si l'autorisation Automation existe.
+  Sans cette autorisation, le CLI marqué est arrêté et son verrou libéré ; la
+  fenêtre peut rester affichée. Accessibilité n'est pas nécessaire pour la capture.
 - Le routeur Mac classe via `/v1/chat/completions` (8 tokens au plus) ; la
   forme est normalisée (« Classe : Réflexe. » → `REFLEXE`) mais toute autre
   réponse escalade. Les requêtes visent `default_model`, le modèle chargé au
@@ -82,6 +85,31 @@ bloque le lancement. Une session Claude/Codex ouverte dans Terminal appartient
   au superviseur (fichier de demande 0600 dans le dossier de journaux, pas de
   port ni de signal) ; le superviseur relance son host-agent et répond. Sans
   superviseur, échec explicite après 240 s ; jamais le conteneur Windows.
+
+## Mesures Mac à consigner
+
+- Le compacteur appelle `/v1/chat/completions` avec
+  `COMPACTAGE_RESUMEUR_MODELE=default_model` et `max_tokens=220`. Le serveur
+  [MLX-LM 0.31.3](https://github.com/ml-explore/mlx-lm/blob/v0.31.3/mlx_lm/server.py)
+  accepte `chat_template_kwargs` et mappe `default_model` sur le modèle chargé.
+  `/props` et `/slots` étant propres à llama.cpp, le profil fixe la fenêtre
+  locale de repli à 2 048 tokens. Vérifier le résumé avec les vrais poids.
+- Après démarrage du serveur texte :
+  `python -m dev.scripts.mesure_macos_texte --pid PID_TEXT_SERVER --output mesure-texte.json`.
+  Le rapport donne neuf verdicts, leur latence, la mémoire RSS, ainsi que la
+  durée et la raison d'arrêt d'une réponse réflexe à 512 tokens. Vérifier les
+  neuf classements et l'absence de coupure, puis répéter pendant une longue
+  conversation sur le Mac 16 Go. Metal reste NOT_RUN depuis Windows.
+- Pour l'anti-écho, lire `LECTURE : rms_max=… seuil_interruption=… coupee=…`
+  dans le journal de Presence pendant une réponse sans intervention, puis
+  pendant un « stop » franc à la même distance. Le plancher par défaut est
+  2 500 RMS ; `HA_PLANCHER_LECTURE_RMS` permet de le placer entre l'écho
+  observé et la voix d'interruption. Consigner les deux valeurs, le volume et
+  le périphérique. Micro et enceintes Mac restent NOT_RUN.
+- L'état « harnais » emploie les palettes violettes de Presence. Sur Aqua,
+  `platform_ui` applique un alpha uniforme de 0,97 et un fond plein à l'overlay.
+  Vérifier visuellement le violet, « Appel harnais… » et les zones « Compris »
+  et « Réponse » de trois lignes sur l'écran réel.
 
 ## Révisions
 

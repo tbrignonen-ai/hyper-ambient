@@ -137,6 +137,8 @@ async def test_fabrique_mac_vise_le_modele_charge_et_un_classifieur_court(monkey
     monkeypatch.setattr(factory, "OpenAICompatBrain", Faux)
     router = await factory.build_router()
     assert all(kw["model"] == "default_model" for kw in vus)
+    assert any(kw.get("max_tokens") == 512 for kw in vus)
+    assert router.reflex.n_ctx == 2048
     classifieur = [kw for kw in vus if kw.get("max_tokens", 0) <= 8]
     assert classifieur, vus
     assert (await router.classify("Bonjour"))["route"] == "reflex"

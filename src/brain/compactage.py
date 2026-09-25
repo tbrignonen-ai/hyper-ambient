@@ -73,10 +73,11 @@ def budget_pour_modele(modele, *, canal: str = "deep") -> BudgetModele:
 
 async def lire_fenetre_locale(modele) -> int:
     """llama.cpp expose n_ctx via /slots (ou /props selon sa version)."""
+    repli = int(getattr(modele, "n_ctx", 4096))
     endpoint = str(getattr(modele, "api_endpoint", ""))
     base = endpoint.split("/v1/")[0]
     if not base.startswith("http"):
-        return 4096
+        return repli
     try:
         import httpx
         async with httpx.AsyncClient(timeout=2.0) as client:
@@ -90,7 +91,7 @@ async def lire_fenetre_locale(modele) -> int:
                     return modele.n_ctx
     except Exception:
         pass
-    return 4096
+    return repli
 
 
 async def resumer_local(ancien: str, echanges: list[dict]) -> str:

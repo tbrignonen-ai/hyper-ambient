@@ -47,6 +47,7 @@ def apply(environ=None) -> dict[str, str]:
         "BRAIN_MODEL_LOCAL": "mlx-community/LFM2.5-8B-A1B-OptiQ-4bit",
         "BRAIN_API_ENDPOINT": "http://127.0.0.1:8080/v1/chat/completions",
         "LLAMA_SERVER_HOST": "http://127.0.0.1:8080",
+        "COMPACTAGE_RESUMEUR_MODELE": "default_model",
         "EARS_BACKEND": "mlx-qwen3-asr", "EARS_LANGUAGE": "fr",
         "MOUTH_BACKEND": "mlx-chatterbox", "MOUTH_LANGUAGE": "fr",
         "MOUTH_OUTPUT_GAIN_DB": "0", "JEV_BACKEND": "local-deberta",

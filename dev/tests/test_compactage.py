@@ -21,6 +21,45 @@ def _serve():
     return module
 
 
+@pytest.mark.asyncio
+async def test_compactage_mlx_reutilise_modele_charge_et_fenetre_bornee(monkeypatch):
+    import httpx
+    from native.macos.profile import apply
+    from src.brain.compactage import lire_fenetre_locale, resumer_local
+
+    env = {"MOTHER_PROFILE": "mac-16g-voix-max"}
+    apply(env)
+    monkeypatch.setenv("COMPACTAGE_RESUMEUR_MODELE", env["COMPACTAGE_RESUMEUR_MODELE"])
+    monkeypatch.setenv("LLAMA_SERVER_HOST", env["LLAMA_SERVER_HOST"])
+    appels = []
+
+    class Client:
+        def __init__(self, **_):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            pass
+
+        async def post(self, url, json):
+            appels.append((url, json))
+            return SimpleNamespace(raise_for_status=lambda: None,
+                                   json=lambda: {"choices": [{"message": {"content": "Mémoire stable"}}]})
+
+        async def get(self, url):
+            raise OSError("MLX n'expose pas /props ni /slots")
+
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    assert await resumer_local("", [{"role": "user", "content": "Bonjour"}]) == "Mémoire stable"
+    assert appels[0][0] == "http://127.0.0.1:8080/v1/chat/completions"
+    assert appels[0][1]["model"] == "default_model"
+    assert appels[0][1]["chat_template_kwargs"] == {"enable_thinking": False}
+    modele = SimpleNamespace(api_endpoint=env["BRAIN_API_ENDPOINT"], n_ctx=2048)
+    assert await lire_fenetre_locale(modele) == 2048
+
+
 def test_resume_survit_projection_et_classifieur():
     summary = resume_message("Thomas a une soutenance à 14 h.")
     history = [summary] + [m for i in range(20) for m in (

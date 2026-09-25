@@ -219,6 +219,9 @@ def test_harnais_mac_ouvre_un_terminal_sans_options_win32(tmp_path, monkeypatch)
     script = (tmp_path / "reprendre.command").read_text(encoding="utf-8")
     assert "cd '/Users/éloïse/l'\"'\"'équipe'" in script
     assert "'s'\"'\"'1'" in script
+    assert "exec " not in script
+    assert "tty > " in script and '"$$"' in script
+    assert json.loads((tmp_path / "session.json").read_text())["session"] == "s'1"
 
 
 def test_sortie_macos_replie_48k_sans_modifier_la_branche_windows(monkeypatch):

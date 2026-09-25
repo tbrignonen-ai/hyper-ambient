@@ -10,7 +10,7 @@ from importlib.metadata import version
 
 MLX_LM_VERSION = "0.31.3"
 CONTEXT_TOKENS = 2048
-OUTPUT_TOKENS = 256
+OUTPUT_TOKENS = 512
 
 
 def bounded_tokenize(original):

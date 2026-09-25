@@ -6,7 +6,7 @@ import pytest
 from native.macos.text_server import bounded_tokenize
 
 
-@pytest.mark.parametrize("requested,expected", [(1, 1), (256, 256), (4096, 256)])
+@pytest.mark.parametrize("requested,expected", [(1, 1), (256, 256), (4096, 512)])
 def test_budget_inclut_sortie_et_conserve_template(requested, expected):
     result = (list(range(2048 - expected)), [[1]], ["system"], "reasoning")
     args = SimpleNamespace(max_tokens=requested)

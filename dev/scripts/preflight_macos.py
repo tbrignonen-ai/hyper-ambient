@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
-import os
 import platform
 import plistlib
 import shutil
@@ -32,8 +31,9 @@ def read_env(path: Path) -> dict[str, str]:
 
 
 def inspect(config: Path, *, dry_run: bool = True) -> dict:
-    env = dict(os.environ)
-    env.update(read_env(config))
+    # Le dry-run décrit le profil fourni, sans hériter des variables d'un
+    # autre déploiement (notamment la carte Windows du conteneur de tests).
+    env = read_env(config)
     checks = {}
 
     def record(name, state, detail):

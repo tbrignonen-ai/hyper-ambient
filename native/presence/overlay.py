@@ -25,6 +25,11 @@ except (AttributeError, ImportError):  # Linux : ctypes n'exporte pas windll
 from typing import Any
 
 try:
+    from platform_ui import apply_overlay_window_mode, fond_canvas_pour_mode, screen_workarea
+except ImportError:
+    from native.presence.platform_ui import apply_overlay_window_mode, fond_canvas_pour_mode, screen_workarea
+
+try:
     from onboarding import couleurs_eclair, eclair_allume, sommets_eclair
 except ImportError:
     from native.presence.onboarding import couleurs_eclair, eclair_allume, sommets_eclair
@@ -173,6 +178,10 @@ class RECT(Structure):
 
 def aire_utile(racine: tk.Tk) -> tuple[int, int, int, int]:
     """Rectangle hors barre des tâches — sa hauteur n'est pas une constante."""
+    zone = screen_workarea(racine)
+    if zone is not None:
+        x, y, largeur, hauteur = zone
+        return x, y, x + largeur, y + hauteur
     if windll is not None:
         try:
             rectangle = RECT()
@@ -642,14 +651,9 @@ class Presence:
 
         self.racine = tk.Tk()
         self.racine.title("hyper-ambient")
-        self.racine.configure(bg=COULEUR_TRANSPARENTE)
-        self.racine.overrideredirect(True)
-        self.racine.attributes("-topmost", True)
-        # transparentcolor perce le fond ; -alpha ne teinte que la forme restante.
-        self.racine.attributes("-transparentcolor", COULEUR_TRANSPARENTE)
-        # Les pixels dessinés restent opaques : le chroma-key perce le carré,
-        # pas la bulle. L'alpha fenêtre du 17 (0,16 au repos) la rendait fantôme.
-        self.racine.attributes("-alpha", 1.0)
+        self.mode_fenetre = apply_overlay_window_mode(self.racine)
+        self.fond_fenetre = fond_canvas_pour_mode(self.mode_fenetre, FOND_CHAMP)
+        self.racine.configure(bg=self.fond_fenetre)
         self.racine.geometry(f"{taille}x{taille}+0+0")
         self.racine.resizable(False, False)
 
@@ -657,7 +661,7 @@ class Presence:
             self.racine,
             width=taille,
             height=taille,
-            bg=COULEUR_TRANSPARENTE,
+            bg=self.fond_fenetre,
             highlightthickness=0,
             bd=0,
         )
@@ -706,7 +710,8 @@ class Presence:
         self.placer()
         self.racine.lift()
         self.racine.attributes("-topmost", True)
-        self.racine.attributes("-transparentcolor", COULEUR_TRANSPARENTE)
+        if self.mode_fenetre == "chromakey":
+            self.racine.attributes("-transparentcolor", COULEUR_TRANSPARENTE)
         self.racine.focus_force()
 
     def lire_datagrammes(self) -> None:
@@ -820,10 +825,11 @@ class Presence:
         self.angle = (self.angle + float(palette["vitesse_rotation"]) * dt) % 360.0
         souffle = self.respiration(palette, maintenant)
 
-        try:
-            self.racine.attributes("-alpha", 1.0)
-        except tk.TclError:
-            return
+        if self.mode_fenetre == "chromakey":
+            try:
+                self.racine.attributes("-alpha", 1.0)
+            except tk.TclError:
+                return
 
         cx = cy = self.taille / 2
         rayon_base = self.taille * 0.28

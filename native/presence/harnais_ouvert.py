@@ -162,14 +162,26 @@ def _lancer(cmd: list[str], **options: Any):
         # échappés pour sh ; aucun script AppleScript construit par concaténation.
         script_dir = Path(tempfile.mkdtemp(prefix="mother-harnais-"))
         script = script_dir / "reprendre.command"
-        content = "#!/bin/sh\ncd " + shlex.quote(dossier) + " || exit 1\nexec " + " ".join(map(shlex.quote, cmd)) + "\n"
+        (script_dir / "session.json").write_text(json.dumps({
+            "harnais": "codex" if cmd[1] == "resume" else "claude",
+            "session": cmd[2],
+        }), encoding="utf-8")
+        # Le shell garde le chemin du .command dans sa ligne de processus.
+        # Le pont peut ainsi prouver que le CLI descend de cette console
+        # Presence, même si un Terminal utilisateur reprend la même session.
+        content = ("#!/bin/sh\ncd " + shlex.quote(dossier) + " || exit 1\n"
+                   "printf '%s\\n' \"$$\" > " + shlex.quote(str(script_dir / "pid")) + "\n"
+                   "tty > " + shlex.quote(str(script_dir / "tty")) + "\n"
+                   + " ".join(map(shlex.quote, cmd)) + "\n")
         script.write_text(content, encoding="utf-8", newline="\n")
         script.chmod(0o700)
         args = ["open", "-a", "Terminal"]
         if not premier_plan:
             args.append("-g")
         args.append(str(script))
-        return subprocess.Popen(args, cwd=dossier, env=options["env"])
+        proc = subprocess.Popen(args, cwd=dossier, env=options["env"])
+        proc._mother_script_dir = script_dir
+        return proc
     if os.name != "nt":
         return subprocess.Popen(cmd, **options)
     # conhost : une vraie fenêtre à soi, pas un onglet de Windows Terminal
@@ -185,6 +197,10 @@ def _lancer(cmd: list[str], **options: Any):
 
 def _fermer(proc) -> None:
     """Ferme la console et ses enfants (claude.cmd, codex.cmd lancent node)."""
+    if sys.platform == "darwin" and getattr(proc, "_mother_script_dir", None):
+        from native.consoles_presence import liberer_console_macos
+        liberer_console_macos(proc._mother_script_dir)
+        return
     if proc.poll() is not None:
         return
     if sys.platform != "win32":

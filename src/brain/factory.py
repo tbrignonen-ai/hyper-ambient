@@ -41,6 +41,8 @@ def build_brain(service: Optional[str] = None) -> OpenAICompatBrain:
 
 
 MODELE_MLX_CHARGE = "default_model"
+SORTIE_REFLEXE_MLX = 512
+FENETRE_TEXTE_MLX = 2048
 
 
 def construire_distant(mode=None, modele=None, effort=None):
@@ -69,7 +71,7 @@ def construire_distant(mode=None, modele=None, effort=None):
     if os.getenv("MOTHER_PROFILE") == "mac-16g-voix-max":
         # « default_model » : le modèle que le serveur Mac a chargé au boot.
         # Un chemin écrit autrement déclencherait un second chargement MLX.
-        return OpenAICompatBrain(model=MODELE_MLX_CHARGE, max_tokens=256)
+        return OpenAICompatBrain(model=MODELE_MLX_CHARGE, max_tokens=SORTIE_REFLEXE_MLX)
     return OpenAICompatBrain()  # BRAIN_API_* from the environment
 
 
@@ -119,7 +121,9 @@ async def build_router():
 
         require_platform()
         endpoint = os.getenv("BRAIN_API_ENDPOINT", "http://127.0.0.1:8080/v1/chat/completions")
-        reflex = OpenAICompatBrain(api_endpoint=endpoint, model=MODELE_MLX_CHARGE, max_tokens=256)
+        reflex = OpenAICompatBrain(api_endpoint=endpoint, model=MODELE_MLX_CHARGE,
+                                   max_tokens=SORTIE_REFLEXE_MLX)
+        reflex.n_ctx = FENETRE_TEXTE_MLX
         # Un mot attendu : borner la sortie évite qu'un bavardage retarde le tour.
         trieur = OpenAICompatBrain(api_endpoint=endpoint, model=MODELE_MLX_CHARGE, max_tokens=8)
 
