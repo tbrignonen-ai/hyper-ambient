@@ -37,7 +37,10 @@ from src.hostagent.audio import FRAME_SAMPLES, SAMPLE_RATE, AudioFrame
 PLANCHER_RMS = float(os.environ.get("HA_PLANCHER_RMS") or 35.0)
 # Pendant la lecture, l'ancien plancher × 2,5 reste le minimum : sa propre
 # voix rendue par les enceintes ne doit pas déclencher un barge-in.
-PLANCHER_LECTURE_RMS = 375.0
+# 25/09 : 2 500. L'écho de sa propre voix par les enceintes atteint 1 900
+# (mesures du 24 et du 25/09) et la coupait en mains libres ; un « stop »
+# franc a été mesuré à 6 516.
+PLANCHER_LECTURE_RMS = float(os.environ.get("HA_PLANCHER_LECTURE_RMS") or 2500.0)
 # Seuil = max(PLANCHER_RMS, bruit_ambiant * FACTEUR) après ~500 ms de calage.
 FACTEUR = 2.5
 # Pendant la lecture : seuil relevé (anti-écho) sans sourdine totale.

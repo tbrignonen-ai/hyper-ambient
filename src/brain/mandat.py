@@ -182,6 +182,12 @@ def outil_exige(prompt: str, registre) -> Optional[str]:
     return OUTIL_PAR_HARNAIS[nom]
 
 
+_EXCLUSION = re.compile(
+    r"\b(?:sans|pas|ni|sauf|jamais|plut[oô]t que|au lieu de|except[eé])\b",
+    re.IGNORECASE,
+)
+
+
 def outils_exiges(prompt: str, registre) -> list[str]:
     """Tous les harnais nommés dans une demande, dans l'ordre où ils sont dits.
 
@@ -192,6 +198,9 @@ def outils_exiges(prompt: str, registre) -> list[str]:
         return []
     outils: list[str] = []
     for m in re.finditer(r"\b" + _NOMS + r"\b", texte, re.IGNORECASE):
+        # « sans passer par Claude », « pas à Codex » : le nom exclut (25/09).
+        if _EXCLUSION.search(texte[max(0, m.start() - 25):m.start()]):
+            continue
         nom = _NOMS_VERS_HARNAIS[m.group(1).lower()]
         outil = OUTIL_PAR_HARNAIS.get(nom)
         if outil and outil not in outils and harnais_est_branche(nom, registre):

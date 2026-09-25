@@ -75,16 +75,26 @@ async def run_codex(cmd, out_file, timeout_s):
         *cmd,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
         **sans_console.options(),
     )
     try:
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
     except asyncio.TimeoutError:
         proc.kill()
         raise
     text = Path(out_file).read_text(encoding="utf-8") if Path(out_file).exists() else ""
-    return proc.returncode, text, (stdout or b"").decode("utf-8", errors="replace")
+    return (proc.returncode, text, (stdout or b"").decode("utf-8", errors="replace"),
+            (stderr or b"").decode("utf-8", errors="replace"))
+
+
+# Codex n'admet qu'un écrivain par fil : la console `codex resume <id>` que
+# Presence ouvre pour montrer la conversation verrouille la session, et le
+# message suivant échouait (« already has an active writer », 25/09).
+_VERROU_ECRIVAIN = "already has an active writer"
+
+
+from native.consoles_presence import consoles_de_session, liberer_session  # noqa: E402,F401
 
 
 def _fil(sortie):
@@ -99,7 +109,8 @@ def _fil(sortie):
 
 
 async def answer_question(question, runner=run_codex, workdir=DEFAULT_WORKDIR,
-                          timeout_s=DEFAULT_TIMEOUT_S, session=None):
+                          timeout_s=DEFAULT_TIMEOUT_S, session=None,
+                          liberer=liberer_session, pause_s=1.0):
     question = (question or "").strip()[:MAX_QUESTION_CHARS]
     if not question:
         return {"ok": False, "error": "question vide"}
@@ -108,9 +119,16 @@ async def answer_question(question, runner=run_codex, workdir=DEFAULT_WORKDIR,
         cmd = build_command(_VOICE_PREFIX + question, workdir=workdir,
                             out_file=out_file, session=session)
         try:
-            resultat = await runner(cmd, out_file, timeout_s)
-            code, text = resultat[0], resultat[1]
-            sortie = resultat[2] if len(resultat) > 2 else ""
+            for essai in range(2):
+                resultat = await runner(cmd, out_file, timeout_s)
+                code, text = resultat[0], resultat[1]
+                sortie = resultat[2] if len(resultat) > 2 else ""
+                erreur = resultat[3] if len(resultat) > 3 else ""
+                if (code == 0 or essai or not session
+                        or _VERROU_ECRIVAIN not in (erreur or "")
+                        or not liberer(session)):
+                    break
+                await asyncio.sleep(pause_s)
         except (asyncio.TimeoutError, TimeoutError):
             return {"ok": False, "error": "delai depasse"}
         except FileNotFoundError:

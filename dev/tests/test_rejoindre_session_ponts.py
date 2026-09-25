@@ -58,8 +58,9 @@ def test_le_client_cherche_sur_le_pont_et_adopte():
     pont.adopter_session(trouve)
     _run(pont("q1"))
     _run(pont("q2"))
-    assert client.posts[0]["session"] == "c-1" and client.posts[0]["fork"] is True
-    # La bifurcation a rendu une session à nous : on la reprend simplement.
+    # 25/09 : on écrit dans la session rejointe elle-même, comme Codex ;
+    # l'utilisateur veut rester dans sa session, pas dans une copie.
+    assert client.posts[0]["session"] == "c-1" and "fork" not in client.posts[0]
     assert client.posts[1]["session"] == "c-2" and "fork" not in client.posts[1]
 
 
@@ -130,3 +131,31 @@ def test_route_sessions_exige_le_jeton():
     h = _Handler("/sessions?q=x", token="faux")
     assert _servir(h, lambda r: {"id": "c"})
     assert h.envois[0][0] == 401
+
+
+def test_claude_ferme_la_console_presence_avant_d_ecrire_dans_la_session():
+    """25/09 : comme Codex, on écrit dans la session elle-même ; la console
+    que Presence a ouverte dessus est fermée d'abord, et rouverte à la réponse."""
+    liberees = []
+
+    async def runner(cmd, out_file, timeout_s):
+        assert liberees == ["c-1"]
+        return 0, '{"result": "Prêt.", "session_id": "c-1"}'
+
+    reponse = _run(cli.answer_question(
+        "prêt ?", runner=runner, session="c-1",
+        liberer=lambda s: liberees.append(s) or True))
+    assert reponse["ok"] is True and reponse.get("session_id") == "c-1"
+
+
+def test_console_claude_de_presence_reconnue():
+    from native.consoles_presence import consoles_de_session
+
+    processus = [
+        {"ProcessId": 21, "Name": "conhost.exe",
+         "CommandLine": r'conhost.exe C:\npm\claude.cmd --resume c-1 --permission-mode manual'},
+        {"ProcessId": 22, "Name": "conhost.exe",
+         "CommandLine": r'conhost.exe C:\npm\codex.cmd resume c-1'},
+    ]
+    assert consoles_de_session(processus, "c-1", "claude") == [21]
+    assert consoles_de_session(processus, "c-1", "codex") == [22]

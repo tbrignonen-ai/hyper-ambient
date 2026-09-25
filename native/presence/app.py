@@ -573,6 +573,7 @@ class BadgeEclair:
             taille=self.taille * 0.78,
             allume=eclair_allume(self.etat),
             maintenant=maintenant,
+            etat=self.etat,
         )
 
 
@@ -2188,7 +2189,7 @@ class Application:
     def _zone_texte(self, parent: tk.Misc) -> tk.Text:
         zone = tk.Text(
             parent,
-            height=5,
+            height=3,
             wrap=tk.WORD,
             bg="#142028",
             fg=ENCRE,
@@ -2341,7 +2342,7 @@ class Application:
         allume = eclair_allume(etat)
         self.ligne_eclair.configure(
             text=libelle_eclair(etat),
-            fg=visuel.PALETTES["escalade"]["lueur"] if allume else ENCRE_SOURDE,
+            fg=visuel.PALETTES[etat if etat in visuel.PALETTES else "escalade"]["lueur"] if allume else ENCRE_SOURDE,
             font=("Segoe UI", 10, "bold") if allume else ("Segoe UI", 10),
         )
 

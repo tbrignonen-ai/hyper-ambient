@@ -291,9 +291,10 @@ async def test_contexte_joint_seulement_si_court():
     r._client = fake2
     long_q = "Il est 14 heures 40, ma reunion commence dans 20 minutes et dure 40 minutes, a quelle heure je finis ?"
     decision = await r.classify(long_q, contexte=[{"role": "assistant", "content": "Bonjour"}])
-    # 24/09 : au-delà de quatre mots, le classifieur n'est plus consulté.
+    # 25/09 : le classifieur décide à toute longueur ; un énoncé long se juge
+    # seul, sans le tour précédent.
     assert decision["route"] == "escalate"
-    assert fake2.bodies == []
+    assert "Tour precedent" not in fake2.bodies[0]["prompt"]
 
 
 @runs_async

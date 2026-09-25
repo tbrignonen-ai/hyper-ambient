@@ -67,7 +67,8 @@ def test_emettre_n_est_pas_une_coroutine():
 
 
 def test_cinq_etats_dans_l_ordre_du_cahier():
-    assert ETATS == ("repos", "ecoute", "reflexion", "escalade", "parole")
+    # 25/09 : sixième état, l'appel à un harnais (Codex, Claude).
+    assert ETATS == ("repos", "ecoute", "reflexion", "escalade", "harnais", "parole")
 
 
 @runs_async

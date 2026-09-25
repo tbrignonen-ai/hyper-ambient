@@ -151,3 +151,15 @@ def test_le_host_agent_laisse_passer_le_reste():
 
     pipeline = serve_hostagent.HostPipeline()
     assert _run(pipeline._rejoindre_session(None, "Quelle heure est-il ?")) is None
+
+
+def test_parler_d_une_session_n_en_reprend_aucune():
+    """25/09 : « on va faire une session avec plusieurs tests » a rejoint une
+    session Claude au hasard. « va » n'est un verbe de reprise que suivi de
+    « dans » ou « sur »."""
+    assert demande_de_session(
+        "Aujourd'hui on va faire une session avec plusieurs tests. Tu es prête ?") is None
+    assert demande_de_session("On passe une bonne session de travail") is None
+    assert demande_de_session("Cette session Claude était longue") is None
+    assert demande_de_session("Va dans la session Codex").action == "derniere"
+    assert demande_de_session("Passe sur la session Claude qui parle de n8n").action == "chercher"

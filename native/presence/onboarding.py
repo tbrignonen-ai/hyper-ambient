@@ -55,6 +55,10 @@ COULEUR_ECLAIR_ALLUME = "#ffcc3d"
 CONTOUR_ECLAIR_ALLUME = "#ffe9a0"
 COULEUR_ECLAIR_PULSE = "#fff4b0"
 CONTOUR_ECLAIR_PULSE = "#ffffff"
+# Appel à un harnais (Codex, Claude) : violet, distinct du jaune distant (25/09).
+COULEUR_ECLAIR_HARNAIS = "#b48cff"
+CONTOUR_ECLAIR_HARNAIS = "#e2d4ff"
+COULEUR_ECLAIR_HARNAIS_PULSE = "#e8dcff"
 
 
 @dataclass(frozen=True)
@@ -188,8 +192,8 @@ def ouvrir_feedback(ouvrir: Any | None = None) -> bool:
 
 
 def eclair_allume(etat: str) -> bool:
-    """L'éclair ne s'allume que lorsque l'appel sort vers un modèle distant."""
-    return etat == "escalade"
+    """L'éclair s'allume quand l'appel sort : modèle distant ou harnais."""
+    return etat in ("escalade", "harnais")
 
 
 def ui_presence() -> dict[str, str]:
@@ -205,20 +209,28 @@ def raccourcis_lisibles() -> dict[str, str]:
 
 def libelle_eclair(etat: str) -> str:
     textes = ui_presence()
+    if etat == "harnais":
+        return textes["harness_call"]
     if eclair_allume(etat):
         return textes["remote_call"]
     return textes["local_model"]
 
 
 def statut_pour_etat(etat: str) -> str | None:
+    if etat == "harnais":
+        return ui_presence()["harness_status"]
     if eclair_allume(etat):
         return ui_presence()["remote_status"]
     return None
 
 
 def couleurs_eclair(
-    allume: bool, pulsation: float = 0.0, a11y: bool = False
+    allume: bool, pulsation: float = 0.0, a11y: bool = False, etat: str = "escalade"
 ) -> tuple[str, str]:
+    if allume and etat == "harnais":
+        if pulsation >= 0.62:
+            return COULEUR_ECLAIR_HARNAIS_PULSE, CONTOUR_ECLAIR_PULSE
+        return COULEUR_ECLAIR_HARNAIS, CONTOUR_ECLAIR_HARNAIS
     if not allume:
         if a11y:
             return COULEUR_ECLAIR_ETEINT_A11Y, CONTOUR_ECLAIR_ETEINT_A11Y
@@ -248,7 +260,7 @@ def sommets_eclair(cx: float, cy: float, taille: float) -> tuple[float, ...]:
 
 def indicateur_distant(etat: str, *, pulsation: float = 0.0) -> dict[str, Any]:
     allume = eclair_allume(etat)
-    fill, contour = couleurs_eclair(allume, pulsation=pulsation)
+    fill, contour = couleurs_eclair(allume, pulsation=pulsation, etat=etat)
     return {
         "allume": allume,
         "libelle": libelle_eclair(etat),

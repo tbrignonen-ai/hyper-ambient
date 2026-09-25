@@ -37,6 +37,7 @@ import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from src.brain.contexte import fenetre_classifieur, projeter_kw
+from src.brain.compactage import budget_pour_modele, lire_fenetre_locale
 from src.brain.mandat import NOMS_HARNAIS
 
 logger = logging.getLogger(__name__)
@@ -46,11 +47,13 @@ CLASSIFY_GRAMMAR = 'root ::= "REFLEXE" | "ESCALADE"'
 
 CLASSIFY_PREFIX = """Tu tries des demandes adressées à hyper-ambient, une voix ambiante locale.
 
-REFLEXE = salutation, politesse, remerciement, acquiescement, ou ordre direct
-          sans aucun raisonnement (répète, plus fort, arrête, annule).
-ESCALADE = tout le reste. Toute question de connaissance, de calcul, de
-          comparaison, d'analyse, toute demande nécessitant un outil, et tout
-          cas douteux.
+REFLEXE = conversation ordinaire : salutation, politesse, remerciement,
+          acquiescement, émotion, confidence, bavardage, avis personnel,
+          question sur hyper-ambient elle-même, ordre direct sans raisonnement
+          (répète, plus fort, arrête, annule).
+ESCALADE = question de connaissance ou de fait, calcul, comparaison, analyse,
+          explication technique, actualité, météo, recherche, rédaction,
+          toute demande nécessitant un outil, et tout cas douteux.
 
 Dans le doute, réponds ESCALADE.
 
@@ -58,6 +61,12 @@ Demande: Bonjour hyper-ambient.
 Classe: REFLEXE
 Demande: Merci, c'est noté.
 Classe: REFLEXE
+Demande: Je suis un peu stressé pour ma soutenance cet après-midi.
+Classe: REFLEXE
+Demande: Tu peux me raconter comment tu fonctionnes ?
+Classe: REFLEXE
+Demande: Explique-moi la différence entre TCP et UDP.
+Classe: ESCALADE
 Demande: Répète plus fort.
 Classe: REFLEXE
 Demande: Quelle est la capitale de la Norvège ?
@@ -70,10 +79,10 @@ Demande: """
 
 CLASSIFY_SUFFIX = "\nClasse:"
 
-# Le réflexe local n'a que les formules : au-delà de quatre mots, c'est une
-# conversation, et le 3B y répondait « Je suis là. » ou « Oui. » (séance du
-# 24/09). Le distant converse ; le local salue.
-MAX_MOTS_REFLEXE = 4
+# 25/09 : plus de seuil de longueur. Le distant sert aux harnais et aux
+# questions difficiles ; la conversation ordinaire reste locale. Le 3B, avec
+# la consigne complète de conversation.fr.md, répond en phrases pleines
+# (mesuré le 25/09) — le « Je suis là. » du 24/09 venait d'une consigne réduite.
 
 # Canned, not generated. Generating a filler would cost a round-trip of the
 # very latency the filler exists to hide, and would risk a filler that does not
@@ -216,6 +225,7 @@ class RouterBrain:
         self._client = httpx.AsyncClient(timeout=10.0)
         await self.reflex.initialize()
         await self.deep.initialize()
+        await lire_fenetre_locale(self.reflex)
         logger.info(f"router: reflex={self.reflex.name} deep={self.deep.name}")
 
     async def close(self):
@@ -251,9 +261,6 @@ class RouterBrain:
         # la seule ou la demande ne peut pas aboutir.
         if nomme_un_harnais(prompt):
             return {"route": "escalate", "latency_ms": 0.0, "verdict": "HARNAIS"}
-
-        if len(prompt.split()) > MAX_MOTS_REFLEXE:
-            return {"route": "escalate", "latency_ms": 0.0, "verdict": "CONVERSATION"}
 
         if self.classifier is None and self._client is None:
             return {"route": "escalate", "latency_ms": 0.0, "reason": "no client"}
@@ -315,7 +322,7 @@ class RouterBrain:
         if route == "reflex":
             self.stats["reflex"] += 1
             async for chunk in self.reflex.query_streaming(
-                prompt, system=system, **projeter_kw(sans_outils(kw), "reflex")
+                prompt, system=system, **projeter_kw(sans_outils(kw), "reflex", budget_pour_modele(self.reflex, canal="reflex"))
             ):
                 chunk["channel"] = "reflex"
                 yield chunk
@@ -359,7 +366,7 @@ class RouterBrain:
         emitted = False
         try:
             stream = self.deep.query_streaming(
-                prompt, system=system, **projeter_kw(kw, "deep")
+                prompt, system=system, **projeter_kw(kw, "deep", budget_pour_modele(self.deep))
             )
             holding = 0
             async for chunk in _with_holding(
@@ -398,7 +405,7 @@ class RouterBrain:
         # Nothing spoken past the filler — the local channel can still answer,
         # and "Un instant." followed by a local answer stays coherent.
         async for chunk in self.reflex.query_streaming(
-            prompt, system=system, **projeter_kw(sans_outils(kw), "reflex")
+            prompt, system=system, **projeter_kw(sans_outils(kw), "reflex", budget_pour_modele(self.reflex, canal="reflex"))
         ):
             chunk["channel"] = "reflex"
             yield chunk
@@ -410,13 +417,13 @@ class RouterBrain:
         canal = "reflex" if target is self.reflex else "deep"
         cible_kw = kw if target is self.deep else sans_outils(kw)
         result = await target.query(
-            prompt, system=system, **projeter_kw(cible_kw, canal)
+            prompt, system=system, **projeter_kw(cible_kw, canal, budget_pour_modele(target, canal=canal))
         )
         result["channel"] = decision["route"]
         if result["stop_reason"] == "error" and target is self.deep:
             self.stats["deep_failed"] += 1
             result = await self.reflex.query(
-                prompt, system=system, **projeter_kw(sans_outils(kw), "reflex")
+                prompt, system=system, **projeter_kw(sans_outils(kw), "reflex", budget_pour_modele(self.reflex, canal="reflex"))
             )
             result["channel"] = "reflex"
         return result

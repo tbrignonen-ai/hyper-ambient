@@ -96,7 +96,7 @@ _EMPTY = {
 class CliBridge(SessionDePont):
     """Handler d'outil : une question en entree, une phrase en sortie."""
 
-    bifurquer_a_la_reprise = True
+    bifurquer_a_la_reprise = False
 
     def __init__(
         self,

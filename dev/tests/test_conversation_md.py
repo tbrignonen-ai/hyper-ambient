@@ -27,22 +27,33 @@ def test_la_conversation_n_est_plus_telegraphique():
     assert "reprends le fil" in fr
 
 
-def test_une_phrase_de_cinq_mots_ne_part_jamais_au_local():
-    """Le 3B répondait « Je suis là. », « Oui. », « J'ai du corps… »."""
+def test_la_longueur_ne_decide_plus_c_est_le_classifieur():
+    """25/09 : le distant sert aux harnais et aux questions difficiles. Une
+    phrase de conversation, même longue, reste locale si le classifieur le dit ;
+    le 3B répond désormais avec la consigne complète (mesuré le 25/09)."""
     from src.brain.router import RouterBrain
 
     class _Reponse:
+        def __init__(self, verdict):
+            self.verdict = verdict
+
         def json(self):
-            return {"content": "REFLEXE"}
+            return {"content": self.verdict}
 
     class _Client:
+        def __init__(self, verdict):
+            self.verdict = verdict
+
         async def post(self, *a, **k):
-            return _Reponse()
+            return _Reponse(self.verdict)
 
     routeur = RouterBrain.__new__(RouterBrain)
-    routeur._client = _Client()
+    routeur.classifier = None
     routeur.classify_host = "http://x"
-    assert asyncio.run(routeur.classify("Dis un truc, j'ai du corps."))["route"] == "escalate"
-    assert asyncio.run(routeur.classify("Je n'ai pas entendu ta réponse."))["route"] == "escalate"
-    # Une formule courte reste au réflexe local.
-    assert asyncio.run(routeur.classify("Merci beaucoup."))["route"] == "reflex"
+    routeur._client = _Client("REFLEXE")
+    assert asyncio.run(routeur.classify("Je suis un peu stressé pour ma soutenance cet après-midi."))["route"] == "reflex"
+    routeur._client = _Client("ESCALADE")
+    assert asyncio.run(routeur.classify("Explique-moi la différence entre TCP et UDP."))["route"] == "escalate"
+    # Nommer un harnais part toujours au distant, sans classifieur.
+    routeur._client = _Client("REFLEXE")
+    assert asyncio.run(routeur.classify("Dis à Codex bonjour."))["route"] == "escalate"

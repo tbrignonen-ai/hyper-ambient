@@ -47,7 +47,7 @@ DUREE_ETAT_DEMO = 4.0
 LISSAGE_NIVEAU = 0.28
 LISSAGE_TRANSITION = 0.08
 
-ETATS = ("repos", "ecoute", "reflexion", "escalade", "parole")
+ETATS = ("repos", "ecoute", "reflexion", "escalade", "harnais", "parole")
 COINS = ("bas-droite", "bas-gauche", "haut-droite", "haut-gauche")
 
 # Intentions, pas un nuancier : froid et presque absent au repos, glace
@@ -102,6 +102,19 @@ PALETTES: dict[str, dict[str, Any]] = {
         "scintillement": 0.7,
         "suit_niveau": False,
     },
+    # Appel à un harnais (25/09) : même vivacité que l'escalade, en violet.
+    "harnais": {
+        "coeur": "#7a5cc8",
+        "lueur": "#d4c4f4",
+        "anneau": "#a08ae0",
+        "periode": 1.3,
+        "amplitude": 0.14,
+        "alpha_min": 0.58,
+        "alpha_max": 0.82,
+        "vitesse_rotation": 140.0,
+        "scintillement": 0.7,
+        "suit_niveau": False,
+    },
     "parole": {
         "coeur": "#e8dcc8",
         "lueur": "#fff6e8",
@@ -131,6 +144,7 @@ PALETTES_CONTRASTE: dict[str, dict[str, Any]] = {
     "ecoute": _palette_contraste("ecoute", "#b8e8f4", "#f4fcff", "#d0f0f8"),
     "reflexion": _palette_contraste("reflexion", "#f0d090", "#fff4d0", "#f8e0a8"),
     "escalade": _palette_contraste("escalade", "#ffb080", "#ffe8c8", "#ffc898"),
+    "harnais": _palette_contraste("harnais", "#c8b0ff", "#f0e8ff", "#d8c8ff"),
     "parole": _palette_contraste("parole", "#fff6e8", "#ffffff", "#ffe8c0"),
 }
 
@@ -256,7 +270,7 @@ def dessiner_souffle(
     periode = max(0.45, float(palette["periode"]))
     lueur = str(palette["lueur"])
     anneau = str(palette["anneau"])
-    n_ondes = 3 if etat in ("parole", "escalade", "ecoute") else 2
+    n_ondes = 3 if etat in ("parole", "escalade", "harnais", "ecoute") else 2
     portee = 0.55 + 0.9 * max(0.0, min(1.0, souffle))
     for i in range(n_ondes):
         phase = (maintenant / periode + i / n_ondes) % 1.0
@@ -332,7 +346,7 @@ def dessiner_nappe(
             smooth=True,
             tags="nappe",
         )
-    n_rubans = 3 if etat in ("reflexion", "escalade", "parole") else 2
+    n_rubans = 3 if etat in ("reflexion", "escalade", "harnais", "parole") else 2
     for i in range(n_rubans):
         start = (maintenant * (14.0 + i * 8.0) + i * 80.0) % 360.0
         rr = portee * (ampleur + 0.04 + i * 0.10)
@@ -441,7 +455,7 @@ def dessiner_orbe(
     )
 
     epaisseur = max(2, int(taille * 0.03))
-    etendue = 110 if etat == "escalade" else 64
+    etendue = 110 if etat in ("escalade", "harnais") else 64
     toile.create_arc(
         cx - rayon * 1.22,
         cy - rayon * 1.22,
@@ -466,7 +480,7 @@ def dessiner_orbe(
         width=max(1, epaisseur - 1),
         tags="orbe",
     )
-    if etat == "escalade":
+    if etat in ("escalade", "harnais"):
         toile.create_arc(
             cx - rayon * 0.95,
             cy - rayon * 0.95,
@@ -480,7 +494,7 @@ def dessiner_orbe(
             tags="orbe",
         )
 
-    n_motes = 5 if etat in ("reflexion", "escalade", "parole") else 4
+    n_motes = 5 if etat in ("reflexion", "escalade", "harnais", "parole") else 4
     for i in range(n_motes):
         phase = maintenant * (0.55 + i * 0.12) + i * 1.1
         theta = rotation + i * (2.0 * math.pi / n_motes) + maintenant * 0.35
@@ -517,10 +531,11 @@ def dessiner_eclair(
     taille: float,
     allume: bool,
     maintenant: float,
+    etat: str = "escalade",
 ) -> None:
     """Icône éclair : braise vive pendant l'escalade, silhouette éteinte sinon."""
     pulsation = 0.5 + 0.5 * math.sin(maintenant * 9.0) if allume else 0.0
-    fill, contour = couleurs_eclair(allume, pulsation=pulsation)
+    fill, contour = couleurs_eclair(allume, pulsation=pulsation, etat=etat)
     if allume:
         halo = taille * 0.58
         toile.create_oval(

@@ -16,6 +16,7 @@ import logging
 import os
 import time
 import re
+import unicodedata
 from typing import Any, Mapping, Optional
 
 
@@ -691,3 +692,21 @@ def _signals(answers: Mapping[str, Mapping[str, Any]], thresholds: JevThresholds
         contains_personal_data=_noul(answers, "contains_personal_data", thresholds.noul_true),
         named_harness=_choice(answers, "named_harness", thresholds.choice_confidence),
     )
+
+
+# Mots d'appel qui accompagnent le nom sans rien demander (« Hé, hyper ambient ? »).
+_APPELS = {"he", "hey", "eh", "oui", "ok", "okay", "dis", "bonjour", "salut", "coucou", "allo"}
+
+
+def seulement_le_nom(transcription: str) -> bool:
+    """True si l'énoncé ne fait que la nommer : elle répond sans cerveau (25/09).
+
+    « Hyper ambiante » seul partait au distant, 4 s pour une réponse générique.
+    """
+    if not nom_du_produit_prononce(transcription):
+        return False
+    reste = _MOTIF_NOM.sub(" ", transcription)
+    reste = unicodedata.normalize("NFKD", reste.lower())
+    reste = "".join(c for c in reste if not unicodedata.combining(c))
+    mots = re.sub(r"[^a-z ]", " ", reste).split()
+    return all(m in _APPELS for m in mots)

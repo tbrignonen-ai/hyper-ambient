@@ -42,7 +42,7 @@ from src.hostagent.warmup import prechauffer
 from src.presence.etat import Presence
 from src.brain.factory import construire_distant, libelle_distant, mode_distant
 from src.brain.mandat import annuler_mandats
-from src.brain.sessions_voix import demande_de_session, ponts_harnais
+from src.brain.sessions_voix import demande_de_session, ponts_harnais, resoudre_precision
 from src.brain.sessions_voix import executer as executer_session
 from src.ears.fin_de_tour import enonce_incomplet
 from src.mouth.repetition import (
@@ -64,8 +64,11 @@ from src.brain.contexte import (
     MemoireConversation,
     TamponAmbiant,
     phrase_garde,
+    projeter_messages,
     question_d_outil,
 )
+from src.brain.compactage import Compacteur, budget_pour_modele, resume_message, est_nouvelle_conversation
+from src.i18n import t
 from src.brain.tool_loop import _execute, run_tool_loop
 from src.brain.tools import MAX_TOOL_CONTENT_CHARS, ToolCall, ToolRegistry
 from src.brain.tools_calculator import register_calculator
@@ -84,12 +87,11 @@ from src.brain.mandat import (
     phrase_rappel,
     redresser_harnais,
 )
-from src.ears.jev_reflexe import FenetreConversation, nom_du_produit_prononce
+from src.brain.router import nomme_un_harnais
+from src.ears.jev_reflexe import FenetreConversation, nom_du_produit_prononce, seulement_le_nom
 from src.gate.permission import Gate
 
-# Douze messages, soit six echanges. Assez pour conserver le fil d'une courte
-# conversation vocale, sans laisser le contexte du modele local croitre sans
-# borne d'un tour a l'autre.
+# Compatibilité avec l'entrée texte ; le host-agent ne tronque plus à 12 messages.
 MEMOIRE_MESSAGES = 12
 # Attente maximale de la suite d'un énoncé inachevé (fin de tour sémantique).
 DELAI_SUSPENS_S = 2.0
@@ -1054,12 +1056,11 @@ class HostPipeline:
 
     def __init__(self) -> None:
         self.asr = None
-        # Memoire de conversation. Sans elle, « oui, vas-y » ne veut rien
-        # dire : chaque tour partait seul, et hyper-ambient a repondu qu'elle
-        # n'avait pas le resultat d'une question a laquelle elle venait de
-        # repondre. On garde les derniers echanges, pas toute la session :
-        # le contexte du modele local est petit et la latence croit avec.
+        # Historique parlé de la session. Le compacteur conserve les faits
+        # anciens et borne le prompt du modèle.
         self._historique: list[dict] = []
+        self._compacteur = Compacteur(budget_pour_modele(None, canal="reflex"))
+        self._compacteur.historique = self._historique
         self._memoire = MemoireConversation()
         self._tampon_ambiant = TamponAmbiant()
         # Resultats d'outils du dernier tour qui en a execute. `_historique`
@@ -1151,10 +1152,15 @@ class HostPipeline:
             )
 
         if "mains_libres" in message:
+            avant = self._mains_libres
             self._mains_libres = message.get("mains_libres") is True
+            if self._mains_libres and not avant:
+                # Activer le mode, c'est déjà s'adresser à elle : la première
+                # phrase n'a pas à la nommer (25/09). Seule la bascule compte,
+                # Presence rappelle l'option à chaque tour.
+                self._fenetre.engager()
             if not self._mains_libres:
-                # Couper le mode referme la conversation : la prochaine
-                # activation repart d'une page blanche.
+                # Couper le mode referme l'écoute, pas la conversation.
                 self._fenetre.fermer()
                 self._fermer_conversation()
             print(
@@ -1411,13 +1417,30 @@ class HostPipeline:
             raise
 
     def _fermer_conversation(self) -> str:
-        """Purge la mémoire vive. Les mandats en cours restent."""
+        """Ferme l'écoute sans effacer la conversation (25/09).
+
+        Purger ici effaçait tout après une minute de silence : une séance de
+        plusieurs heures repartait de zéro à chaque pause. La mémoire vit
+        aussi longtemps que le host-agent ; seul le tampon ambiant est jeté.
+        """
+        self._tampon_ambiant.oublier()
+        return phrase_garde([m.harnais for m in self._mandats.en_cours()])
+
+    def nouvelle_conversation(self) -> None:
+        """Remise à zéro explicite, y compris le résumé et les outils temporaires."""
+        self._compacteur.vider()
+        self._historique.clear()
         self._memoire.purger()
         self._tampon_ambiant.oublier()
-        self._historique = []
         self._dernier_outils = []
         self._historique_outils_ephemeres = []
-        return phrase_garde([m.harnais for m in self._mandats.en_cours()])
+
+    def _planifier_compactage(self) -> None:
+        self._compacteur.historique = self._historique
+        reflex = getattr(self.brain, "reflex", None)
+        cible = reflex or getattr(self.brain, "active", self.brain)
+        self._compacteur.budget = budget_pour_modele(cible, canal="reflex" if reflex else "deep")
+        self._compacteur.planifier()
 
     async def _ouvrir_conversation(self) -> None:
         self._fenetre.engager()
@@ -1644,10 +1667,10 @@ class HostPipeline:
     def _historique_pour_modele(self) -> list[dict]:
         """Parole retenue + derniers resultats d'outils, hors amorces TTS.
 
-        Le buffer ne compte pas dans MEMOIRE_MESSAGES : un resultat Codex de
-        1200 caracteres ne doit pas evincer les six echanges parles.
+        Le buffer ne compte pas dans la mémoire durable : un résultat Codex de
+        1200 caractères ne doit pas évincer les échanges parlés.
         """
-        historique = list(self._historique)
+        historique = ([resume_message(self._compacteur.resume)] if self._compacteur.resume else []) + list(self._historique)
         for outil in self._dernier_outils:
             nom = outil.get("name") or "outil"
             contenu = (outil.get("content") or "").strip()
@@ -1656,6 +1679,11 @@ class HostPipeline:
             historique.append(
                 {"role": "user", "content": f"[résultat outil {nom}] {contenu}"}
             )
+        if self.brain is not None and not hasattr(self.brain, "reflex"):
+            cible = getattr(self.brain, "active", self.brain)
+            historique = projeter_messages(
+                historique, "deep", budget_pour_modele(cible, canal="deep")
+            )
         return historique
 
     def _purger_historique_outils_ephemere(self) -> None:
@@ -1663,9 +1691,10 @@ class HostPipeline:
         if not self._historique_outils_ephemeres:
             return
         identifiants = {id(message) for message in self._historique_outils_ephemeres}
-        self._historique = [
+        self._historique[:] = [
             message for message in self._historique if id(message) not in identifiants
         ]
+        self._planifier_compactage()
         self._historique_outils_ephemeres = []
 
     def _registre_pour_tour(self, prompt: str):
@@ -1844,9 +1873,19 @@ class HostPipeline:
     async def _rejoindre_session(self, websocket, prompt: str) -> str | None:
         """« Reprends la session Claude qui parle de X » : adoptée, puis ouverte
         dans le harnais par Presence. None si ce n'est pas une telle demande."""
-        demande = demande_de_session(prompt)
+        attente, self._session_en_attente = getattr(self, "_session_en_attente", None), None
+        demande = resoudre_precision(prompt, attente) if attente else None
+        demande = demande or demande_de_session(prompt)
         if demande is None:
             return None
+        if demande.action == "ambigu":
+            self._session_en_attente = demande
+        # « Connecte-toi à Claude et à Codex, nouvelle session pour les deux » :
+        # on remet à zéro, puis la demande part aux harnais dans le même tour
+        # (25/09). Leur accusé tient lieu de réponse.
+        suite_aux_harnais = demande.action == "nouvelle" and bool(
+            outils_exiges(prompt, self.registre)
+        )
         resultat = await executer_session(demande, ponts_harnais(self.registre))
         print(
             f"SESSION: {demande.action} {demande.harnais or '*'} {demande.requete!r} "
@@ -1861,6 +1900,8 @@ class HostPipeline:
                 )
             except Exception as exc:
                 print(f"SESSION: ouverture non envoyee ({type(exc).__name__})", flush=True)
+        if suite_aux_harnais:
+            return None
         return resultat.phrase
 
     def _retenir_mandat(self, mandat, phrase: str) -> None:
@@ -1888,7 +1929,8 @@ class HostPipeline:
                 {"role": "assistant", "content": contenu},
             ]
         )
-        del self._historique[:-MEMOIRE_MESSAGES]
+        # Le résultat d'un mandat reste accessible sur les tours récents ;
+        # le compactage attend la purge des éventuels messages éphémères.
 
     async def _envoyer(self, websocket, trames: list[AudioFrame]) -> None:
         """Envoie des paquets d'une seconde, ou un marqueur vide de fin de tour."""
@@ -2174,6 +2216,17 @@ class HostPipeline:
                     await self._envoyer(websocket, [])
                 return
 
+            if est_nouvelle_conversation(prompt):
+                self.nouvelle_conversation()
+                phrase = t("conversation.nouvelle")
+                self._noter_conversation("Toi", prompt)
+                self._noter_conversation("hyper-ambient", phrase)
+                await self._dire_secours(
+                    websocket, leftover, phrase=phrase, transcript=prompt,
+                    t_tour=t_tour, ears_ms=ears_ms, brain_ms=0.0,
+                )
+                return
+
             forcer, self._forcer_tour = self._forcer_tour, False
             if self._mains_libres and not forcer and enonce_incomplet(prompt):
                 # Pause au milieu d'une pensée : on attend la suite au lieu
@@ -2195,7 +2248,7 @@ class HostPipeline:
                 print("JEV   : conversation en cours — evaluation sautee", flush=True)
                 await self._ouvrir_conversation()
                 jev = None
-            if jev is not None and self._mains_libres and nom_du_produit_prononce(prompt):
+            if jev is not None and self._mains_libres and (nom_du_produit_prononce(prompt) or nomme_un_harnais(prompt)):
                 # Elle est nommee : l'intention est certaine et verifiee en
                 # local. Mesure du 2026-09-20 : JeV note « Hyper Ambient »
                 # seul a 0.39, sous tout seuil utilisable. On evite l'appel
@@ -2203,6 +2256,16 @@ class HostPipeline:
                 print("JEV   : nommee — evaluation distante inutile", flush=True)
                 await self._ouvrir_conversation()
                 jev = None
+            if self._mains_libres and seulement_le_nom(prompt):
+                # Le nom seul : elle répond présente, sans cerveau (25/09).
+                phrase = t("jev.oui")
+                self._noter_conversation("Toi", prompt)
+                self._noter_conversation("hyper-ambient", phrase)
+                await self._dire_secours(
+                    websocket, leftover, phrase=phrase, transcript=prompt,
+                    t_tour=t_tour, ears_ms=ears_ms, brain_ms=0.0,
+                )
+                return
             if jev is not None and self._mains_libres:
                 evaluation = await jev.evaluate(prompt)
                 if jev_doit_ignorer(evaluation, mains_libres=True):
@@ -2342,6 +2405,10 @@ class HostPipeline:
                             if spec is not None and hasattr(
                                 spec.handler, "registre_mandats"
                             ):
+                                # Troisième état visuel : l'appel part à un
+                                # harnais, pas au modèle distant (25/09).
+                                presence.emettre("harnais")
+                                await presence.vider()
                                 continue
                             phrase = annonce_outil(chunk.get("tool", ""))
                             # Comptee comme une amorce : c'est une phrase
@@ -2483,7 +2550,8 @@ class HostPipeline:
                     self._historique_outils_ephemeres.extend(
                         [message_utilisateur, message_assistant]
                     )
-                del self._historique[:-MEMOIRE_MESSAGES]
+                if not outils_ce_tour:
+                    self._planifier_compactage()
             if outils_ce_tour:
                 self._dernier_outils = outils_ce_tour
 

@@ -1163,3 +1163,19 @@ def test_deux_harnais_nommes_deux_demandes():
     assert outils_exiges("Qu'est-ce que Codex ?", Registre()) == []
     # Une question sur ce qu'un harnais a fait n'est pas une demande.
     assert outils_exiges("Qu'est-ce que Claude a fait ?", Registre()) == []
+
+
+def test_un_harnais_exclu_n_est_pas_exige():
+    """25/09 : « fais toi-même une recherche… sans passer par Claude ni Codex »
+    a quand même appelé Claude."""
+    from src.brain.mandat import outils_exiges
+
+    class Registre:
+        def get(self, nom):
+            return object()
+
+    phrase = ("Je voudrais que tu fasses toi-même une recherche sur Internet. "
+              "Sans passer par Claude Nicodex.")
+    assert outils_exiges(phrase, Registre()) == []
+    assert outils_exiges("Fais-le toi-même, pas avec Codex.", Registre()) == []
+    assert outils_exiges("Demande à Codex, pas à Claude.", Registre()) == ["ask_codex"]

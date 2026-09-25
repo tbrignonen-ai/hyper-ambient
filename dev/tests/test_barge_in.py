@@ -125,7 +125,7 @@ def test_euh_100ms_ne_declenche_pas_en_lecture(monkeypatch):
 def test_voix_400ms_forte_et_bande_declenche_barge_in(monkeypatch):
     capture, flux = _nouvelle_capture(monkeypatch)
     capture.regime_lecture(True)
-    flux.pousser(_voix(400, amplitude=8000))
+    flux.pousser(_voix(400, amplitude=24000))  # « STOP » fort : le creux reste au-dessus du plancher 2 500 (25/09)
     assert capture.barge_in.is_set() is True
     assert capture._tour or capture._preambule
     capture.stop()
@@ -162,7 +162,7 @@ def test_grave_50hz_fort_ne_declenche_pas(monkeypatch):
 def test_barge_in_conserve_laudio_comme_debut_du_tour(monkeypatch):
     capture, flux = _nouvelle_capture(monkeypatch)
     capture.regime_lecture(True)
-    flux.pousser(_voix(400, amplitude=8000))
+    flux.pousser(_voix(400, amplitude=24000))
     assert capture.barge_in.is_set() is True
     n_avant = len(capture._tour)
     assert n_avant > 0

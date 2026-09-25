@@ -146,8 +146,11 @@ def test_holding_est_une_seule_ligne_informative():
 def test_few_shots_prefixe_sont_trois_plus_trois():
     reflexe = re.findall(r"Classe: REFLEXE", CLASSIFY_PREFIX)
     escalade = re.findall(r"Classe: ESCALADE", CLASSIFY_PREFIX)
-    assert len(reflexe) == 3
-    assert len(escalade) == 3
+    # 25/09 : deux exemples de conversation ordinaire (locale) et une
+    # explication technique (distante) s'ajoutent.
+    assert len(reflexe) == 5
+    assert len(escalade) == 4
+    assert "stressé pour ma soutenance" in CLASSIFY_PREFIX
     assert "Bonjour hyper-ambient." in CLASSIFY_PREFIX
     assert "Merci, c'est noté." in CLASSIFY_PREFIX
     assert "Répète plus fort." in CLASSIFY_PREFIX

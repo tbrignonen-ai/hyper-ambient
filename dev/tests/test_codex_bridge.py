@@ -75,3 +75,63 @@ def test_le_modele_et_l_executable_sont_surchargeables():
     assert cmd[:4] == ["npx", "-y", "@openai/codex@0.154.0", "exec"]
     assert cmd[cmd.index("-m") + 1] == "m1"
     assert "-m" not in build_command("q", out_file="o", exe=["codex"])
+
+
+def test_session_verrouillee_par_la_console_presence_est_liberee_puis_reprise():
+    """25/09 : la console `codex resume <id>` ouverte par Presence verrouille le
+    fil ; le 2e message partait en erreur. Le pont la ferme et réessaie, dans
+    la même session."""
+    import asyncio as _asyncio
+
+    from native.codexbridge import bridge as b
+
+    appels = []
+    liberees = []
+
+    async def runner(cmd, out_file, timeout_s):
+        appels.append(cmd)
+        if len(appels) == 1:
+            return 1, "", "", "Error: thread 01a0 already has an active writer (code -32600)"
+        return 0, "Oui, je suis prêt.", ""
+
+    def liberer(session):
+        liberees.append(session)
+        return True
+
+    reponse = _asyncio.run(b.answer_question(
+        "prêt ?", runner=runner, session="01a0", liberer=liberer, pause_s=0))
+    assert reponse == {"ok": True, "answer": "Oui, je suis prêt.", "session_id": "01a0"}
+    assert liberees == ["01a0"]
+    assert all("resume" in c and "01a0" in c for c in appels)
+
+
+def test_autre_echec_n_est_pas_retente():
+    import asyncio as _asyncio
+
+    from native.codexbridge import bridge as b
+
+    async def runner(cmd, out_file, timeout_s):
+        return 1, "", "", "Error: quota"
+
+    def liberer(session):
+        raise AssertionError("ne doit pas fermer de console")
+
+    reponse = _asyncio.run(b.answer_question(
+        "prêt ?", runner=runner, session="01a0", liberer=liberer, pause_s=0))
+    assert reponse["ok"] is False
+
+
+def test_liberer_ne_vise_que_les_consoles_conhost_de_la_session():
+    from native.codexbridge import bridge as b
+
+    processus = [
+        {"ProcessId": 11, "Name": "conhost.exe",
+         "CommandLine": r'conhost.exe C:\npm\codex.cmd resume 01a0'},
+        {"ProcessId": 12, "Name": "node.exe",
+         "CommandLine": r'node codex.js resume 01a0'},
+        {"ProcessId": 13, "Name": "conhost.exe",
+         "CommandLine": r'conhost.exe C:\npm\codex.cmd resume 99ff'},
+        {"ProcessId": 14, "Name": "WindowsTerminal.exe",
+         "CommandLine": r'codex resume 01a0'},
+    ]
+    assert b.consoles_de_session(processus, "01a0") == [11]

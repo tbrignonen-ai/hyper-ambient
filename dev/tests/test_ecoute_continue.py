@@ -259,3 +259,12 @@ def test_le_nom_seul_passe(monkeypatch):
     flux.pousser(_silence(800))
     assert capture.segment_pret() is True
     capture.stop()
+
+
+def test_sa_propre_voix_ne_la_coupe_plus():
+    """25/09 : en mains libres, l'écho de sa voix (rms 600–1 900 mesurés,
+    1 370 à 12 h 50) dépassait le plancher de 375 et coupait sa réponse. Un
+    « stop » franc a été mesuré à 6 516."""
+    from native.hostagent.windows_audio import PLANCHER_LECTURE_RMS
+
+    assert 1900 < PLANCHER_LECTURE_RMS < 6516

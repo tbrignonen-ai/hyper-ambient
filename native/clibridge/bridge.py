@@ -139,7 +139,8 @@ async def run_cli(cmd, out_file, timeout_s, workdir=DEFAULT_WORKDIR):
 
 async def answer_question(question, runner=run_cli, workdir=DEFAULT_WORKDIR,
                           timeout_s=DEFAULT_TIMEOUT_S, agent="claude",
-                          lookup=shutil.which, session=None, fourche=False):
+                          lookup=shutil.which, session=None, fourche=False,
+                          liberer=None):
     question = (question or "").strip()[:MAX_QUESTION_CHARS]
     if not question:
         return {"ok": False, "error": "question vide"}
@@ -161,6 +162,15 @@ async def answer_question(question, runner=run_cli, workdir=DEFAULT_WORKDIR,
             or not lookup(cmd[0])
         ):
             return {"ok": False, "error": spec["missing"]}
+        if session and agent == "claude" and not fourche:
+            # Même session que la console Presence : on la ferme d'abord,
+            # elle est rouverte à la réponse (25/09, comme Codex).
+            if liberer is None:
+                from native.consoles_presence import liberer_session
+
+                def liberer(s):
+                    return liberer_session(s, "claude")
+            liberer(session)
         try:
             code, text = await runner(cmd, out_file, timeout_s)
         except (asyncio.TimeoutError, TimeoutError):

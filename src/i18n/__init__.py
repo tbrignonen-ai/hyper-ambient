@@ -9,6 +9,9 @@ import os
 from typing import Any
 
 _FR: dict[str, str] = {
+    "conversation.nouvelle": "D'accord, nous repartons de zéro.",
+    "jev.oui": "Oui, je t'écoute.",
+    "session.laquelle": "Une nouvelle session {harnais}, ou je reprends la dernière ?",
     "tools.ask_codex": "Je demande à Codex, ça prend une vingtaine de secondes.",
     "tools.ask_muse": "Je demande son avis à Muse, ça prend une trentaine de secondes.",
     "tools.ask_claude": "Je demande son analyse à Claude.",
@@ -60,6 +63,8 @@ _FR: dict[str, str] = {
     "ui.shortcut_ctrl": "Ctrl + Espace",
     "ui.local_model": "Cerveau distant",
     "ui.remote_call": "Appel distant…",
+    "ui.harness_call": "Appel harnais…",
+    "ui.harness_status": "Demande envoyée au harnais — la réponse arrivera d'elle-même.",
     "ui.harness_front": "Harnais au premier plan",
     "ui.remote_status": (
         "Appel distant en cours — le modèle local interroge un modèle distant."
@@ -339,6 +344,9 @@ _FR: dict[str, str] = {
 }
 
 _EN: dict[str, str] = {
+    "conversation.nouvelle": "Okay, let's start a new conversation.",
+    "jev.oui": "Yes, I'm listening.",
+    "session.laquelle": "A new {harnais} session, or shall I resume the last one?",
     "tools.ask_codex": "I'll ask Codex — that takes about twenty seconds.",
     "tools.ask_muse": "I'll ask Muse — that takes about thirty seconds.",
     "tools.ask_claude": "I'll ask Claude for her analysis.",
@@ -390,6 +398,8 @@ _EN: dict[str, str] = {
     "ui.shortcut_ctrl": "Ctrl + Space",
     "ui.local_model": "Remote brain",
     "ui.remote_call": "Remote call…",
+    "ui.harness_call": "Harness call…",
+    "ui.harness_status": "Request sent to the harness — the answer will come on its own.",
     "ui.harness_front": "Bring harness to front",
     "ui.remote_status": (
         "Remote call in progress — the local model is asking a remote one."
@@ -669,6 +679,9 @@ _EN: dict[str, str] = {
 }
 
 _ES: dict[str, str] = {
+    "conversation.nouvelle": "De acuerdo, empezamos una conversación nueva.",
+    "jev.oui": "Sí, te escucho.",
+    "session.laquelle": "¿Una sesión nueva de {harnais}, o retomo la última?",
     "ui.conversation_open": "En conversación — {n} s",
     "ui.conversation_invite": "Di mi nombre para hablarme",
 }
@@ -971,6 +984,8 @@ def ui() -> dict[str, str]:
         "shortcut_ctrl": t("ui.shortcut_ctrl"),
         "local_model": t("ui.local_model"),
         "remote_call": t("ui.remote_call"),
+        "harness_call": t("ui.harness_call"),
+        "harness_status": t("ui.harness_status"),
         "harness_front": t("ui.harness_front"),
         "remote_status": t("ui.remote_status"),
         "start": t("ui.start"),

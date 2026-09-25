@@ -34,7 +34,10 @@ _ADRESSE = re.compile(
 _NOUVELLE = re.compile(r"\bnouvel(?:le)? session\b|\bsession (?:vierge|neuve)\b")
 _VERBE = re.compile(
     r"\b(?:repren\w*|reprend\w*|rejoin\w*|rejoind\w*|ouvr\w*|retourn\w*|revien\w*|"
-    r"bascul\w*|continu\w*|va|vas|aller|allons|passe|charge\w*|remets?|retrouv\w*)\b"
+    r"bascul\w*|continu\w*|charge\w*|remets?|retrouv\w*|"
+    # Verbes de mouvement : seulement « va dans / passe sur … ». Seuls, ils
+    # faisaient de « on va faire une session de tests » une reprise (25/09).
+    r"(?:va|vas|aller|allons|passe|passons) (?:dans|sur))\b"
 )
 _HARNAIS = re.compile(r"\b(claude|codex)\b")
 _DE = r"(?:de |d'|du |des |sur )?"
@@ -49,7 +52,7 @@ _FIN_TITRE = re.compile(r"\s+dans (?:le|son) titre\s*$", re.I)
 @dataclass(frozen=True)
 class DemandeSession:
     harnais: Optional[str]
-    action: str  # "derniere" | "chercher" | "nouvelle"
+    action: str  # "derniere" | "chercher" | "nouvelle" | "ambigu"
     requete: str
 
 
@@ -80,9 +83,18 @@ def demande_de_session(prompt: str) -> Optional[DemandeSession]:
         return None
     trouve = _HARNAIS.search(norme)
     harnais = trouve.group(1).capitalize() if trouve else None
+    # « Claude et Codex », « pour les deux » : les deux harnais (25/09).
+    if len(set(_HARNAIS.findall(norme))) > 1 or re.search(r"\bles deux\b", norme):
+        harnais = None
     if _NOUVELLE.search(norme):
         return DemandeSession(harnais, "nouvelle", "")
     if not _VERBE.search(norme):
+        # Whisper déforme le verbe (« ouvre » → « on vous fait », 25/09) :
+        # « session » + un harnais nommé suffit pour demander laquelle.
+        # Il faut quand même un mot d'action : « cette session Claude était
+        # longue » ne demande rien.
+        if harnais and _ACTION_FLOUE.search(norme):
+            return DemandeSession(harnais, "ambigu", "")
         return None
     debut = norme.index("session")
     marqueur = _MARQUEUR.search(norme, debut)
@@ -91,7 +103,35 @@ def demande_de_session(prompt: str) -> Optional[DemandeSession]:
         requete = _FIN_TITRE.sub("", texte[marqueur.end():]).strip(" .?!,;")
     if requete:
         return DemandeSession(harnais, "chercher", requete)
+    # « Ouvre une session Codex » ne dit ni nouvelle ni dernière : elle
+    # demande au lieu de deviner (25/09). « Reprends… », « la dernière… »
+    # restent des reprises directes.
+    if _OUVRIR_SEUL.search(norme) and not _REPRISE.search(norme):
+        return DemandeSession(harnais, "ambigu", "")
     return DemandeSession(harnais, "derniere", "")
+
+
+_ACTION_FLOUE = re.compile(
+    r"\b(?:fai\w*|lanc\w*|cre\w*|demarr\w*|mets?|veux|voudrais|besoin|il te plait|stp)\b"
+)
+_OUVRIR_SEUL = re.compile(r"\b(?:ouvr\w*|lance\w*|demarr\w*|charge\w*)\b")
+_REPRISE = re.compile(
+    r"\b(?:repren\w*|reprend\w*|rejoin\w*|rejoind\w*|retourn\w*|revien\w*|continu\w*|"
+    r"retrouv\w*|derniere|precedente|ancienne|existante|en cours|meme)\b"
+)
+_NEUVE = re.compile(r"\b(?:nouvel\w*|neuve?|autre|vierge|zero)\b")
+
+
+def resoudre_precision(reponse: str, attente: DemandeSession) -> Optional[DemandeSession]:
+    """La réponse à « nouvelle ou dernière ? », ou None si elle parle d'autre chose."""
+    norme = _normaliser(reponse or "")
+    if len(norme.split()) > 8:
+        return None
+    if _NEUVE.search(norme):
+        return DemandeSession(attente.harnais, "nouvelle", "")
+    if _REPRISE.search(norme):
+        return DemandeSession(attente.harnais, "derniere", "")
+    return None
 
 
 def ponts_harnais(registre) -> dict[str, Any]:
@@ -123,6 +163,9 @@ async def executer(demande: DemandeSession, ponts: dict[str, Any]) -> ResultatSe
     cibles = [demande.harnais] if demande.harnais else [h for h, _ in _OUTILS if h in ponts]
     if not cibles:
         return ResultatSession(t("session.aucun_pont"))
+
+    if demande.action == "ambigu":
+        return ResultatSession(t("session.laquelle", harnais=_et(cibles)))
 
     if demande.action == "nouvelle":
         for harnais in cibles:

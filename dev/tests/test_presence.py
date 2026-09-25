@@ -139,4 +139,5 @@ async def test_sans_socket_l_emission_ne_fait_rien():
 
 
 def test_les_cinq_etats_du_cahier_des_charges_existent():
-    assert ETATS == ("repos", "ecoute", "reflexion", "escalade", "parole")
+    # 25/09 : sixième état, l'appel à un harnais (Codex, Claude).
+    assert ETATS == ("repos", "ecoute", "reflexion", "escalade", "harnais", "parole")

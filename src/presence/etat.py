@@ -25,7 +25,7 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 # Les cinq etats du cahier des charges, dans l'ordre naturel d'un tour de parole.
-ETATS = ("repos", "ecoute", "reflexion", "escalade", "parole")
+ETATS = ("repos", "ecoute", "reflexion", "escalade", "harnais", "parole")
 
 
 class EtatInconnu(ValueError):

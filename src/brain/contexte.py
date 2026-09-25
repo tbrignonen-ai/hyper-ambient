@@ -174,7 +174,7 @@ def _dernier_tour(contexte) -> tuple[str, str]:
             return "", ""
         dernier = contexte._tours[-1]
         return dernier.user_norm, dernier.assistant_spoken
-    messages = list(contexte or [])
+    messages = [m for m in (contexte or []) if not m.get("compactage_resume")]
     user_norm = ""
     spoken = ""
     for message in reversed(messages):
@@ -207,18 +207,21 @@ def fenetre_classifieur(prompt: str, contexte=None) -> str:
     return "Tour precedent : " + " / ".join(champs) + chr(10) + texte
 
 
-def projeter_messages(messages: list[dict], canal: str) -> list[dict]:
+def projeter_messages(messages: list[dict], canal: str, budget=None) -> list[dict]:
     """Projection sur une liste {role, content} déjà construite.
 
     Les messages d'un tour d'outil en cours (assistant.tool_calls, role tool)
     restent dans l'ordre : les retrancher casserait le protocole.
     """
+    resumes = []
     extras = []
     spoken = []
     protocole = []
     for message in messages or []:
         contenu = message.get("content") or ""
-        if contenu.startswith("[résultat outil"):
+        if message.get("compactage_resume"):
+            resumes.append(message)
+        elif contenu.startswith("[résultat outil"):
             extras.append(message)
         elif message.get("role") == "tool" or message.get("tool_calls"):
             protocole.append(message)
@@ -226,28 +229,35 @@ def projeter_messages(messages: list[dict], canal: str) -> list[dict]:
             spoken.append(message)
         else:
             protocole.append(message)
-    tours = REFLEXE_TOURS if canal == "reflex" else MEMOIRE_TOURS_PROFOND
-    jetons = JETONS_REFLEXE if canal == "reflex" else JETONS_PROFOND
+    tours = REFLEXE_TOURS if canal == "reflex" else (len(spoken) if budget is not None else MEMOIRE_TOURS_PROFOND)
+    jetons = budget.plafond if budget is not None else (JETONS_REFLEXE if canal == "reflex" else JETONS_PROFOND)
     borne = spoken[-(tours * 2) :]
-    while estimer_jetons(borne + extras + protocole) > jetons and len(borne) > 2:
+    while estimer_jetons(resumes + borne + extras + protocole) > jetons and len(borne) > 2:
         borne = borne[2:]
-    return borne + extras + protocole
+    return resumes + borne + extras + protocole
 
 
-def projeter_kw(kw: dict, canal: str) -> dict:
+def projeter_kw(kw: dict, canal: str, budget=None) -> dict:
     """Réduit history et messages au plafond du canal, sans jeter le tour courant."""
     propre = dict(kw)
-    propre["history"] = projeter_messages(list(propre.get("history") or []), canal)
+    propre["history"] = projeter_messages(list(propre.get("history") or []), canal, budget)
     messages = propre.get("messages")
     if not messages:
         return propre
-    systeme = [m for m in messages if m.get("role") == "system"][:1]
-    reste = [m for m in messages if m.get("role") != "system"]
+    systeme = [m for m in messages if m.get("role") == "system" and not m.get("compactage_resume")][:1]
+    reste = [m for m in messages if m.get("role") != "system" or m.get("compactage_resume")]
     courant: list[dict] = []
     if reste and reste[-1].get("role") == "user":
         courant = [reste[-1]]
         reste = reste[:-1]
-    propre["messages"] = systeme + projeter_messages(reste, canal) + courant
+    budget_restant = budget
+    if budget is not None:
+        from src.brain.compactage import BudgetModele
+        # La cible de latence borne l'historique variable. L'instruction système
+        # fixe est déjà amortie par le cache de préfixe de llama.cpp.
+        reserve = estimer_jetons(courant)
+        budget_restant = BudgetModele(budget.fenetre, max(1, budget.cible_latence - reserve))
+    propre["messages"] = systeme + projeter_messages(reste, canal, budget_restant) + courant
     return propre
 
 

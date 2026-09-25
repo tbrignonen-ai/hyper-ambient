@@ -205,5 +205,5 @@ def test_ligne_lecture_mesure_l_echo_et_le_seuil_d_interruption():
         def instantane(self):
             return {"seuil": 45.0, "rms_max": 812.4}
 
-    assert ligne_lecture(Capture(), barge=False) == "LECTURE : rms_max=812 seuil_interruption=375 coupee=non"
+    assert ligne_lecture(Capture(), barge=False) == "LECTURE : rms_max=812 seuil_interruption=2500 coupee=non"
     assert ligne_lecture(object(), barge=True) == ""

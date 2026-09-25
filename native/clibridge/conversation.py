@@ -54,6 +54,7 @@ def message_pour_session(
     l'historique, la conversation a changé : session neuve, tout le contexte.
     """
     dialogue = [m for m in messages if m.get("role") in _LIBELLES]
+    resumes = [m.get("content", "").strip() for m in messages if m.get("compactage_resume")]
     if not dialogue:
         return "", derniere_reponse is not None
     courant = _texte(dialogue[-1])
@@ -71,9 +72,9 @@ def message_pour_session(
         neuve = True
 
     a_rappeler = [m for m in precedent[depuis:] if _texte(m)]
-    if not a_rappeler:
+    if not a_rappeler and not (neuve and resumes):
         return courant, neuve
-    lignes = [f"- {_LIBELLES[m['role']]} : {_texte(m)}" for m in a_rappeler]
+    lignes = (resumes[-1:] if neuve else []) + [f"- {_LIBELLES[m['role']]} : {_texte(m)}" for m in a_rappeler]
     return "\n".join([_ENTETE_CONTEXTE, *lignes, "", courant]), neuve
 
 
