@@ -17,6 +17,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from native import sans_console
@@ -98,19 +99,21 @@ def liberer_console_macos(dossier, *, processus=None):
         meta = json.loads((dossier / "session.json").read_text(encoding="utf-8"))
         pid = int((dossier / "pid").read_text(encoding="ascii").strip())
         tty = (dossier / "tty").read_text(encoding="ascii").strip()
-        processus = _processus_macos() if processus is None else processus
+        sonde_reelle = processus is None
+        processus = _processus_macos() if sonde_reelle else processus
         commande = processus[pid][1]
         if str(dossier / "reprendre.command") not in shlex.split(commande):
             return False
         descendants = _descendants(processus, pid)
-        if not any(_cli_de_session(processus[p][1], meta["harnais"], meta["session"])
-                   for p in descendants):
+        cli_pids = [p for p in descendants if _cli_de_session(
+            processus[p][1], meta["harnais"], meta["session"])]
+        if not cli_pids:
             return False
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         logger.warning("console Presence Mac non verifiee : %s", exc)
         return False
     signales = False
-    for cible in [*descendants, pid]:
+    for cible in descendants:
         try:
             os.kill(cible, signal.SIGTERM)
             signales = True
@@ -118,6 +121,27 @@ def liberer_console_macos(dossier, *, processus=None):
             pass
         except OSError as exc:
             logger.warning("console Presence Mac %s non arretee : %s", cible, exc)
+    if sonde_reelle and signales:
+        # Certains wrappers Node ignorent TERM. Revalider PID, parent et ligne
+        # avant KILL : jamais un processus réutilisé entre deux sondes.
+        time.sleep(0.3)
+        try:
+            encore = _processus_macos()
+            for cible in descendants:
+                if encore.get(cible) == processus[cible]:
+                    try:
+                        os.kill(cible, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning("verification arret console Mac : %s", exc)
+    try:
+        os.kill(pid, signal.SIGTERM)
+        signales = True
+    except ProcessLookupError:
+        pass
+    except OSError as exc:
+        logger.warning("shell Presence Mac %s non arrete : %s", pid, exc)
     if not signales:
         return False
     _fermer_fenetre_macos(tty)
