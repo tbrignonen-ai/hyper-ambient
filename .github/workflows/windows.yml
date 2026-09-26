@@ -78,6 +78,6 @@ jobs:
           for i, l in enumerate(lines):
               chunk.append(l)
               if len(chunk) == 8 or i == len(lines) - 1:
-                  print(f"::error title=macOS test failures ({i + 1}/{len(lines)})::" + esc('\n'.join(chunk)))
+                  print(f"::error title=Test failures ({i + 1}/{len(lines)})::" + esc('\n'.join(chunk)))
                   chunk = []
           PY
