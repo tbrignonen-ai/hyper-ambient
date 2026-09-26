@@ -1,10 +1,14 @@
 """La libération Mac ne vise que les .command créés par Presence."""
 import json
 import signal
+import sys
 
 import pytest
 
 from native import consoles_presence as cp
+
+# Chemin macOS (signaux POSIX, Terminal.app) : SIGKILL n'existe pas sous Windows.
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Libération de console propre à macOS")
 
 
 @pytest.mark.parametrize("harnais,reprise", [("codex", "resume"), ("claude", "--resume")])

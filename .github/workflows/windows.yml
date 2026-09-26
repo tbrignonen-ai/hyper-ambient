@@ -1,50 +1,62 @@
-name: macOS
+name: Windows
 
 on:
   pull_request:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, "ci/**"]
 
 jobs:
   test:
-    runs-on: macos-latest   # Apple Silicon (arm64)
+    runs-on: windows-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"   # what packaging/windows/installer.ps1 installs
           cache: pip
-          cache-dependency-path: packaging/macos/requirements-macos.txt
+          cache-dependency-path: .github/workflows/windows.yml
 
-      - name: Check architecture
+      - name: Check Python and Tk
         run: |
-          uname -m
-          python -c "import platform, sys; print(platform.machine(), sys.version)"
+          python -c "import platform, sys; print(platform.platform(), platform.machine(), sys.version)"
           python -c "import tkinter; print('Tk', tkinter.TkVersion)"
 
-      - name: Install macOS requirements
+      - name: PowerShell scripts parse
+        shell: pwsh
+        run: |
+          $bad = 0
+          Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
+            $errs = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errs) | Out-Null
+            if ($errs) { $bad++; $errs | ForEach-Object { Write-Output "::error file=$($_.Extent.File),line=$($_.Extent.StartLineNumber)::$($_.Message)" } }
+            else { Write-Output "OK  $($_.FullName)" }
+          }
+          if ($bad) { exit 1 }
+
+      - name: Install host-side dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r packaging/macos/requirements-macos.txt
+          pip install numpy scipy soundfile soxr sounddevice librosa websockets httpx fastapi "uvicorn[standard]" pydantic pyyaml python-dotenv
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install pytest pytest-asyncio
 
-      - name: Import smoke (MLX / Metal)
-        continue-on-error: true   # CI VMs may not expose Metal; informational
-        run: python -c "import mlx.core as mx; print(mx.default_device(), mx.array([1,2,3]).sum())"
-
-      - name: Launcher is executable
-        run: test -x packaging/macos/lancer.command || (ls -l packaging/macos/lancer.command; exit 1)
+      - name: Installer diagnostic (informational)
+        continue-on-error: true   # no Docker/WSL/GPU on CI runners
+        shell: pwsh
+        run: '& ./packaging/windows/installer.ps1 -Diagnostic'
 
       - name: Run tests
         env:
-          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src
+          PYTHONPATH: ${{ github.workspace }};${{ github.workspace }}\src
+          PYTHONUTF8: "1"
         run: python -m pytest dev/tests -q -p no:cacheprovider -ra --junitxml=junit.xml
 
       - name: Report failures as annotations
         if: failure()
+        shell: bash
         run: |
           python - <<'PY'
           import xml.etree.ElementTree as ET
