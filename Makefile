@@ -27,10 +27,10 @@ gpu:
 	docker exec -it mother-core-dev nvidia-smi
 
 # --- models ----------------------------------------------------------------
-models:           ## VAD + Piper FR voice + whisper turbo (~1.2 GB)
+models:           ## VAD + Piper FR voices + whisper turbo & large-v3 (~5 GB)
 	docker exec -it mother-core-dev bash dev/scripts/fetch_models.sh core
 
-models-brain:     ## local GGUF for llama-server (~2.5 GB)
+models-brain:     ## Granite 4.2 3B GGUF for llama-server (~2.2 GB)
 	docker exec -it mother-core-dev bash dev/scripts/fetch_models.sh brain
 
 # --- local services --------------------------------------------------------

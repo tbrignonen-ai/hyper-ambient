@@ -1550,6 +1550,22 @@ class HostPipeline:
         self._jev = construire_jev()
         print(f"JEV   : {type(self._jev).__name__} en entrée", flush=True)
 
+        def _construire_piper():
+            from src.mouth.piper_tts import PiperTTS
+
+            # Les voix francaises de Piper sont natives — elles n'ont jamais
+            # entendu d'anglais — mais claires : 235 Hz mesures sur siwis, quand
+            # hyper-ambient demande grave. MOUTH_DEMI_TONS les descend ; -6
+            # ramene siwis a 155 Hz, la hauteur de la voix Pocket qu'il aimait.
+            demi_tons = _nombre_configuration("MOUTH_DEMI_TONS", 0.0)
+            profil = _texte_configuration("MOUTH_PROFILE", "aurora")
+            print(
+                f"MOUTH : chargement piper {voix} profil={profil} "
+                f"demi_tons={demi_tons:+g}…",
+                flush=True,
+            )
+            return PiperTTS(model_path=voix, profile=profil, demi_tons=demi_tons)
+
         # MOUTH : Pocket TTS par défaut. Piper reste joignable par MOUTH_BACKEND=piper,
         # parce qu'il ne coûte aucune VRAM — c'est le repli si le GPU est saturé.
         backend = _texte_configuration("MOUTH_BACKEND", "pocket").lower()
@@ -1616,29 +1632,31 @@ class HostPipeline:
             )
             self.tts = MagpieTTS(voice=nom_voix, language=langue, device=device)
         else:
-            from src.mouth.piper_tts import PiperTTS
-
-            # Les voix francaises de Piper sont natives — elles n'ont jamais
-            # entendu d'anglais — mais claires : 235 Hz mesures sur siwis, quand
-            # hyper-ambient demande grave. MOUTH_DEMI_TONS les descend ; -6
-            # ramene siwis a 155 Hz, la hauteur de la voix Pocket qu'il aimait.
-            demi_tons = _nombre_configuration("MOUTH_DEMI_TONS", 0.0)
-            profil = _texte_configuration("MOUTH_PROFILE", "aurora")
-            print(
-                f"MOUTH : chargement piper {voix} profil={profil} "
-                f"demi_tons={demi_tons:+g}…",
-                flush=True,
-            )
-            self.tts = PiperTTS(
-                model_path=voix, profile=profil, demi_tons=demi_tons
-            )
+            self.tts = _construire_piper()
 
         if not await self.tts.load_model():
+            if backend == "piper":
+                print(
+                    "MOUTH : voix indisponible — lancer dev/scripts/fetch_models.sh core",
+                    flush=True,
+                )
+                raise SystemExit(1)
+            # Installation neuve : la voix de la carte (Magpie, Pocket…) peut
+            # manquer — Magpie exige un environnement NeMo qu'aucun script du
+            # dépôt ne pose. Plutôt que de couper le host-agent, on parle avec
+            # Piper (fetch_models.sh core) et on le dit.
             print(
-                "MOUTH : voix indisponible — lancer dev/scripts/fetch_models.sh core",
+                f"ATTENTION : MOUTH {backend} indisponible — repli sur piper "
+                "(voix de secours). La voix de la carte reste à installer.",
                 flush=True,
             )
-            raise SystemExit(1)
+            self.tts = _construire_piper()
+            if not await self.tts.load_model():
+                print(
+                    "MOUTH : voix indisponible — lancer dev/scripts/fetch_models.sh core",
+                    flush=True,
+                )
+                raise SystemExit(1)
         self._demarrer_surveillance_langue()
 
     async def close(self) -> None:

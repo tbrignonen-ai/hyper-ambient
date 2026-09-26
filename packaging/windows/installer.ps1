@@ -292,7 +292,7 @@ function Trouver-Python {
             try {
                 $ver = Nettoyer-Sortie (& $cmd.Source --version 2>&1)
                 if ($ver -match 'Python\s+\d+') {
-                    return [pscustomobject]@{ Ok = $true; Texte = "$ver ($($cmd.Source))" }
+                    return [pscustomobject]@{ Ok = $true; Texte = "$ver ($($cmd.Source))"; Exe = $cmd.Source; Prefixe = @() }
                 }
             } catch {
             }
@@ -303,12 +303,37 @@ function Trouver-Python {
         try {
             $ver = Nettoyer-Sortie (& $py.Source -3 --version 2>&1)
             if ($ver -match 'Python\s+\d+') {
-                return [pscustomobject]@{ Ok = $true; Texte = "$ver (py -3)" }
+                return [pscustomobject]@{ Ok = $true; Texte = "$ver (py -3)"; Exe = $py.Source; Prefixe = @('-3') }
             }
         } catch {
         }
     }
-    return [pscustomobject]@{ Ok = $false; Texte = 'absent' }
+    return [pscustomobject]@{ Ok = $false; Texte = 'absent'; Exe = $null; Prefixe = @() }
+}
+
+# Presence tourne sur l'hote (pythonw) : micro, haut-parleurs et canal vers le
+# host-agent. Ces modules ne vivent pas dans le conteneur.
+$script:modulesHote = @('numpy', 'sounddevice', 'soxr', 'websockets')
+
+function Trouver-DependancesHote {
+    param($Python)
+    if (-not $Python -or -not $Python.Ok -or -not $Python.Exe) {
+        return [pscustomobject]@{ Ok = $false; Texte = 'Python absent' }
+    }
+    $manquants = @()
+    foreach ($m in $script:modulesHote) {
+        try {
+            $argsPy = @($Python.Prefixe) + @('-c', "import $m")
+            & $Python.Exe @argsPy 2>$null | Out-Null
+            if ($LASTEXITCODE -ne 0) { $manquants += $m }
+        } catch {
+            $manquants += $m
+        }
+    }
+    if ($manquants.Count -eq 0) {
+        return [pscustomobject]@{ Ok = $true; Texte = ($script:modulesHote -join ', ') }
+    }
+    return [pscustomobject]@{ Ok = $false; Texte = "manquants : $($manquants -join ', ')" }
 }
 
 function Trouver-Virtualisation {
@@ -679,6 +704,7 @@ function Diagnostiquer {
     $docker = Trouver-Docker
     $gpu = Trouver-Nvidia
     $python = Trouver-Python
+    $depsHote = Trouver-DependancesHote -Python $python
     $conteneur = Trouver-Conteneur
     $raccourcis = Trouver-Raccourcis
 
@@ -707,6 +733,7 @@ function Diagnostiquer {
     Dire-Ligne-Diag 'Docker           : ' $docker.Texte (Couleur-Etat $docker.Ok $false)
     Dire-Ligne-Diag 'GPU NVIDIA       : ' $gpu.Texte (Couleur-Etat $gpu.Ok $gpu.Incertain)
     Dire-Ligne-Diag 'Python           : ' $python.Texte (Couleur-Etat $python.Ok $false)
+    Dire-Ligne-Diag 'Audio hote       : ' $depsHote.Texte (Couleur-Etat $depsHote.Ok $false)
     Dire-Ligne-Diag 'Conteneur        : ' $conteneur.Texte (Couleur-Etat $conteneur.Ok $false)
     Dire-Ligne-Diag 'Raccourcis       : ' $raccourcis.Texte (Couleur-Etat $raccourcis.Ok $false)
     Dire-Ligne-Diag 'Disque           : ' $disqueTexte (Couleur-Etat $disqueOk $false)
@@ -724,6 +751,7 @@ function Diagnostiquer {
         Docker      = $docker
         Gpu         = $gpu
         Python      = $python
+        DepsHote    = $depsHote
         Conteneur   = $conteneur
         Raccourcis  = $raccourcis
         DisqueOk    = $disqueOk
@@ -756,6 +784,8 @@ function Manques-Depuis-Diagnostic {
     }
     if (-not $Diag.Python.Ok) {
         Manque 'Python absent (le lanceur hyper-ambient.bat appelle pythonw sur l''hote).'
+    } elseif (-not $Diag.DepsHote.Ok) {
+        Manque "paquets audio de l'hote absents ($($Diag.DepsHote.Texte)) : sans eux Presence ne capte pas le micro."
     }
     if (-not $Diag.Conteneur.Ok) {
         Manque "conteneur mother-core-dev pas en marche ($($Diag.Conteneur.Texte))."
@@ -808,6 +838,43 @@ function Installer-Python {
     } else {
         Dire 'Python a ete installe mais ce terminal ne le voit pas encore. Fermez ce PowerShell, ouvrez-en un nouveau, relancez le script.'
         Manque 'Python installe, PATH pas encore rafraichi. Ouvrez un nouveau PowerShell et relancez ce script.'
+    }
+}
+
+function Installer-DependancesHote {
+    param($Diag, [string]$Racine)
+    Dire-Etape 'Paquets audio de l''hote'
+    if (-not $Diag.Python.Ok) {
+        Dire 'Python absent : etape reportee a la prochaine execution.'
+        return
+    }
+    $Diag.DepsHote = Trouver-DependancesHote -Python $Diag.Python
+    if ($Diag.DepsHote.Ok) {
+        Dire "Deja presents : $($Diag.DepsHote.Texte). Rien a installer."
+        return
+    }
+    $req = Join-Path $Racine 'packaging\windows\requirements-hote.txt'
+    if (-not (Test-Path -LiteralPath $req)) {
+        Manque "requirements-hote.txt introuvable : $req"
+        return
+    }
+    Dire "Installation pip --user (portee utilisateur, sans elevation) : $req"
+    $argsPip = @($Diag.Python.Prefixe) + @('-m', 'pip', 'install', '--user', '--disable-pip-version-check', '-r', $req)
+    # pip ecrit ses avertissements sur stderr ; sous Windows PowerShell 5.1 et
+    # ErrorActionPreference=Stop, cela suffirait a interrompre le script.
+    $precedent = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $Diag.Python.Exe @argsPip 2>&1 | ForEach-Object { Dire "  $_" }
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $precedent
+    }
+    $Diag.DepsHote = Trouver-DependancesHote -Python $Diag.Python
+    if ($code -eq 0 -and $Diag.DepsHote.Ok) {
+        Dire "Paquets audio installes : $($Diag.DepsHote.Texte)."
+    } else {
+        Manque "pip install -r requirements-hote.txt a echoue (code $code, $($Diag.DepsHote.Texte)). Relancez ce script ; sinon, a la main : python -m pip install --user -r `"$req`""
     }
 }
 
@@ -1034,7 +1101,7 @@ function Dire-Verdict {
     param([bool]$ModeDiagnostic)
     Write-Host ''
     if ($script:manques.Count -eq 0) {
-        Dire 'Verdict : pret. Python, WSL2, Docker, mother-core-dev et les raccourcis sont en place.'
+        Dire 'Verdict : pret. Python et ses paquets audio, WSL2, Docker, mother-core-dev et les raccourcis sont en place.'
         Dire 'Ensuite (pas ce script) : modeles dans le conteneur (make models / make models-brain), cles dans .env.local, puis le raccourci hyper-ambient.'
         if ($ModeDiagnostic) {
             Dire 'Mode diagnostic : rien n''a ete installe ni demarre.'
@@ -1088,6 +1155,7 @@ try {
     Dire 'Le diagnostic ci-dessus est l''etat avant toute modification.'
 
     Installer-Python -Diag $diag
+    Installer-DependancesHote -Diag $diag -Racine $racine
 
     $stopReboot = Installer-WSL2 -Diag $diag -Etat $etat
     if ($stopReboot) {
