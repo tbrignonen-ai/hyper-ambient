@@ -250,7 +250,8 @@ def test_fabrique_entree_mono_int16_indice():
     assert sd.appels_input[0]["channels"] == 1
     assert sd.appels_input[0]["dtype"] == "int16"
     assert sd.appels_input[0]["samplerate"] == SAMPLE_RATE
-    assert flux is sd.flux
+    # macOS enveloppe le flux (repli CoreAudio) ; le flux PortAudio reste dedans.
+    assert getattr(flux, "stream", flux) is sd.flux
 
 
 def test_resoudre_indice_numerique_et_fragment():

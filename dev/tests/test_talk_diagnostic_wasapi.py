@@ -317,6 +317,7 @@ def test_est_erreur_audio_distingue_connexion():
     assert not talk._est_erreur_audio(TimeoutError("timed out"))
 
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="WASAPI est propre à Windows")
 def test_fabrique_entree_wasapi_mono_int16_16k():
     sd = _SoundDevice(WASAPI_MME)
     factory = talk._fabrique_entree(1, sd)

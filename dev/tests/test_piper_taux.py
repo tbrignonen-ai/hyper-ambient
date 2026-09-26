@@ -65,6 +65,7 @@ class _VoixTom:
 
 
 def test_piper_annonce_22050_quand_la_voix_est_a_44100():
+    pytest.importorskip("piper")
     tts = PiperTTS(model_path="tom-fake.onnx", profile="flat")
     tts.voice = _VoixTom()
     tts.native_sample_rate = TAUX_TOM
