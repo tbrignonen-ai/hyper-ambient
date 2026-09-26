@@ -38,7 +38,7 @@ jobs:
         run: bash dev/scripts/installer_magpie.sh
 
       - name: Installer is idempotent
-        run: bash dev/scripts/installer_magpie.sh | tee second-run.log && grep -q "déjà installé" second-run.log
+        run: bash dev/scripts/installer_magpie.sh | tee second-run.log && grep -q "déjà installé" second-run.log && grep -q "déjà présents" second-run.log
 
       - name: Sofia speaks French through MagpieTTS
         env:
