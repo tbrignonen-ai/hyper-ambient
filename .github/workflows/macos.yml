@@ -41,4 +41,31 @@ jobs:
       - name: Run tests
         env:
           PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src
-        run: python -m pytest dev/tests -q -p no:cacheprovider -ra
+        run: python -m pytest dev/tests -q -p no:cacheprovider -ra --junitxml=junit.xml
+
+      - name: Report failures as annotations
+        if: failure()
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          def esc(s):
+              return s.replace('%', '%25').replace('\r', '').replace('\n', '%0A')
+          lines = []
+          for tc in ET.parse('junit.xml').iter('testcase'):
+              for tag in ('failure', 'error'):
+                  el = tc.find(tag)
+                  if el is None:
+                      continue
+                  name = f"{tc.get('classname')}::{tc.get('name')}"
+                  msg = (el.get('message') or '').strip().splitlines()
+                  body = (el.text or '').strip().splitlines()
+                  tail = ' | '.join(l.strip() for l in body[-6:])
+                  lines.append(f"{tag.upper()} {name}\n  {msg[0][:300] if msg else ''}\n  {tail[:700]}")
+          print(f"{len(lines)} failing tests")
+          chunk = []
+          for i, l in enumerate(lines):
+              chunk.append(l)
+              if len(chunk) == 8 or i == len(lines) - 1:
+                  print(f"::error title=macOS test failures ({i + 1}/{len(lines)})::" + esc('\n'.join(chunk)))
+                  chunk = []
+          PY
