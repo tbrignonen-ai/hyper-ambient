@@ -44,7 +44,7 @@ jobs:
         run: python -m pytest dev/tests -q -p no:cacheprovider -ra --junitxml=junit.xml
 
       - name: Report failures as annotations
-        if: failure()
+        if: failure() && hashFiles('junit.xml') != ''
         run: |
           python - <<'PY'
           import xml.etree.ElementTree as ET

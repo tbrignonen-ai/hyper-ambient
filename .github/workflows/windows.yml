@@ -49,6 +49,13 @@ jobs:
       - name: Installer diagnostic sees the host audio packages
         shell: pwsh
         run: |
+          # The installer rebuilds PATH from the registry (like on a real machine),
+          # so it picks the runner's system Python, not setup-python's. Install the
+          # host packages there with pip --user, exactly as installer.ps1 does.
+          $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+          python --version
+          python -m pip install --user --disable-pip-version-check -r packaging/windows/requirements-hote.txt
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           # No Docker/WSL/GPU on CI runners: the verdict is "not ready", that's expected.
           $sortie = & ./packaging/windows/installer.ps1 -Diagnostic *>&1 | Out-String
           Write-Output $sortie
@@ -71,7 +78,7 @@ jobs:
         run: python -m pytest dev/tests -q -p no:cacheprovider -ra --junitxml=junit.xml
 
       - name: Report failures as annotations
-        if: failure()
+        if: failure() && hashFiles('junit.xml') != ''
         shell: bash
         run: |
           python - <<'PY'
