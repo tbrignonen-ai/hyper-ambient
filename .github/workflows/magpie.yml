@@ -1,0 +1,86 @@
+name: Magpie voice
+
+# Installs the Magpie voice exactly as `make models` does (installer_magpie.sh),
+# then makes the product's own MagpieTTS client speak French with Sofia.
+# CPU only: GitHub runners have no GPU. The WAV is kept as a run artifact.
+
+on:
+  pull_request:
+    paths:
+      - dev/scripts/installer_magpie.sh
+      - dev/scripts/fetch_models.sh
+      - src/mouth/magpie_tts.py
+      - .github/workflows/magpie.yml
+  push:
+    branches: [main, "ci/**"]
+    paths:
+      - dev/scripts/installer_magpie.sh
+      - dev/scripts/fetch_models.sh
+      - src/mouth/magpie_tts.py
+      - .github/workflows/magpie.yml
+  workflow_dispatch:
+
+jobs:
+  sofia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MAGPIE_ROOT: /tmp/magpie
+      MAGPIE_BACKEND: cpu
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"   # the container's Python
+
+      - name: Install Magpie (same script as make models)
+        run: bash dev/scripts/installer_magpie.sh
+
+      - name: Installer is idempotent
+        run: bash dev/scripts/installer_magpie.sh | tee second-run.log && grep -q "déjà installé" second-run.log && grep -q "déjà présents" second-run.log
+
+      - name: Sofia speaks French through MagpieTTS
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          pip install numpy
+          python - <<'PY'
+          import asyncio, os, wave
+          from src.mouth.magpie_tts import MagpieTTS
+
+          async def main():
+              tts = MagpieTTS(voice="Sofia", language="fr", device="cpu",
+                              model_dir=os.environ["MAGPIE_ROOT"])
+              assert await tts.load_model(), "MagpieTTS.load_model() returned False"
+              out = await tts.synthesize("Bonjour, je suis Sofia. Il est 14 heures et tout fonctionne.")
+              pcm, sr = out["audio"], out["sample_rate"]
+              secondes = len(pcm) / sr
+              with wave.open("sofia.wav", "wb") as w:
+                  w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr)
+                  w.writeframes(pcm.tobytes())
+              print(f"::notice title=Sofia::{secondes:.2f} s at {sr} Hz, synth {out['synth_ms']:.0f} ms on CPU")
+              assert sr == 22050, sr
+              assert secondes > 1.5, secondes
+
+          asyncio.run(main())
+          PY
+
+      - name: Diagnose serve on failure
+        if: failure()
+        run: |
+          {
+            echo "== models tree"; find "$MAGPIE_ROOT/models" -maxdepth 4 2>&1 | head -40
+            echo "== serve (60 s)"
+            export LD_LIBRARY_PATH="$MAGPIE_ROOT/lib"
+            NEMO_SPEECH_MODEL_DIR="$MAGPIE_ROOT/models" timeout 60 "$MAGPIE_ROOT/bin/nemo-speech" serve \
+              --host 127.0.0.1 --port 8093 --device cpu --no-ui 2>&1 | tail -30
+          } > diag.txt 2>&1 || true
+          python3 -c "import sys;t=open('diag.txt').read()[-6000:];print('::error title=Magpie diagnostics::'+t.replace('%','%25').replace('\r','').replace('\n','%0A'))"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sofia-voice
+          path: sofia.wav
+          if-no-files-found: ignore

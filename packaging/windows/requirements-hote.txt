@@ -1,0 +1,9 @@
+# Dépendances Python de l'HÔTE Windows (pas du conteneur).
+# Presence (pythonw native\presence\app.py) capture le micro et joue la voix
+# sur l'hôte : sans ces quatre paquets, le bouton parler reste muet
+# (« Dépendance audio absente » / « sounddevice ou websockets absent »).
+# Installées par installer.ps1 (pip --user) ; vérifiées en CI Windows.
+numpy==2.5.3
+sounddevice==0.5.6
+soxr==1.1.0
+websockets==17.1

@@ -2,8 +2,9 @@
 # Fetch hyper-ambient model weights into /workspace/models (host-mounted, survives rebuilds).
 #
 # Tiers:
-#   ./fetch_models.sh core   -> VAD + Piper FR voice + whisper turbo  (~1.2 GB)
-#   ./fetch_models.sh brain  -> local GGUF LLM for llama-server       (~2.5 GB)
+#   ./fetch_models.sh core   -> VAD + Piper FR voice + whisper turbo & large-v3 + Magpie Sofia  (~6 GB)
+#   ./fetch_models.sh voice  -> Magpie Sofia only (NeMo-Speech.cpp runtime + GGUF, ~0.5 GB)
+#   ./fetch_models.sh brain  -> Granite 4.2 3B GGUF for llama-server              (~2.2 GB)
 #   ./fetch_models.sh all
 set -euo pipefail
 
@@ -44,24 +45,35 @@ from faster_whisper import WhisperModel
 # downloads into HF_HOME=/workspace/models/hf-cache
 WhisperModel("large-v3-turbo", device="cpu", compute_type="int8")
 print("  = faster-whisper large-v3-turbo cached")
+# Carte figée : EARS_MODEL=large-v3. Le host-agent tourne en HF_HUB_OFFLINE=1,
+# il ne télécharge rien lui-même : sans ce cache, il s'arrête au boot.
+WhisperModel("large-v3", device="cpu", compute_type="int8")
+print("  = faster-whisper large-v3 cached")
 PY
+}
+
+fetch_voice() {
+    # Carte figée : MOUTH_BACKEND=magpie, voix Sofia (NeMo-Speech.cpp + GGUF).
+    bash "$(dirname "$0")/installer_magpie.sh"
 }
 
 fetch_brain() {
     echo "== BRAIN: local GGUF for llama-server =="
-    # Mistral ships official GGUF. Chosen for French: measured best register
-    # and the only candidate that asks for clarification instead of guessing.
-    # Use the -Instruct variant, never -Reasoning (see STACK.md §4).
-    local repo="${GGUF_REPO:-mistralai/Ministral-3-8B-Instruct-2512-GGUF}"
-    local file="${GGUF_FILE:-Ministral-3-8B-Instruct-2512-Q4_K_M.gguf}"
+    # Carte figée 19 sept : Granite 4.2 3B Q4_K_M (~2.2 GB), le fichier que
+    # serve_llama.sh et carte_figee.env attendent. L'ancien défaut Ministral 8B
+    # (~4.9 GB) sortait du budget VRAM et a déjà fait tomber Docker (8 Go RAM).
+    # Autre modèle : GGUF_REPO=… GGUF_FILE=… ./fetch_models.sh brain
+    local repo="${GGUF_REPO:-ibm-granite/granite-4.2-3b-GGUF}"
+    local file="${GGUF_FILE:-granite-4.2-3b-Q4_K_M.gguf}"
     dl "https://huggingface.co/$repo/resolve/main/$file" "$MODELS/gguf/$file"
 }
 
 case "$TIER" in
-    core)  fetch_core ;;
+    core)  fetch_core; fetch_voice ;;
+    voice) fetch_voice ;;
     brain) fetch_brain ;;
-    all)   fetch_core; fetch_brain ;;
-    *)     echo "usage: $0 {core|brain|all}"; exit 1 ;;
+    all)   fetch_core; fetch_voice; fetch_brain ;;
+    *)     echo "usage: $0 {core|voice|brain|all}"; exit 1 ;;
 esac
 
 echo

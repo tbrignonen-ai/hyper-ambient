@@ -39,8 +39,10 @@ the current user when possible, installs WSL2 without an Ubuntu distribution, in
 Docker Desktop with `winget`, starts Docker Desktop, builds the local image if needed,
 starts `mother-core-dev`, creates an empty local configuration file when necessary, and
 installs the shortcuts. It asks for administrator rights only for an action that needs
-them and states why first. Nothing is installed into the host Python environment beyond
-the Python runtime itself; application dependencies stay in Docker.
+them and states why first. On the host, besides the Python runtime, it installs only the
+four packages Presence needs to reach the microphone, the speakers and the host-agent
+(`numpy`, `sounddevice`, `soxr`, `websockets`, pinned in `requirements-hote.txt`) with
+`pip --user`; every other application dependency stays in Docker.
 
 ### Docker Desktop: what is and is not silent
 
@@ -62,7 +64,10 @@ the same command.
 - Provide credentials for optional services. The installer creates no credentials and
   never writes their values for you.
 
-Model downloads and the first voice launch occur after machine bootstrap. The installer
+Model downloads and the first voice launch occur after machine bootstrap:
+`make models` (EARS, and the Magpie Sofia voice through NeMo-Speech.cpp) and
+`make models-brain` (Granite 4.2 3B). Together they fetch exactly the models named in
+`dev/scripts/carte_figee.env`. The installer
 reports this explicitly; it does not claim that bootstrap alone proves an end-to-end
 voice conversation.
 
