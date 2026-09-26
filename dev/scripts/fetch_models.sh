@@ -2,7 +2,8 @@
 # Fetch hyper-ambient model weights into /workspace/models (host-mounted, survives rebuilds).
 #
 # Tiers:
-#   ./fetch_models.sh core   -> VAD + Piper FR voices + whisper turbo & large-v3  (~5 GB)
+#   ./fetch_models.sh core   -> VAD + Piper FR voice + whisper turbo & large-v3 + Magpie Sofia  (~6 GB)
+#   ./fetch_models.sh voice  -> Magpie Sofia only (NeMo-Speech.cpp runtime + GGUF, ~0.5 GB)
 #   ./fetch_models.sh brain  -> Granite 4.2 3B GGUF for llama-server              (~2.2 GB)
 #   ./fetch_models.sh all
 set -euo pipefail
@@ -29,12 +30,10 @@ load_silero_vad(onnx=True)
 print("  = silero-vad ONNX cached")
 PY
 
-    echo "== MOUTH: Piper French voices (tom = MOUTH_VOICE default / fallback, siwis) =="
-    local piper="https://huggingface.co/rhasspy/piper-voices/resolve/main/fr/fr_FR"
-    dl "$piper/tom/medium/fr_FR-tom-medium.onnx"        "$MODELS/piper/fr_FR-tom-medium.onnx"
-    dl "$piper/tom/medium/fr_FR-tom-medium.onnx.json"   "$MODELS/piper/fr_FR-tom-medium.onnx.json"
-    dl "$piper/siwis/medium/fr_FR-siwis-medium.onnx"        "$MODELS/piper/fr_FR-siwis-medium.onnx"
-    dl "$piper/siwis/medium/fr_FR-siwis-medium.onnx.json"   "$MODELS/piper/fr_FR-siwis-medium.onnx.json"
+    echo "== MOUTH: Piper French voice (fr_FR-siwis-medium) =="
+    local base="https://huggingface.co/rhasspy/piper-voices/resolve/main/fr/fr_FR/siwis/medium"
+    dl "$base/fr_FR-siwis-medium.onnx"        "$MODELS/piper/fr_FR-siwis-medium.onnx"
+    dl "$base/fr_FR-siwis-medium.onnx.json"   "$MODELS/piper/fr_FR-siwis-medium.onnx.json"
 
     echo "== EARS: whisper.cpp GGUF (large-v3-turbo q5_0) =="
     dl "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin" \
@@ -53,6 +52,11 @@ print("  = faster-whisper large-v3 cached")
 PY
 }
 
+fetch_voice() {
+    # Carte figée : MOUTH_BACKEND=magpie, voix Sofia (NeMo-Speech.cpp + GGUF).
+    bash "$(dirname "$0")/installer_magpie.sh"
+}
+
 fetch_brain() {
     echo "== BRAIN: local GGUF for llama-server =="
     # Carte figée 19 sept : Granite 4.2 3B Q4_K_M (~2.2 GB), le fichier que
@@ -65,10 +69,11 @@ fetch_brain() {
 }
 
 case "$TIER" in
-    core)  fetch_core ;;
+    core)  fetch_core; fetch_voice ;;
+    voice) fetch_voice ;;
     brain) fetch_brain ;;
-    all)   fetch_core; fetch_brain ;;
-    *)     echo "usage: $0 {core|brain|all}"; exit 1 ;;
+    all)   fetch_core; fetch_voice; fetch_brain ;;
+    *)     echo "usage: $0 {core|voice|brain|all}"; exit 1 ;;
 esac
 
 echo

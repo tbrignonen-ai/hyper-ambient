@@ -65,10 +65,9 @@ the same command.
   never writes their values for you.
 
 Model downloads and the first voice launch occur after machine bootstrap:
-`make models` (EARS + Piper voices) and `make models-brain` (Granite 4.2 3B, the local
-model named in `dev/scripts/carte_figee.env`). The Magpie voice of the frozen card needs a
-NeMo environment that no script here installs; without it, the host-agent says so and
-speaks with Piper instead of stopping. The installer
+`make models` (EARS, and the Magpie Sofia voice through NeMo-Speech.cpp) and
+`make models-brain` (Granite 4.2 3B). Together they fetch exactly the models named in
+`dev/scripts/carte_figee.env`. The installer
 reports this explicitly; it does not claim that bootstrap alone proves an end-to-end
 voice conversation.
 
