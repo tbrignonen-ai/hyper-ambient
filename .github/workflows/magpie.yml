@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      MAGPIE_ROOT: ${{ runner.temp }}/magpie
+      MAGPIE_ROOT: /tmp/magpie
       MAGPIE_BACKEND: cpu
     steps:
       - uses: actions/checkout@v4
