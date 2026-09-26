@@ -652,6 +652,7 @@ def test_lancement_normal_dit_une_phrase_si_la_sortie_refuse(monkeypatch, capsys
     assert "--test-sortie" in tout
 
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="macOS remonte ErreurMicroIndisponible, gérée par la boucle")
 def test_fabrique_entree_dit_une_phrase_si_le_micro_est_occupe(capsys):
     """InputStream lève à l'ouverture du micro : phrase, pas de trace."""
     exc = _ErreurPortAudioPiege(

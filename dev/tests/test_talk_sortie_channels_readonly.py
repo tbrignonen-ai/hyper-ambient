@@ -89,9 +89,11 @@ def test_ouvrir_sortie_ne_demarre_plus_le_flux():
     """
     sd = _SoundDeviceVerrouille(INFO_SURROUND)
     flux = talk._ouvrir_sortie(sd, indice=None)
-    assert flux.demarre is False
+    # macOS enveloppe la sortie (_SortieMac) ; le flux PortAudio reste dedans.
+    brut = getattr(flux, "stream", flux)
+    assert brut.demarre is False
     talk._jouer(flux, np.array([0.5, -0.5], dtype=np.float32))
-    assert flux.demarre is True
+    assert brut.demarre is True
 
 
 def test_jouer_etale_bien_sur_un_flux_channels_en_lecture_seule():

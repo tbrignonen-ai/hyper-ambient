@@ -5,6 +5,8 @@ ouvre désormais la session du mandat dans une console (`claude --resume`,
 `codex resume`), au premier plan ou réduite selon le choix de l'écran
 principal ; la conversation est affichée dans les deux cas.
 """
+import sys
+import pytest
 from native.presence import harnais_ouvert as ho
 from native.presence.onboarding import normaliser_configuration
 
@@ -68,6 +70,7 @@ def _ouvreur(lanceur):
     )
 
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="Chemin Windows (startupinfo/console) : macOS passe par Terminal")
 def test_ouvre_dans_le_dossier_du_pont_au_premier_plan():
     lanceur = _Lanceur()
     assert _ouvreur(lanceur).ouvrir("Claude", "s-1", premier_plan=True)
@@ -77,6 +80,7 @@ def test_ouvre_dans_le_dossier_du_pont_au_premier_plan():
     assert ho.affichage(options) == ho.SW_SHOWNORMAL
 
 
+@pytest.mark.skipif(sys.platform == "darwin", reason="Chemin Windows (startupinfo/console) : macOS passe par Terminal")
 def test_hors_premier_plan_la_console_s_ouvre_reduite_sans_voler_le_focus():
     lanceur = _Lanceur()
     _ouvreur(lanceur).ouvrir("Codex", "th-1", premier_plan=False)

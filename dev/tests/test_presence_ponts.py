@@ -27,7 +27,9 @@ def test_pont_demarre_si_jeton_et_cli_presents():
     ]
 
 
-def test_pont_saute_sans_jeton_sans_cli_ou_deja_en_ecoute():
+def test_pont_saute_sans_jeton_sans_cli_ou_deja_en_ecoute(monkeypatch):
+    # Sur macOS un port occupé est sondé ; ici c'est bien notre pont.
+    monkeypatch.setattr(ponts, "pont_pret", lambda pont, token: True)
     choisis = ponts.ponts_a_demarrer(
         {"CODEX_BRIDGE_TOKEN": "", "CLI_BRIDGE_TOKEN": "def"},
         port_ouvert=lambda port: False,

@@ -169,7 +169,7 @@ else:
         def close(self):
             return self.stream.close()
 
-    def _fabrique_flux(callback, *, device=None):
+    def _fabrique_flux(callback, *, device=None, sd=None):
         """Ouvre le flux d'entrée CoreAudio (macOS) / ALSA-Pulse (Linux).
 
         Paramètres identiques à ``windows_audio._default_stream_factory`` :
@@ -179,7 +179,8 @@ else:
         paquet n'est pas installé.
         """
         try:
-            import sounddevice as sd
+            if sd is None:
+                import sounddevice as sd
         except ImportError as exc:
             raise ErreurMicroIndisponible(
                 "sounddevice est absent de cet environnement : sans lui le "

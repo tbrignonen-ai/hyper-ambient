@@ -382,7 +382,7 @@ def _fabrique_entree(indice: int, sd):
     if sys.platform == "darwin":
         from native.hostagent.platform_audio import _fabrique_flux
 
-        return lambda callback: _fabrique_flux(callback, device=indice)
+        return lambda callback: _fabrique_flux(callback, device=indice, sd=sd)
 
     def factory(callback):
         try:
@@ -397,6 +397,11 @@ def _fabrique_entree(indice: int, sd):
             _echouer_peripherique(exc)
 
     return factory
+
+
+def _taux_natif(info) -> int:
+    """Taux natif CoreAudio du périphérique ; 16 kHz si PortAudio ne le donne pas."""
+    return int(round(float(info.get("default_samplerate") or SAMPLE_RATE)))
 
 
 class _SortieMac:
@@ -499,12 +504,12 @@ def _ouvrir_sortie(sd, indice: int | None = None):
     except Exception as exc:
         if sys.platform == "darwin":
             try:
-                return _SortieMac(sd, kwargs, int(round(float(info["default_samplerate"]))))
+                return _SortieMac(sd, kwargs, _taux_natif(info))
             except Exception:
                 pass
         _echouer_peripherique(exc)
     if sys.platform == "darwin":
-        return _SortieMac(sd, kwargs, int(round(float(info["default_samplerate"]))), flux)
+        return _SortieMac(sd, kwargs, _taux_natif(info), flux)
     # Volontairement PAS de `start()` ici. Le flux restait demarre depuis
     # l'ouverture jusqu'au premier mot de MOUTH, soit plusieurs secondes sans
     # une seule ecriture : en mode bloquant, MME et DirectSound font entendre
