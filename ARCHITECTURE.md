@@ -4,6 +4,10 @@
 
 hyper-ambient is a local ambient voice — French, English, and Spanish — that answers out loud. The core is a real-time voice AI harness with six capabilities integrated through a single permission control point (GATE).
 
+> **Models in use:** the source of truth is `dev/scripts/carte_figee.env`, and the
+> current card is STACK.md §0. Model names in this file are the card's, except where
+> marked as history or fallback.
+
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ Host Agent (Windows/macOS native)                       │
@@ -17,8 +21,8 @@ hyper-ambient is a local ambient voice — French, English, and Spanish — that
 │                                                         │
 │  ┌─────────────────────────────────────────────────┐   │
 │  │ EARS (Speech Recognition)                       │   │
-│  │  - whisper.cpp (MIT, French, ~10 MB)           │   │
-│  │  - nemotron-3.5 (fr-FR, fr-CA)                 │   │
+│  │  - faster-whisper large-v3 (GPU, French)       │   │
+│  │  - nemotron-3.5 (candidate, not in card)       │   │
 │  └────────────┬────────────────────────────────────┘   │
 │               │                                         │
 │  ┌────────────▼────────────────────────────────────┐   │
@@ -28,17 +32,17 @@ hyper-ambient is a local ambient voice — French, English, and Spanish — that
 │  └────────────┬────────────────────────────────────┘   │
 │               │                                         │
 │  ┌────────────▼────────────────────────────────────┐   │
-│  │ BRAIN (LLM Reasoning, remote)                   │   │
-│  │  - Anthropic Claude (recommended)               │   │
-│  │  - OpenAI GPT-4o                                │   │
-│  │  - Google Gemini Live                           │   │
-│  │  - Mistral Voxtral, xAI, AssemblyAI            │   │
+│  │ BRAIN (LLM Reasoning, local + remote)           │   │
+│  │  - Card: Granite 4.2 3B, local reflex           │   │
+│  │  - Card: router -> MiniMax-M3, remote           │   │
+│  │  - Not in card: Claude, GPT-4o, Gemini          │   │
+│  │    Voxtral, xAI, AssemblyAI (old design)       │   │
 │  └────────────┬────────────────────────────────────┘   │
 │               │                                         │
 │  ┌────────────▼────────────────────────────────────┐   │
 │  │ MOUTH (Speech Synthesis)                        │   │
-│  │  - Pocket TTS (MIT, French, 200M-100M)         │   │
-│  │  - MOSS-TTS (Apache-2.0, French, 224 MB)       │   │
+│  │  - Magpie Sofia (NeMo-Speech.cpp, GPU)         │   │
+│  │  - Pocket TTS (history), MOSS-TTS (cand.)      │   │
 │  └────────────┬────────────────────────────────────┘   │
 │               │                                         │
 │  ┌────────────▼────────────────────────────────────┐   │
@@ -180,7 +184,7 @@ Entry format:
   - Blocker: If FPR > 15%, revert to VAD-only (TURN-L1)
 
 - **[À VÉRIFIER] RTF measurements**: Whisper and nemotron on 30min audio
-- **[À VÉRIFIER] TTFA measurements**: Pocket TTS and MOSS-TTS latency
+- **[À VÉRIFIER] TTFA measurements**: Magpie Sofia and MOSS-TTS latency (Pocket TTS: history)
 
 ## File Organization
 

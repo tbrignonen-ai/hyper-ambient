@@ -2,11 +2,13 @@
 BRAIN backend selection.
 
 BRAIN_SERVICE decides which deployment answers:
-  stepfun  -> remote StepFun (step-3.7-flash)
+  router   -> default (carte figée) : local reflex + remote deep tier,
+              see build_router(). As a single provider, it is the remote.
   llamacpp -> local llama-server (GGUF on CUDA)
   openai   -> any other OpenAI-compatible endpoint (BRAIN_API_ENDPOINT)
+  stepfun  -> remote StepFun (step-3.7-flash) — retired, account answers 402
 
-All three return the same object shape, so the core event loop never branches
+All of them return the same object shape, so the core event loop never branches
 on which one is live. Falling back from remote to local is a swap, not a
 rewrite — that is what makes BRAIN degradable instead of a hard dependency.
 """
@@ -22,10 +24,14 @@ logger = logging.getLogger(__name__)
 
 LLAMA_HOST = os.getenv("LLAMA_SERVER_HOST", "http://localhost:8080")
 
+# Le défaut suit dev/scripts/carte_figee.env (BRAIN_SERVICE=router). StepFun,
+# l'ancien défaut, répond 402 : un poste sans BRAIN_SERVICE tombait dessus.
+SERVICE_PAR_DEFAUT = "router"
+
 
 def build_brain(service: Optional[str] = None) -> OpenAICompatBrain:
     """Instantiate the configured BRAIN backend (not yet initialized)."""
-    service = (service or os.getenv("BRAIN_SERVICE", "stepfun")).lower()
+    service = (service or os.getenv("BRAIN_SERVICE", SERVICE_PAR_DEFAUT)).lower()
 
     if service == "llamacpp":
         return LlamaCppBrain(
@@ -34,7 +40,9 @@ def build_brain(service: Optional[str] = None) -> OpenAICompatBrain:
         )
     if service == "stepfun":
         return StepFunBrain()
-    if service in ("openai", "compat"):
+    if service in ("openai", "compat", "router"):
+        # router : le montage complet passe par build_router() ; seul, le
+        # fournisseur du routeur est son distant (BRAIN_API_*).
         return OpenAICompatBrain()
 
     raise ValueError(f"Unknown BRAIN_SERVICE: {service!r}")
@@ -269,7 +277,7 @@ async def build_brain_with_fallback():
     # Le routeur est un montage, pas un fournisseur : il compose le local et le
     # distant. Il ne passe donc pas par build_brain(), qui ne connait que des
     # fournisseurs uniques.
-    if (os.getenv("BRAIN_SERVICE", "stepfun").lower()) == "router":
+    if (os.getenv("BRAIN_SERVICE", SERVICE_PAR_DEFAUT).lower()) == "router":
         return await build_router()
 
     primary = build_brain()

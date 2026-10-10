@@ -161,9 +161,9 @@ def check_acoustic():
 
 
 async def check_brain():
-    from src.brain.factory import build_brain
+    from src.brain.factory import SERVICE_PAR_DEFAUT, build_brain
 
-    service = os.getenv("BRAIN_SERVICE", "stepfun")
+    service = os.getenv("BRAIN_SERVICE", SERVICE_PAR_DEFAUT)
     brain = build_brain(service)
     await brain.initialize()
     health = await brain.health()

@@ -87,22 +87,28 @@ Models live in `./models/` (bind-mounted, survived container rebuilds and restar
 make models
 ```
 
-Downloads (~1.2 GB):
+Télécharge (~6 GB, d'après le Makefile) :
 - Silero VAD ONNX (turn detection L1)
-- faster-whisper `large-v3-turbo` CTranslate2 (EARS, GPU)
-- Piper TTS voices (MOUTH fallback)
+- faster-whisper `large-v3` CTranslate2 (EARS, GPU, carte figée) ; `large-v3-turbo` est gardé en repli
+- Magpie Sofia (MOUTH, carte figée, via `installer_magpie.sh` ; `make models-voice` le télécharge seul)
+- Piper TTS voices (MOUTH, ancien choix, repli)
+
+Les modèles sont ceux de la carte figée : `dev/scripts/carte_figee.env` (voir STACK.md §0).
 
 ### BRAIN Models (required for llama-server)
 ```bash
 make models-brain
 ```
 
-Downloads (~2.5 GB):
-- `LiquidAI/LFM2.5-2.6B-GGUF` (`LFM2.5-2.6B-Q5_K_M.gguf`, active default BRAIN via `mother-local` on :8090)
-- `kurakurai/Luth-2-2B-GGUF` (Q5_K_M quantization — **fallback / historique 2026-08-21**, plus le défaut)
-- Ministral-3-8B, Luciole-8B, LFM2.5-VL-3B, Qwen candidates (for evaluation)
+Télécharge (~2.2 GB) :
+- `ibm-granite/granite-4.2-3b-GGUF` (`granite-4.2-3b-Q4_K_M.gguf`, BRAIN local de la carte figée, servi par `mother-local` sur :8090)
 
-These scripts call `dev/scripts/fetch_models.sh {core|brain}` which uses huggingface-hub to download.
+Historique, plus téléchargé par `make models-brain` :
+- `LiquidAI/LFM2.5-2.6B-GGUF` (`LFM2.5-2.6B-Q5_K_M.gguf`) : ancien défaut ; `serve_llama.sh` le prend en repli s'il est présent
+- `kurakurai/Luth-2-2B-GGUF` (Q5_K_M) : ancien défaut, repli de 2026-08-21
+- Ministral-3-8B, Luciole-8B, LFM2.5-VL-3B, Qwen : candidats d'évaluation. Un autre GGUF se charge avec `GGUF_REPO=… GGUF_FILE=… ./fetch_models.sh brain`.
+
+Ces cibles appellent `dev/scripts/fetch_models.sh {core|brain}` (huggingface-hub).
 
 ## Verify Everything Works: Smoke Test
 
@@ -110,20 +116,22 @@ These scripts call `dev/scripts/fetch_models.sh {core|brain}` which uses hugging
 make smoke
 ```
 
-Runs `dev/scripts/smoke_test.py` inside container. Expected output:
+Runs `dev/scripts/smoke_test.py` inside container. Expected shape (the values
+are placeholders `<…>`, not measurements; the card's latencies are still
+`[À VÉRIFIER]` in STACK.md §4):
 
 ```
 smoke_test.py — 9 capability checks
 
-[1/9] TURN-L1 (VAD)           OK  20 ms
-[2/9] EARS (faster-whisper)   OK  370 ms, WER 2.6%
-[3/9] BRAIN-L1 (LFM2.5 local)  OK  27 ms TTFT
-[4/9] BRAIN-remote check      OK  reachable
-[5/9] MOUTH (Pocket TTS)      OK  75 ms TTFA
-[6/9] Router (escalade logic) OK  classification 90 ms
-[7/9] TURN-L2 ready check     OK  not installed (expected)
-[8/9] Acoustic descriptors    OK  real-time
-[9/9] Audit chain             OK  verifies
+[1/9] TURN-L1 (VAD)            OK  <ms>
+[2/9] EARS (faster-whisper)    OK  <ms>
+[3/9] BRAIN-L1 (Granite local) OK  <ms> TTFT
+[4/9] BRAIN-remote check       OK  reachable
+[5/9] MOUTH (Magpie Sofia)     OK  <ms> TTFA
+[6/9] Router (escalade logic)  OK  classification <ms>
+[7/9] TURN-L2 ready check      OK  not installed (expected)
+[8/9] Acoustic descriptors     OK  real-time
+[9/9] Audit chain              OK  verifies
 
 9/9 ✓
 ```
@@ -171,7 +179,7 @@ BRAIN and EARS can run as standalone OpenAI-compatible servers, useful for debug
 ### Launch local BRAIN (llama-server)
 ```bash
 make llama
-# Starts: llama-server -m models/gguf/LFM2.5-2.6B-Q5_K_M.gguf --port 8080 (via serve_llama.sh)
+# Starts: llama-server -m models/gguf/granite-4.2-3b-Q4_K_M.gguf --port 8080 (via serve_llama.sh, alias mother-local)
 # Listen on: http://localhost:8090 (mapped from container 8080, alias mother-local)
 ```
 
@@ -182,10 +190,13 @@ curl -X POST http://localhost:8090/v1/chat/completions \
   -d '{"model":"mother-local","messages":[{"role":"user","content":"Bonjour"}]}'
 ```
 
-### Launch local EARS (whisper-server)
+### Launch local EARS fallback (whisper-server)
+
+EARS de la carte est faster-whisper `large-v3` ; ce serveur whisper.cpp est un repli.
+
 ```bash
 make whisper
-# Starts: whisper-server --port 8081 -m models/whisper/ggml-large-v3-turbo-q5_0.gguf
+# Starts: whisper-server --port 8081 -m models/whisper/ggml-large-v3-turbo-q5_0.gguf (historique : turbo)
 # Listen on: http://localhost:8091 (mapped from container 8081)
 ```
 
@@ -215,10 +226,10 @@ make clean
 Secrets live in `.env.local` (git-ignored), mounted read-only. Example:
 
 ```
-# .env.local (create this file)
-BRAIN_REMOTE_API_KEY=sk-...
-BRAIN_REMOTE_ENDPOINT=https://api.commandcode.ai/provider/v1
-BRAIN_SERVICE=commandcode    # or: llamacpp (local only)
+# .env.local (créer ce fichier, non versionné)
+BRAIN_API_KEY=sk-...
+BRAIN_API_ENDPOINT=https://<fournisseur OpenAI-compatible>/v1/chat/completions
+# BRAIN_SERVICE=router et BRAIN_MODEL=MiniMaxAI/MiniMax-M3 viennent de dev/scripts/carte_figee.env
 ```
 
 At runtime, `src/` reads `.env.local` via `python-dotenv` (if installed). See `src/brain/factory.py` for env var keys.
@@ -255,7 +266,7 @@ At runtime, `src/` reads `.env.local` via `python-dotenv` (if installed). See `s
 4. If timeout, manually download one model:
    ```bash
    docker exec mother-core-dev python3 -c \
-     "from faster_whisper import WhisperModel; WhisperModel('large-v3-turbo', device='cuda', compute_type='int8_float16')"
+     "from faster_whisper import WhisperModel; WhisperModel('large-v3', device='cuda', compute_type='int8_float16')"
    ```
 
 ### "Port 8000 already in use"
@@ -276,8 +287,8 @@ At runtime, `src/` reads `.env.local` via `python-dotenv` (if installed). See `s
 │   ├── scripts/      Runtime scripts (smoke_test.py, bench_*.py, etc.)
 │   └── sessions/     Session logs (2026-08-21-implementation.md, etc.)
 ├── models/           Downloaded weights (bind-mounted, persistent)
-│   ├── gguf/         GGUF LLMs (LFM2.5-2.6B actif ; Luth = repli/historique 2026-08-21, Ministral, etc.)
-│   ├── pocket-tts/   TTS weights + voices
+│   ├── gguf/         GGUF LLMs (Granite 4.2 3B actif ; LFM2.5-2.6B, Luth, Ministral : historique/repli)
+│   ├── pocket-tts/   TTS weights + voices (historique)
 │   ├── hf-cache/     faster-whisper CTranslate2 + Hugging Face cache
 │   ├── whisper/      GGML Whisper (fallback)
 │   └── piper/        Piper TTS voices (fallback)
