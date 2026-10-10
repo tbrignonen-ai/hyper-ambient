@@ -4,6 +4,62 @@ Decisions, and the reason each one is the way it is. Numbers in this file come
 from measurements on the target machine (RTX 4070 12 GB, 20 vCPU, WSL2), not
 from vendor claims. Anything not yet measured is marked `[À VÉRIFIER]`.
 
+## 0. Current model card (source of truth)
+
+<!-- carte-figee:debut -->
+
+The source of truth is `dev/scripts/carte_figee.env`. It is loaded by the
+host-agent (`charger_carte_figee` in `dev/scripts/serve_hostagent.py`) and
+followed by `dev/scripts/fetch_models.sh`, which fetches the weights it names.
+Disable it with `CARTE_FIGEE=0`. Frozen on 19 September 2026, after blind
+listening and measurement on the target machine.
+
+| Role | Model | Runtime / where |
+|---|---|---|
+| BRAIN, local reflex | Granite 4.2 3B, GGUF Q4_K_M (`granite-4.2-3b-Q4_K_M.gguf`), alias `mother-local` | llama-server, CUDA, container port 8080 (host 8090) |
+| BRAIN, remote escalation | `router` decides each turn with a local classifier; escalates to `MiniMaxAI/MiniMax-M3` | OpenAI-compatible endpoint (`BRAIN_API_ENDPOINT`, `BRAIN_API_KEY` in `.env.local`) |
+| EARS | faster-whisper `large-v3`, `int8_float16`, French, hotwords `Hyper Ambient` | CTranslate2, cuda |
+| MOUTH | Magpie (NeMo-Speech.cpp), voice `Sofia`, French, output gain 9 dB | NeMo-Speech.cpp + GGUF, cuda |
+
+```env
+BRAIN_SERVICE=router
+BRAIN_MODEL=MiniMaxAI/MiniMax-M3
+BRAIN_MODEL_LOCAL=mother-local
+MODEL=/workspace/models/gguf/granite-4.2-3b-Q4_K_M.gguf
+EARS_BACKEND=faster-whisper
+EARS_MODEL=large-v3
+EARS_LANGUAGE=fr
+EARS_DEVICE=cuda
+EARS_COMPUTE_TYPE=int8_float16
+EARS_HOTWORDS=Hyper Ambient
+MOUTH_BACKEND=magpie
+MOUTH_VOICE_NAME=Sofia
+MOUTH_LANGUAGE=fr
+MOUTH_DEVICE=cuda
+MOUTH_OUTPUT_GAIN_DB=9
+```
+
+<!-- carte-figee:fin -->
+
+**Mac profile.** `packaging/macos/mac-16g.env.example` (profile
+`mac-16g-voix-max`) is the Apple Silicon profile. It does not contradict the
+card: it runs without CUDA, so it uses other engines. BRAIN local is
+`mlx-community/LFM2.5-8B-A1B-OptiQ-4bit` via MLX-LM, EARS is Qwen3-ASR MLX, and
+MOUTH is Chatterbox MLX. Its weights are pinned in
+`packaging/macos/models.lock.json`, and its install steps are in
+`packaging/macos/README.md`. The card above is the Windows/WSL2 RTX 4070 target.
+
+**Superseded (history and fallbacks only, not current).** LFM2.5-2.6B (local
+BRAIN from 2026-09-02 until the card; still the fallback GGUF in
+`serve_llama.sh`), Luth-2-2B (earlier default, fallback), Ministral-3-8B and
+Luciole-8B (evaluated, §2), MiniCPM5-2B (earlier default in `.env.example`),
+Pocket TTS with voice `estelle` (earlier MOUTH), Piper (earlier CPU MOUTH, still
+downloaded as a fallback), faster-whisper `large-v3-turbo` (earlier EARS, still
+downloaded as a fallback), StepFun `step-3.7-flash` (retired: its account
+answers HTTP 402 quota_exceeded, see §1), Qwen3-ASR (earlier EARS; only the Mac
+profile uses an MLX variant), Supertonic (earlier MOUTH candidate), and
+Qwen3-TTS (rejected, §2).
+
 ---
 
 ## 1. The organising principle: one protocol, two deployments
@@ -18,10 +74,10 @@ object imported into the event loop.
    ┌───────────────┐    │   ┌────────┐                 │
    │ audio.capture │────┼──▶│ TURN   │ silero-vad      │  CPU, RTF 0.008
    │ audio.render  │◀───┼───│ EARS   │ faster-whisper  │  GPU, CT2 int8_f16
-   │ input.inject  │    │   │ BRAIN  │ ──HTTP/SSE──────┼──▶ StepFun (remote)
-   │ surface.draw  │    │   │ MOUTH  │ piper (ONNX)    │      or
+   │ input.inject  │    │   │ BRAIN  │ ──HTTP/SSE──────┼──▶ router → MiniMax-M3 (remote)
+   │ surface.draw  │    │   │ MOUTH  │ Magpie Sofia    │      or
    └───────────────┘    │   │ACOUSTIC│ pyloudnorm      │  llama-server :8080
-        WebSocket :8001 │   └────────┘                 │      (local, CUDA)
+        WebSocket :8001 │   └────────┘                 │  (Granite 4.2 3B, CUDA)
                         │        │                     │
                         │      GATE  ── audit log ──┐  │
                         └──────────────────────────────┘
@@ -29,10 +85,11 @@ object imported into the event loop.
 
 The consequence that matters: **BRAIN's local and remote deployments are the
 same code path.** `llama-server` exposes `/v1/chat/completions` with SSE
-framing identical to StepFun's. `src/brain/openai_compat.py` drives both;
-`src/brain/factory.py` picks one from `BRAIN_SERVICE`, and falls back from
-remote to local when the remote is unreachable (which is exactly what the
-StepFun 402 quota error would have triggered).
+framing identical to the remote endpoint's. `src/brain/openai_compat.py` drives
+both; `src/brain/factory.py` picks one from `BRAIN_SERVICE` (default `router`,
+which sends each turn local or remote). The fallback wrapper
+(`build_brain_with_fallback`) exists because of the StepFun 402 case: a remote
+that answers healthy but refuses every completion with a quota error.
 
 That is why BRAIN is a *degradable* dependency rather than a hard one.
 
@@ -42,19 +99,22 @@ That is why BRAIN is a *degradable* dependency rather than a hard one.
 
 | Capability | Runtime | Where | Why this one |
 |---|---|---|---|
-| **EARS** | `faster-whisper` (CTranslate2) + `whisper.cpp` (GGUF) | GPU | Quantised C++ runtime, no Python in the decode loop. `int8_float16` halves VRAM vs `float16` at ~no WER cost on `large-v3-turbo`. whisper.cpp is the ggml sibling — same tooling, same quantisation vocabulary as llama.cpp. |
+| **EARS** | `faster-whisper` (CTranslate2), `large-v3`, `int8_float16` | GPU | Chosen with the card (19 Sept 2026). Quantised runtime, no Python in the decode loop. `int8_float16` halves VRAM vs `float16` (measured on `large-v3-turbo`, historical, §4). whisper.cpp (GGUF) is the ggml sibling and stays as a fallback: same tooling, same quantisation vocabulary as llama.cpp. |
 | **TURN** | `silero-vad` (ONNX) — **L1** | CPU | 512-sample frames, ~1 ms each. Acoustic only: it knows sound stopped, not that a thought finished. |
 | **TURN** | Pipecat Smart Turn — **L2** | GPU | Semantic endpointing. Still the open risk (OQ-15): L1 exists precisely so TURN has no single-component dependency. |
-| **MOUTH** | `piper` (ONNX VITS) | CPU | 61 MB French voice, RTF 0.03, deterministic latency, and — critically — **leaves the GPU alone**. On a 12 GB card already holding Whisper + a GGUF, a GPU TTS is the wrong trade. |
+| **MOUTH** | Magpie (NeMo-Speech.cpp), voice `Sofia` | GPU | Chosen with the card (19 Sept 2026), after blind listening; output gain +9 dB. Piper (ONNX VITS, CPU, RTF 0.03) was the earlier choice; it left the GPU alone, see history below. |
+| **BRAIN** | llama.cpp `llama-server` (Granite 4.2 3B Q4_K_M, alias `mother-local`) / `router` → MiniMax-M3 | GPU / remote | See §0 and §1. |
+| **ACOUSTIC** | `pyloudnorm` (EBU R128) + librosa descriptors | CPU | Descriptors only, no model. |
+| **GATE** | in-process, hash-chained audit log | — | Single permission control point; every capability decision is appended and chain-verified. |
 
-#### Rejected for MOUTH: Qwen3-TTS-12Hz-1.7B via `llama-tts`
+#### History: rejected for MOUTH in the Piper era — Qwen3-TTS-12Hz-1.7B via `llama-tts`
 
 Tested, measured, rejected. Qwen advertises 97 ms first-packet streaming, but
 that comes from their dual-track architecture, which llama.cpp's `llama-tts`
 does not implement — it generates every frame, then runs the vocoder
 (`generation 1.64s + vocoder 0.05s`).
 
-| | Piper | Qwen3-TTS via llama-tts |
+| | Piper (then) | Qwen3-TTS via llama-tts |
 |---|---|---|
 | RTF | **0.03** | 0.21 – 0.30 |
 | Streaming | per clause | none |
@@ -65,17 +125,16 @@ Making it viable would mean writing a persistent server around `libmtmd`, and
 even then a sentence costs 1.7 s. Kept on disk for offline/voice-cloning use
 (24 kHz, 3-second clone), out of the realtime path.
 
-**The lesson: MOUTH latency was never bound by synthesis speed.** Piper is
-already 30x realtime. TTFA is set by *how much text we wait for before
-starting* — see `synthesize_stream`'s word-boundary cut, which took the
-measured round-trip from 911 ms to 500 ms without changing the model.
-| **BRAIN** | llama.cpp `llama-server` / StepFun | GPU / remote | See §1. |
-| **ACOUSTIC** | `pyloudnorm` (EBU R128) + librosa descriptors | CPU | Descriptors only, no model. |
-| **GATE** | in-process, hash-chained audit log | — | Single permission control point; every capability decision is appended and chain-verified. |
+**The lesson, which still holds: MOUTH latency was never bound by synthesis
+speed.** Piper was already 30x realtime. TTFA is set by *how much text we wait
+for before starting* — see `synthesize_stream`'s word-boundary cut, which took
+the measured round-trip from 911 ms to 500 ms without changing the model.
 
-### Local BRAIN candidates, measured
+### Local BRAIN candidates, measured (historical, before the card)
 
 Same prompts, same server flags, French voice system prompt, `temperature=0.2`.
+This is the LFM2.5-era bench. It has no row for Granite 4.2 3B, the card's
+local BRAIN, so Granite's figures are `[À VÉRIFIER]`.
 
 All rows measured under identical conditions: `dev/scripts/bench_brain.py`,
 voice system prompt, `temperature=0.2`, same server flags, GGUF Q4_K_M
@@ -89,7 +148,14 @@ voice system prompt, `temperature=0.2`, same server flags, GGUF Q4_K_M
 | Luciole-8B-Instruct-1.1 | 8 B | 120 ms | 341 | **2/4** | 0/5 | 5.1 GB | verbose, hedging |
 | Qwen3-4B-Instruct-2507 | 4 B | 43 ms | 389 | — | 0/5 | 2.8 GB | invents |
 
-**Selected: LFM2.5-2.6B-Q5_K_M (alias `mother-local` on :8090).** Updated 2026-09-02 (replacing Luth-2-2B). Holds high throughput, low TTFT (~26-38 ms), compact VRAM footprint (~1.9 GB), leaving full headroom for EARS and Pocket TTS. Luth-2-2B kept as documented fallback, Ministral-3-8B stays as the depth swap.
+**Selected today: Granite 4.2 3B Q4_K_M (alias `mother-local`)**, per the card
+in §0 (frozen 19 Sept 2026). Its TTFT, throughput and VRAM are `[À VÉRIFIER]`.
+
+Earlier selections: LFM2.5-2.6B-Q5_K_M (alias `mother-local` on :8090), chosen
+2026-09-02 to replace Luth-2-2B. The table above is that round's data. It held
+high throughput, low TTFT (~26-38 ms) and a compact VRAM footprint (~1.9 GB).
+Luth-2-2B was the default before that. Ministral-3-8B was the documented depth
+swap.
 
 **French-native pretraining did not win.** Luciole-8B (OpenLLM-France, ~30 %
 French corpus) is the worst of the five here: 3× the TTFT, the only one still
@@ -99,11 +165,11 @@ scale.
 
 **The arithmetic column is the honest cost of the no-reasoning rule.** The task
 ("il est 14 h 40, réunion dans 20 min, durée 40 min") needs two chained steps;
-**all five** non-reasoning models answer 15 h 20 instead of 15 h 40 — 0/5 each.
-An earlier 2/5 for LFM2.5 was prompt noise and did not survive a controlled
-re-run. No prompt fixed it. This is not a model-selection problem to keep
-shopping for: it is the trade the latency budget bought. Multi-step turns
-belong on the deep tier, routed there deliberately.
+**all five** non-reasoning models in this round answer 15 h 20 instead of
+15 h 40 — 0/5 each. An earlier 2/5 for LFM2.5 was prompt noise and did not
+survive a controlled re-run. No prompt fixed it. This is not a model-selection
+problem to keep shopping for: it is the trade the latency budget bought.
+Multi-step turns belong on the deep tier, routed there deliberately.
 
 ### Why llama.cpp and not vLLM / TGI / transformers
 
@@ -127,54 +193,56 @@ Built here with `-DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=89` (Ada Lovelace).
 
 ## 3. VRAM budget (12 282 MiB total, ~9 300 MiB free with the desktop up)
 
-| Component | Measured / estimate |
-|---|---|
-| BRAIN — LFM2.5-2.6B `Q5_K_M` + 8k ctx (KV q8_0) | **~1.9 GB** (measured) |
-| EARS — `large-v3-turbo` int8_float16 | ~1.6 GB |
-| MOUTH — Piper | 0 (CPU) |
-| TURN-L1 — Silero | 0 (CPU) |
-| planned: MOUTH — Qwen3-TTS-12Hz-1.7B `Q4_K_M` + mmproj | ~1.4 GB |
-| planned: TURN-L2 | ~0.5 GB |
-| headroom | ~4.5 GB |
+The card (Granite 4.2 3B Q4_K_M, large-v3 int8_float16, Magpie Sofia) has no
+VRAM measurement in the repo yet: `[À VÉRIFIER]`. The rows below come from the
+previous stack (LFM2.5-2.6B, large-v3-turbo, Piper) and are kept as history.
+
+| Component | Card (current) | History (previous stack) |
+|---|---|---|
+| BRAIN — Granite 4.2 3B `Q4_K_M` | `[À VÉRIFIER]` | — |
+| BRAIN — LFM2.5-2.6B `Q5_K_M` + 8k ctx (KV q8_0) | — | **~1.9 GB** (measured) |
+| EARS — `large-v3` int8_float16 | `[À VÉRIFIER]` | — |
+| EARS — `large-v3-turbo` int8_float16 | — | ~1.6 GB (estimate) |
+| MOUTH — Magpie Sofia | `[À VÉRIFIER]` | — |
+| MOUTH — Piper | — | 0 (CPU) |
+| TURN-L1 — Silero | 0 (CPU) | 0 (CPU) |
+| planned: MOUTH — Qwen3-TTS-12Hz-1.7B `Q4_K_M` + mmproj (rejected, §2) | — | ~1.4 GB |
+| planned: TURN-L2 | — | ~0.5 GB |
+| headroom | `[À VÉRIFIER]` | ~4.5 GB (estimate) |
 
 Measured free VRAM with Luth loaded and the Windows desktop up: **7996 MiB**
 (measurement dated 2026-08-21, when Luth-2-2B was still the default BRAIN —
-it is *not* a reading of the current stack, which serves LFM2.5-2.6B).
-Everything planned above fits inside that with room to spare.
+historical, not a reading of the current stack).
+In that setup, everything planned above fit with room to spare.
 
-Choosing an 8 B instead (Ministral, 5.4 GB) leaves ~2.6 GB — enough for EARS
-*or* the new TTS, not both. That is precisely the trade the benchmark above
+Choosing an 8 B instead (Ministral, 5.4 GB) left ~2.6 GB in that setup — enough
+for EARS *or* the new TTS, not both. That was the trade the benchmark in §2
 resolved in favour of the 2 B.
 
 ---
 
 ## 4. Latency budget (NFR-01: perceived round-trip < 1200 ms)
 
-Measured on this machine, full chain, French, 4.26 s spoken question
-(`make demo` with `--audio`):
+The figures below are historical: one measurement of the previous stack (LFM2.5-2.6B,
+large-v3-turbo, Piper), full chain, French, 4.26 s spoken question (`make demo`
+with `--audio`). The card's column is `[À VÉRIFIER]` until it is measured on
+this machine.
 
-| Stage | Measured | Notes |
-|---|---|---|
-| TURN endpoint decision | **20 ms** compute, RTF 0.004 | CPU, Silero, endpoint at 4.30 s |
-| EARS transcription | **370 ms**, RTF 0.087 | GPU, `large-v3-turbo` int8_float16 |
-| BRAIN time-to-first-token | **27 ms** | local, LFM2.5-2.6B Q5_K_M (`mother-local` :8090), CUDA |
-| MOUTH time-to-first-audio | **102 ms** | CPU, Piper, word-bounded opening |
-| **perceived round-trip** | **500 ms** | budget 1200 ms — **within, 2.4x margin** |
-| full generation | 16.5 s | 8.8 s of speech, 2 chunks |
+| Stage | Card (current) | History (previous stack) | Notes |
+|---|---|---|---|
+| TURN endpoint decision | same component (Silero, CPU), not re-measured | **20 ms** compute, RTF 0.004 | endpoint at 4.30 s |
+| EARS transcription | `[À VÉRIFIER]` | **370 ms**, RTF 0.087 | GPU, `large-v3-turbo` int8_float16 (card: `large-v3`) |
+| BRAIN time-to-first-token | `[À VÉRIFIER]` | **27 ms** | LFM2.5-2.6B Q5_K_M (`mother-local` :8090), CUDA |
+| MOUTH time-to-first-audio | `[À VÉRIFIER]` | **102 ms** | Piper, CPU, word-bounded opening |
+| **perceived round-trip** | `[À VÉRIFIER]` | **500 ms** | budget 1200 ms — historically within, 2.4x margin |
+| full generation | — | 16.5 s | 8.8 s of speech, 2 chunks |
+| EARS accuracy | `[À VÉRIFIER]` | WER 2.6 % | closed-loop Piper→Whisper; the only error is `un`→`1` |
+| BRAIN TTFT (StepFun) | retired | not measurable | key valid (`/v1/models` 200), account 402 quota_exceeded |
 
-**EARS is now the dominant cost** (370 of 500 ms) — the next thing worth
-attacking, and `Voxtral-Mini-4B-Realtime` (natively streaming, 240 ms–2.4 s
-configurable delay, Apache-2.0) is the candidate.
-| EARS accuracy | WER 2.6 % | closed-loop Piper→Whisper; the only error is `un`→`1` |
-| BRAIN TTFT (StepFun) | not measurable | key valid (`/v1/models` 200), account 402 quota_exceeded |
-
-**MOUTH is now the dominant cost** (515 of 912 ms). That is the next thing to
-attack, and §2 explains why it is structural rather than a tuning problem.
-
-The pipeline overlaps rather than serialises: `PiperTTS.synthesize_stream`
+Perceived round-trip is what the pipeline overlaps for: `PiperTTS.synthesize_stream`
 consumes BRAIN's token deltas and synthesises **per sentence**, so the user
-hears sentence 1 while BRAIN is still generating sentence 3. Perceived
-round-trip is therefore
+hears sentence 1 while BRAIN is still generating sentence 3. The same overlap
+applies to the card's Magpie path. Perceived round-trip is therefore
 
 ```
 EARS_transcribe + BRAIN_TTFT + MOUTH_first_sentence
@@ -182,6 +250,11 @@ EARS_transcribe + BRAIN_TTFT + MOUTH_first_sentence
 
 not the sum of the full generations. `dev/scripts/pipeline_demo.py` prints this
 breakdown and flags over-budget.
+
+Historically, EARS was the dominant cost (370 of 500 ms) and Voxtral-Mini-4B-Realtime
+(natively streaming, 240 ms–2.4 s configurable delay, Apache-2.0) was the
+candidate to attack it. In a later run MOUTH was the dominant cost (515 of
+912 ms), which §2 explains as structural rather than a tuning problem.
 
 ---
 
@@ -202,7 +275,7 @@ WebSocket on `:8001`. The container never touches hardware audio.
 | 8000 | 8000 | hyper-ambient core API |
 | 8001 | 8001 | WebSocket — host-agent transport |
 | 8090 | 8080 | `llama-server` (8080 on the host is SearXNG) |
-| 8091 | 8081 | `whisper-server` |
+| 8091 | 8081 | `whisper-server` (whisper.cpp, fallback) |
 
 ---
 

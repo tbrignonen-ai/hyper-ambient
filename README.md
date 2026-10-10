@@ -41,6 +41,49 @@ Le modèle local tient les tours brefs. Un classifieur local décide à chaque t
 n'envoie au modèle distant que ce qui le nécessite : une demande complexe, ou une demande
 qui nomme un outil de développement. Détail dans [DONNEES.md](DONNEES.md).
 
+### Modèles
+
+<!-- carte-figee:debut -->
+
+La source de vérité est `dev/scripts/carte_figee.env`, chargée par l'agent hôte et suivie par `dev/scripts/fetch_models.sh`.
+
+| Rôle | Modèle | Où |
+|---|---|---|
+| Cerveau réflexe | Granite 4.2 3B, GGUF Q4_K_M | Local, servi par llama-server sous l'alias `mother-local` |
+| Escalade distante | MiniMax-M3 | Distant, via `BRAIN_SERVICE=router` et un point d'accès compatible OpenAI (`.env.local`) |
+| Oreilles | faster-whisper `large-v3` | Local, `int8_float16`, cuda, fr |
+| Voix | Magpie (NeMo-Speech.cpp), voix Sofia | Local, cuda, fr |
+
+```env
+BRAIN_SERVICE=router
+BRAIN_MODEL=MiniMaxAI/MiniMax-M3
+BRAIN_MODEL_LOCAL=mother-local
+MODEL=/workspace/models/gguf/granite-4.2-3b-Q4_K_M.gguf
+
+EARS_BACKEND=faster-whisper
+EARS_MODEL=large-v3
+EARS_LANGUAGE=fr
+EARS_DEVICE=cuda
+EARS_COMPUTE_TYPE=int8_float16
+EARS_HOTWORDS=Hyper Ambient
+
+MOUTH_BACKEND=magpie
+MOUTH_VOICE_NAME=Sofia
+MOUTH_LANGUAGE=fr
+MOUTH_DEVICE=cuda
+MOUTH_OUTPUT_GAIN_DB=9
+```
+
+<!-- carte-figee:fin -->
+
+Les modèles remplacés (LFM2.5-2.6B, Luth, Ministral, Luciole, Pocket TTS, Piper,
+large-v3-turbo) restent dans l'historique ou comme replis. StepFun, l'ancien distant, est
+retiré : son compte répond HTTP 402. Le détail est dans [STACK.md](STACK.md).
+
+Le profil macOS (`packaging/macos/mac-16g.env.example`, profil `mac-16g-voix-max`)
+utilise une autre pile, MLX (LFM2.5-8B-A1B, Qwen3-ASR, Chatterbox), parce qu'un Mac n'a
+pas CUDA : c'est le profil Mac, pas une contradiction de la carte.
+
 ## Prérequis
 
 - Windows 10 version 2004 ou ultérieure, ou Windows 11 ; PowerShell ; une connexion
@@ -98,6 +141,8 @@ Ce que la première version macOS n'aura pas, et c'est su à l'avance :
   restent à mesurer sur place.
 - **L'application n'est pas notariée** : le premier lancement demandera une autorisation
   explicite.
+
+Le profil Mac de référence est `packaging/macos/mac-16g.env.example` (profil `mac-16g-voix-max`), distinct de la carte figée ci-dessus.
 
 ### Le processus de validation
 

@@ -38,6 +38,47 @@ The local model handles short turns. A local classifier decides on every turn, a
 to the remote model only what needs it: a complex request, or one that names a development
 tool. Details in [DONNEES.en.md](DONNEES.en.md).
 
+### Models
+
+<!-- carte-figee:debut -->
+
+The source of truth is `dev/scripts/carte_figee.env`, loaded by the host agent and tracked by `dev/scripts/fetch_models.sh`.
+
+| Role | Model | Where |
+|---|---|---|
+| Reflex brain | Granite 4.2 3B, GGUF Q4_K_M | Local, served by llama-server under the alias `mother-local` |
+| Remote escalation | MiniMax-M3 | Remote, via `BRAIN_SERVICE=router` and an OpenAI-compatible endpoint (`.env.local`) |
+| Ears | faster-whisper `large-v3` | Local, `int8_float16`, cuda, fr |
+| Voice | Magpie (NeMo-Speech.cpp), voice Sofia | Local, cuda, fr |
+
+```env
+BRAIN_SERVICE=router
+BRAIN_MODEL=MiniMaxAI/MiniMax-M3
+BRAIN_MODEL_LOCAL=mother-local
+MODEL=/workspace/models/gguf/granite-4.2-3b-Q4_K_M.gguf
+
+EARS_BACKEND=faster-whisper
+EARS_MODEL=large-v3
+EARS_LANGUAGE=fr
+EARS_DEVICE=cuda
+EARS_COMPUTE_TYPE=int8_float16
+EARS_HOTWORDS=Hyper Ambient
+
+MOUTH_BACKEND=magpie
+MOUTH_VOICE_NAME=Sofia
+MOUTH_LANGUAGE=fr
+MOUTH_DEVICE=cuda
+MOUTH_OUTPUT_GAIN_DB=9
+```
+
+<!-- carte-figee:fin -->
+
+The superseded models (LFM2.5-2.6B, Luth, Ministral, Luciole, Pocket TTS, Piper,
+large-v3-turbo) remain as history or fallbacks. StepFun, the former remote, is retired:
+its account answers HTTP 402. Details are in [STACK.md](STACK.md).
+
+The macOS profile (`packaging/macos/mac-16g.env.example`, profile `mac-16g-voix-max`) uses a different stack, MLX (LFM2.5-8B-A1B, Qwen3-ASR, Chatterbox), because a Mac has no CUDA: it is the Mac profile, not a contradiction of the card.
+
 ## Requirements
 
 - Windows 10 version 2004 or later, or Windows 11; PowerShell; a network connection for
@@ -94,6 +135,8 @@ What the first macOS version will not have, and we know it in advance:
 - **Compute runs without CUDA**: Metal for the language model, most likely a different
   transcription engine, synthesis on the CPU. Latencies remain to be measured on site.
 - **The application is not notarised**: the first launch will ask for explicit approval.
+
+The reference Mac profile is `packaging/macos/mac-16g.env.example` (profile `mac-16g-voix-max`), separate from the frozen card above.
 
 ### The validation process
 
