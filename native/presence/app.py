@@ -55,6 +55,7 @@ from onboarding import (
     terminer_onboarding,
     ui_presence,
 )
+from onboarding_llm_ui import FenetreOnboardingLLM
 from src.i18n import t
 
 # Champ sombre plein : le bureau ne perce plus la fenêtre app.
@@ -1177,6 +1178,7 @@ class Application:
         self.bouton_stop: tk.Button | None = None
         self.bouton_reglages: tk.Button | None = None
         self.fenetre_reglages = None
+        self.fenetre_onboarding_llm = None
         self.cadre_sante: tk.Frame | None = None
         self.cadre_conversation: tk.Frame | None = None
         self.pastille_conversation: tk.Canvas | None = None
@@ -1248,6 +1250,8 @@ class Application:
         else:
             self._afficher_bienvenue()
         self._armer_tic()
+        if getattr(args, "onboarding_llm", False):
+            self.racine.after(300, self.ouvrir_onboarding_llm)
 
     def _vider(self) -> None:
         self.orbe_accueil = None
@@ -2035,6 +2039,20 @@ class Application:
         self.bouton_reglages.pack(fill=tk.X, pady=(0, 8))
         self._rendre_focus_visible(self.bouton_reglages)
 
+        bouton_guide_llm = tk.Button(
+            cadre,
+            text=u["guided_llm"],
+            command=self.ouvrir_onboarding_llm,
+            bg=FOND_VITRE,
+            fg=ENCRE_SOURDE,
+            activebackground="#142028",
+            activeforeground=ENCRE,
+            relief=tk.FLAT,
+            takefocus=1,
+        )
+        bouton_guide_llm.pack(fill=tk.X, pady=(0, 8))
+        self._rendre_focus_visible(bouton_guide_llm)
+
         self.bouton_masquer = tk.Button(
             cadre,
             text=u["hide_config"],
@@ -2151,6 +2169,35 @@ class Application:
             + raccourci
             + " parler · Ctrl+H masquer · F6 focus Parler · Échap Stop si parole, sinon quitter"
         )
+
+    def ouvrir_onboarding_llm(self) -> object:
+        """Ouvre l'accueil guidé par le modèle, ou ramène celui déjà ouvert."""
+        existante = getattr(self, "fenetre_onboarding_llm", None)
+        if existante is not None:
+            try:
+                if existante.winfo_exists():
+                    existante.lift()
+                    existante.focus_set()
+                    return existante
+            except tk.TclError:
+                pass
+        fenetre = FenetreOnboardingLLM(
+            racine=self.racine,
+            chemin_configuration=self.chemin_configuration,
+            chemin_env_local=_ROOT / ".env.local",
+            enfoncer=self.enfoncer,
+            relacher=self.relacher,
+            dire=None,
+            canal_pret=self.session.canal_pret.is_set,
+        )
+        self.fenetre_onboarding_llm = fenetre
+
+        def quand_detruite(event: tk.Event) -> None:
+            if str(getattr(event, "widget", "")) == str(fenetre):
+                self.fenetre_onboarding_llm = None
+
+        fenetre.bind("<Destroy>", quand_detruite, add="+")
+        return fenetre
 
     def ouvrir_reglages(self, chemin: Path | None = None) -> object:
         """Ouvre la fenêtre Réglages sans bloquer la fenêtre principale."""
@@ -2559,6 +2606,12 @@ class Application:
             return
 
     def _traiter(self, message: dict[str, Any]) -> None:
+        fenetre_llm = getattr(self, "fenetre_onboarding_llm", None)
+        if fenetre_llm is not None:
+            try:
+                fenetre_llm.recevoir(message)
+            except tk.TclError:
+                pass
         kind = message.get("type")
         if kind == "etat":
             etat = message.get("etat")
@@ -2758,6 +2811,11 @@ def analyser_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         "--onboarding",
         action="store_true",
         help="réafficher l'onboarding sans effacer le choix enregistré",
+    )
+    parseur.add_argument(
+        "--onboarding-llm",
+        action="store_true",
+        help="ouvrir l'accueil guidé par le modèle (déclarer, guider, armer, essayer)",
     )
     parseur.add_argument(
         "--sante",

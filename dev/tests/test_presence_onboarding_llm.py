@@ -367,3 +367,226 @@ def test_un_harnais_arme_hier_redevient_gris_au_relancement(tmp_path):
     etats = llm.etats_initiaux(llm.charger_onboarding_llm(chemin))
     assert etats["codex"].couleur == llm.GRIS
     assert llm.libelle_etat(etats["codex"]) == "Non vérifié"
+
+
+# --- Fenêtre Tk fine (onboarding_llm_ui) : skip propre sans affichage ----------
+
+def _tk_ou_passer():
+    tk = pytest.importorskip("tkinter")
+    try:
+        racine = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk indisponible : {exc}")
+    racine.withdraw()
+    from native.presence import onboarding_llm_ui as ui
+
+    return tk, racine, ui
+
+
+def _detruire(racine, fenetre=None):
+    for objet in (fenetre, racine):
+        if objet is None:
+            continue
+        try:
+            objet.destroy()
+        except Exception:  # déjà détruit par la fenêtre elle-même
+            pass
+
+
+def _ouvrir(ui, racine, tmp_path, **options):
+    options.setdefault("requeteur", FauxRequeteur({}))
+    options.setdefault("lire_jetons", lambda: dict(JETONS))
+    options.setdefault("executer", lambda fonction: fonction())
+    return ui.FenetreOnboardingLLM(
+        racine=racine,
+        chemin_configuration=tmp_path / "presence.json",
+        chemin_env_local=tmp_path / ".env.local",
+        **options,
+    )
+
+
+def test_declarer_sante_200_affiche_http_et_ne_stocke_pas_la_cle(tmp_path):
+    tk, racine, ui = _tk_ou_passer()
+    fenetre = None
+    try:
+        requeteur = FauxRequeteur({"https://api.exemple/v1/models": ok(statut=200, latence=12.0)})
+        fenetre = _ouvrir(ui, racine, tmp_path, requeteur=requeteur)
+        fenetre.entree_nom.insert(0, "MiniMax-M3")
+        fenetre.entree_url.insert(0, "https://api.exemple/v1")
+        fenetre.entree_cle.insert(0, "sk-secret")
+        fenetre.verifier()
+        fenetre.traiter_resultats()
+
+        texte = fenetre.label_verification.cget("text")
+        assert "HTTP 200" in texte and "vérifié" in texte
+        assert "sk-secret" not in texte
+        assert fenetre.etat.distant_verifie is True
+        presence = (tmp_path / "presence.json").read_text(encoding="utf-8")
+        assert "sk-secret" not in presence
+        assert "sk-secret" in (tmp_path / ".env.local").read_text(encoding="utf-8")
+    finally:
+        _detruire(racine, fenetre)
+
+
+def test_armer_pong_recu_passe_au_vert_en_francais(tmp_path):
+    tk, racine, ui = _tk_ou_passer()
+    fenetre = None
+    try:
+        requeteur = FauxRequeteur({URL_CODEX: ok(corps="PONG")})
+        fenetre = _ouvrir(ui, racine, tmp_path, requeteur=requeteur)
+        fenetre.activer("codex")
+        fenetre.traiter_resultats()
+        assert fenetre.etats_harnais["codex"].couleur == llm.VERT
+        assert fenetre.labels_harnais["codex"].cget("text") == "Connecté — PONG reçu"
+        assert "PONG : oui" in fenetre.labels_indicateurs["codex"].cget("text")
+        assert fenetre.etat.armes["codex"] is True
+    finally:
+        _detruire(racine, fenetre)
+
+
+def test_armer_sans_pong_reste_rouge(tmp_path):
+    tk, racine, ui = _tk_ou_passer()
+    fenetre = None
+    try:
+        requeteur = FauxRequeteur({URL_CODEX: ok(corps="rien à signaler")})
+        fenetre = _ouvrir(ui, racine, tmp_path, requeteur=requeteur)
+        fenetre.activer("codex")
+        fenetre.traiter_resultats()
+        assert fenetre.etats_harnais["codex"].couleur == llm.ROUGE
+        assert fenetre.labels_harnais["codex"].cget("text") == "Pas de PONG"
+        assert fenetre.etat.armes["codex"] is False
+    finally:
+        _detruire(racine, fenetre)
+
+
+def test_essayer_la_reponse_reelle_s_affiche_et_reussit(tmp_path):
+    tk, racine, ui = _tk_ou_passer()
+    fenetre = None
+    try:
+        requeteur = FauxRequeteur({URL_CODEX: ok(corps="PONG")})
+        fenetre = _ouvrir(ui, racine, tmp_path, requeteur=requeteur)
+        fenetre.activer("codex")
+        fenetre.traiter_resultats()
+        fenetre.afficher_etape("essayer")
+
+        assert fenetre._debuter_essai("codex") is True
+        fenetre.recevoir({"type": "etat", "etat": "harnais"})
+        fenetre.recevoir({"type": "rapport", "transcript": "Codex, réponds PONG", "reply": "PONG, je suis là."})
+        fenetre.recevoir({"type": "premier_son", "ms": 640.0})
+        fenetre.recevoir({"type": "etat", "etat": "repos"})
+
+        assert "PONG, je suis là." in fenetre.label_essai["codex"].cget("text")
+        assert fenetre.etat.essais["codex"] is True
+        assert fenetre._essai_cle is None
+    finally:
+        _detruire(racine, fenetre)
+
+
+def test_essayer_repli_dit_une_fois_et_affiche_sans_voix(tmp_path):
+    tk, racine, ui = _tk_ou_passer()
+    fenetre = None
+    try:
+        capte: list[str] = []
+        fenetre = _ouvrir(ui, racine, tmp_path, dire=capte.append)
+        fenetre.afficher_etape("essayer")
+        fenetre.afficher_etape("essayer")
+
+        assert len(capte) == len(llm.HARNAIS)  # une seule fois par harnais non armé
+        assert all("je reste en local." in phrase for phrase in capte)
+        assert "je reste en local." in fenetre.label_essai["claude"].cget("text")
+        assert fenetre.etat.essais == {}
+    finally:
+        _detruire(racine, fenetre)
+
+
+def test_essayer_sans_voix_affiche_la_ligne_visible(tmp_path):
+    tk, racine, ui = _tk_ou_passer()
+    fenetre = None
+    try:
+        fenetre = _ouvrir(ui, racine, tmp_path, dire=None)
+        fenetre.afficher_etape("essayer")
+        assert ui.TEXTE_SANS_VOIX in fenetre.label_essai["distant"].cget("text")
+    finally:
+        _detruire(racine, fenetre)
+
+
+def test_le_ecran_ne_montre_jamais_un_vert_persiste(tmp_path):
+    """Une preuve passée ne vaut pas preuve présente : tout repart de gris."""
+    tk, racine, ui = _tk_ou_passer()
+    fenetre = None
+    try:
+        llm.enregistrer_onboarding_llm(
+            llm.EtatOnboardingLLM(
+                etape="armer", distant_verifie=True, armes={"codex": True}, guide_coche=("codex",)
+            ),
+            tmp_path / "presence.json",
+        )
+        fenetre = _ouvrir(ui, racine, tmp_path)
+        assert fenetre.label_verification.cget("text") == "Non vérifié"
+        assert fenetre.labels_harnais["codex"].cget("text") == "Non vérifié"
+        assert fenetre.etats_harnais["codex"].couleur == llm.GRIS
+        assert fenetre.etat.guide_coche == ("codex",)
+    finally:
+        _detruire(racine, fenetre)
+
+
+def test_passer_declarer_avance_et_persiste(tmp_path):
+    tk, racine, ui = _tk_ou_passer()
+    fenetre = None
+    try:
+        fenetre = _ouvrir(ui, racine, tmp_path)
+        fenetre._avancer("declarer")
+        assert fenetre.etat.etape == "guider"
+        relu = llm.charger_onboarding_llm(tmp_path / "presence.json")
+        assert relu.etape == "guider"
+    finally:
+        _detruire(racine, fenetre)
+
+
+def test_le_module_d_onboarding_llm_n_importe_pas_tkinter():
+    import re
+
+    source = (RACINE / "native" / "presence" / "onboarding_llm.py").read_text(encoding="utf-8")
+    assert re.search(r"^\s*(import|from)\s+tkinter", source, flags=re.MULTILINE) is None
+
+
+def test_essayer_canal_ferme_repli_immediat_sans_tour(tmp_path):
+    tk, racine, ui = _tk_ou_passer()
+    fenetre = None
+    dits: list[str] = []
+    enfonces: list[bool] = []
+    try:
+        fenetre = _ouvrir(
+            ui, racine, tmp_path,
+            requeteur=FauxRequeteur({URL_CODEX: ok("PONG")}),
+            dire=dits.append,
+            canal_pret=lambda: False,
+            enfoncer=lambda: enfonces.append(True),
+        )
+        fenetre.activer("codex")
+        fenetre.traiter_resultats()
+        fenetre.afficher_etape("essayer")
+        fenetre._appuyer_essai("codex")
+        assert enfonces == []
+        assert fenetre._essai_cle is None
+        texte = fenetre.label_essai["codex"].cget("text")
+        assert "je reste en local" in texte
+        assert any("Canal vocal pas prêt" in d for d in dits)
+    finally:
+        _detruire(racine, fenetre)
+
+
+def test_essayer_un_statut_ne_clot_pas_le_tour(tmp_path):
+    tk, racine, ui = _tk_ou_passer()
+    fenetre = None
+    try:
+        fenetre = _ouvrir(ui, racine, tmp_path, requeteur=FauxRequeteur({URL_CODEX: ok("PONG")}))
+        fenetre.activer("codex")
+        fenetre.traiter_resultats()
+        fenetre.afficher_etape("essayer")
+        assert fenetre._debuter_essai("codex")
+        fenetre.recevoir({"type": "statut", "texte": "Envoi…"})
+        fenetre.recevoir({"type": "etat", "etat": "repos"})
+        assert fenetre._essai_cle == "codex"
+    finally:
+        _detruire(racine, fenetre)
