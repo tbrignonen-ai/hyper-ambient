@@ -23,6 +23,11 @@ except ModuleNotFoundError:  # pragma: no cover — image docker sans Tk
     tk = None  # type: ignore[assignment]
     ttk = None  # type: ignore[assignment]
 
+try:
+    import theme
+except ImportError:
+    from native.presence import theme
+
 from src.i18n import t
 from src.onboarding import sondes as module_sondes
 from src.onboarding.reglages import lire_reglages, poser_reglages, reglage_present
@@ -188,28 +193,28 @@ _SONDES_DEFAUT: dict[str, Callable[..., Any]] = {
     "outil_claude": lambda nom="claude", *_a, **_k: outil_cli_pret("claude"),
 }
 
-FOND = "#0c1820"
-FOND_VITRE = "#102028"
-BORD = "#2a4a5c"
-ENCRE = "#d8e4ec"
-ENCRE_SOURDE = "#8aa0b0"
-PASTILLE_OK = "#3dba7a"
-PASTILLE_KO = "#d04a4a"
-PASTILLE_NEUTRE = "#4a6474"
+FOND = theme.FOND
+FOND_VITRE = theme.FOND_VITRE
+BORD = theme.BORD
+ENCRE = theme.ENCRE
+ENCRE_SOURDE = theme.ENCRE_SOURDE
+PASTILLE_OK = theme.PASTILLE_OK
+PASTILLE_KO = theme.PASTILLE_KO
+PASTILLE_NEUTRE = theme.PASTILLE_NEUTRE
 # Troisième état : le service est joignable, mais aucune réponse vérifiable
 # n'est revenue. Ni vert (rien n'est prouvé), ni rouge (il n'est pas tombé).
-PASTILLE_MUET = "#d9a441"
-MARQUEUR_LOCAL = "#4a8a72"
-MARQUEUR_SORTIE = "#b89654"
-# Champ de saisie : rectangle lisible, distinct du panneau (#102028).
-FOND_CHAMP = "#1c3a4a"
-BORD_CHAMP = "#6a9aac"
-BORD_FOCUS = "#7ec8dc"
-ENCRE_INVITE = "#7a96a4"
-FOND_CHAMP_CONTRASTE = "#2a5060"
-BORD_CHAMP_CONTRASTE = "#a8e0f0"
-BORD_FOCUS_CONTRASTE = "#e8f8fc"
-ENCRE_INVITE_CONTRASTE = "#b8d0dc"
+PASTILLE_MUET = theme.PASTILLE_MUET
+MARQUEUR_LOCAL = theme.MARQUEUR_LOCAL
+MARQUEUR_SORTIE = theme.MARQUEUR_SORTIE
+# Champ de saisie : rectangle lisible, distinct du panneau (FOND_VITRE).
+FOND_CHAMP = theme.FOND_CHAMP
+BORD_CHAMP = theme.BORD_CHAMP
+BORD_FOCUS = theme.BORD_FOCUS
+ENCRE_INVITE = theme.ENCRE_INVITE
+FOND_CHAMP_CONTRASTE = theme.FOND_CHAMP_CONTRASTE
+BORD_CHAMP_CONTRASTE = theme.BORD_CHAMP_CONTRASTE
+BORD_FOCUS_CONTRASTE = theme.BORD_FOCUS_CONTRASTE
+ENCRE_INVITE_CONTRASTE = theme.ENCRE_INVITE_CONTRASTE
 
 _CLES_INVITE_IGNOREES = frozenset(
     {
@@ -629,7 +634,7 @@ if tk is not None:
                 insertbackground=self._couleurs["encre"],
                 relief=tk.SOLID,
                 bd=2,
-                font=("Segoe UI", 11),
+                font=theme.police("texte"),
                 highlightthickness=2,
                 highlightbackground=self._couleurs["bord"],
                 highlightcolor=self._couleurs["focus"],
@@ -830,7 +835,7 @@ class FenetreReglages:
             text=t("reglages.a11y"),
             bg=FOND,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 9),
+            font=theme.police("legende"),
             wraplength=480,
             justify="left",
             anchor="w",
@@ -840,7 +845,7 @@ class FenetreReglages:
             text=t("reglages.confidentialite"),
             bg=FOND,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 9),
+            font=theme.police("legende"),
             wraplength=480,
             justify="left",
             anchor="w",
@@ -853,7 +858,7 @@ class FenetreReglages:
             text=legende_etats(),
             bg=FOND,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 8),
+            font=theme.police("legende"),
             wraplength=480,
             justify="left",
             anchor="w",
@@ -864,7 +869,7 @@ class FenetreReglages:
             text=aide_verifier() + " " + t("reglages.echec_manuel"),
             bg=FOND,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 8),
+            font=theme.police("legende"),
             wraplength=480,
             justify="left",
             anchor="w",
@@ -879,7 +884,7 @@ class FenetreReglages:
             takefocus=1,
             bg=FOND_VITRE,
             fg=ENCRE,
-            activebackground="#142028",
+            activebackground=theme.FOND_SURVOL,
             activeforeground=ENCRE,
             relief=tk.RAISED,
         )
@@ -891,7 +896,7 @@ class FenetreReglages:
             takefocus=1,
             bg=FOND_VITRE,
             fg=ENCRE,
-            activebackground="#142028",
+            activebackground=theme.FOND_SURVOL,
             activeforeground=ENCRE,
             relief=tk.RAISED,
         )
@@ -901,7 +906,7 @@ class FenetreReglages:
             text="",
             bg=FOND,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 9),
+            font=theme.police("legende"),
             anchor="w",
         )
         self.ligne_statut.pack(side=tk.BOTTOM, fill=tk.X, padx=16)
@@ -965,7 +970,7 @@ class FenetreReglages:
             text=t(bloc["titre"]),
             bg=FOND_VITRE,
             fg=ENCRE,
-            font=("Segoe UI", 13, "bold"),
+            font=theme.police("sous_titre"),
             anchor="w",
         ).pack(side=tk.LEFT, fill=tk.X, expand=True)
         self._monter_marqueur(interieur, bloc)
@@ -991,7 +996,7 @@ class FenetreReglages:
             text=t(bloc["aide"]),
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 9),
+            font=theme.police("legende"),
             wraplength=440,
             justify="left",
             anchor="w",
@@ -1017,7 +1022,7 @@ class FenetreReglages:
                 text=t(f"reglages.champ.{cle}"),
                 bg=FOND_VITRE,
                 fg=ENCRE_SOURDE,
-                font=("Segoe UI", 9),
+                font=theme.police("legende"),
                 anchor="w",
             ).pack(fill=tk.X)
             cle_exemple = f"reglages.champ.{cle}_exemple"
@@ -1028,7 +1033,7 @@ class FenetreReglages:
                     text=exemple,
                     bg=FOND_VITRE,
                     fg=ENCRE_SOURDE,
-                    font=("Segoe UI", 8),
+                    font=theme.police("legende"),
                     wraplength=440,
                     justify="left",
                     anchor="w",
@@ -1058,7 +1063,7 @@ class FenetreReglages:
                     text=texte,
                     bg=FOND_VITRE,
                     fg=ENCRE_SOURDE,
-                    font=("Segoe UI", 8),
+                    font=theme.police("legende"),
                     anchor="w",
                 )
                 ligne.pack(fill=tk.X, pady=(0, 6))
@@ -1076,7 +1081,7 @@ class FenetreReglages:
             takefocus=1,
             bg=FOND,
             fg=ENCRE,
-            activebackground="#142028",
+            activebackground=theme.FOND_SURVOL,
             activeforeground=ENCRE,
         )
         bouton.pack(side=tk.LEFT)
@@ -1097,7 +1102,7 @@ class FenetreReglages:
             text="",
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 9),
+            font=theme.police("legende"),
             anchor="w",
             wraplength=280,
             justify="left",
@@ -1113,7 +1118,7 @@ class FenetreReglages:
             text=t(categorie["titre"]),
             bg=FOND,
             fg=ENCRE,
-            font=("Segoe UI", 11, "bold"),
+            font=theme.police("texte_fort"),
             anchor="w",
         ).pack(fill=tk.X, padx=8, pady=(16, 2))
 
@@ -1136,7 +1141,7 @@ class FenetreReglages:
             text=libelle_donnees(bloc),
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 8),
+            font=theme.police("legende"),
             wraplength=420,
             justify="left",
             anchor="w",
@@ -1196,7 +1201,7 @@ class FenetreReglages:
             text=" ",
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 9),
+            font=theme.police("legende"),
             anchor="w",
         ).pack(fill=tk.X)
         self.combo_voix = self._combo_voix(col_voix, self.var_voix, voix)
@@ -1208,7 +1213,7 @@ class FenetreReglages:
             text=t("reglages.accent_titre"),
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 9),
+            font=theme.police("legende"),
             anchor="w",
         ).pack(fill=tk.X)
         self.combo_accent = self._combo_voix(col_accent, self.var_accent, libelles)
@@ -1220,7 +1225,7 @@ class FenetreReglages:
             text=" ",
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 9),
+            font=theme.police("legende"),
             anchor="w",
         ).pack(fill=tk.X)
         self.bouton_ecouter = tk.Button(
@@ -1230,7 +1235,7 @@ class FenetreReglages:
             takefocus=1,
             bg=FOND,
             fg=ENCRE,
-            activebackground="#142028",
+            activebackground=theme.FOND_SURVOL,
             activeforeground=ENCRE,
         )
         self.bouton_ecouter.pack(ipady=2)
@@ -1244,7 +1249,7 @@ class FenetreReglages:
             text=t("reglages.accent_compromis"),
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 8),
+            font=theme.police("legende"),
             wraplength=440,
             justify="left",
             anchor="w",
@@ -1254,7 +1259,7 @@ class FenetreReglages:
             text=t("reglages.voix_repli"),
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 8),
+            font=theme.police("legende"),
             wraplength=440,
             justify="left",
             anchor="w",
@@ -1272,8 +1277,8 @@ class FenetreReglages:
             fg=ENCRE,
             activebackground=FOND_VITRE,
             activeforeground=ENCRE,
-            selectcolor="#142028",
-            font=("Segoe UI", 11),
+            selectcolor=theme.FOND_SURVOL,
+            font=theme.police("texte"),
             anchor="w",
             takefocus=1,
         )
@@ -1302,7 +1307,7 @@ class FenetreReglages:
             text=t("reglages.langue_delai"),
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 8),
+            font=theme.police("legende"),
             wraplength=440,
             justify="left",
             anchor="w",
@@ -1313,7 +1318,7 @@ class FenetreReglages:
             text="",
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 8),
+            font=theme.police("legende"),
             wraplength=440,
             justify="left",
             anchor="w",
@@ -1355,23 +1360,23 @@ class FenetreReglages:
             self.fenetre, value=libelles.get(mode, libelles_modes[0])
         )
         tk.Label(parent, text=t("reglages.cerveau_mode"), bg=FOND_VITRE,
-                 fg=ENCRE_SOURDE, font=("Segoe UI", 9), anchor="w").pack(fill=tk.X)
+                 fg=ENCRE_SOURDE, font=theme.police("legende"), anchor="w").pack(fill=tk.X)
         self.combo_cerveau_mode = self._combo_voix(parent, self.var_cerveau_mode, libelles_modes)
         tk.Label(parent, text=t("reglages.cerveau_modele"), bg=FOND_VITRE,
-                 fg=ENCRE_SOURDE, font=("Segoe UI", 9), anchor="w").pack(fill=tk.X, pady=(6, 0))
+                 fg=ENCRE_SOURDE, font=theme.police("legende"), anchor="w").pack(fill=tk.X, pady=(6, 0))
         self.var_cerveau_modele = tk.StringVar(self.fenetre, value=modele)
         self._codes_modeles: dict[str, str] = {modele: modele} if modele else {}
         self.combo_cerveau_modele = self._combo_voix(
             parent, self.var_cerveau_modele, [modele] if modele else []
         )
         self.ligne_cerveau_etat = tk.Label(
-            parent, text="", bg=FOND_VITRE, fg=ENCRE_SOURDE, font=("Segoe UI", 8),
+            parent, text="", bg=FOND_VITRE, fg=ENCRE_SOURDE, font=theme.police("legende"),
             wraplength=440, justify="left", anchor="w",
         )
         self.ligne_cerveau_etat.pack(fill=tk.X, pady=(2, 2))
         tk.Button(
             parent, text=t("reglages.cerveau_appliquer"), command=self._appliquer_cerveau,
-            font=("Segoe UI", 9), takefocus=1,
+            font=theme.police("legende"), takefocus=1,
         ).pack(anchor="w", pady=(2, 4))
         try:
             self.combo_cerveau_mode.bind(
@@ -1445,7 +1450,7 @@ class FenetreReglages:
             text=t("reglages.recherche_tavily"),
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 9),
+            font=theme.police("legende"),
             wraplength=440,
             justify="left",
             anchor="w",
@@ -1457,11 +1462,11 @@ class FenetreReglages:
             command=self._ouvrir_tavily,
             takefocus=1,
             bg=FOND_VITRE,
-            fg="#7ec8dc",
+            fg=theme.BORD_FOCUS,
             activebackground=FOND_VITRE,
             activeforeground=ENCRE,
             relief=tk.FLAT,
-            font=("Segoe UI", 9, "underline"),
+            font=theme.police("lien"),
             cursor="hand2",
             anchor="w",
         )
@@ -1482,7 +1487,7 @@ class FenetreReglages:
                 values=valeurs,
                 state="readonly",
                 takefocus=1,
-                font=("Segoe UI", 11),
+                font=theme.police("texte"),
             )
             try:
                 combo.configure(style="Voix.TCombobox")
@@ -1614,7 +1619,7 @@ class FenetreReglages:
             takefocus=1,
             bg=FOND,
             fg=ENCRE,
-            activebackground="#142028",
+            activebackground=theme.FOND_SURVOL,
             activeforeground=ENCRE,
         )
         self.bouton_detecter.pack(side=tk.LEFT)

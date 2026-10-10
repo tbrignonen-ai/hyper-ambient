@@ -8,6 +8,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+try:
+    import theme
+except ImportError:
+    from native.presence import theme
+
 URL_FEEDBACK = "https://github.com/tbrignonen-ai/hyper-ambient/issues/new"
 
 
@@ -47,18 +52,18 @@ RAPPEL_A11Y = (
     "Transcriptions, réponses et appel distant restent affichés en texte."
 )
 
-COULEUR_ECLAIR_ETEINT = "#1c303c"
-CONTOUR_ECLAIR_ETEINT = "#4a6474"
-COULEUR_ECLAIR_ETEINT_A11Y = "#8aa8b8"
-CONTOUR_ECLAIR_ETEINT_A11Y = "#c8dce4"
-COULEUR_ECLAIR_ALLUME = "#ffcc3d"
-CONTOUR_ECLAIR_ALLUME = "#ffe9a0"
-COULEUR_ECLAIR_PULSE = "#fff4b0"
-CONTOUR_ECLAIR_PULSE = "#ffffff"
+COULEUR_ECLAIR_ETEINT = theme.ECLAIR_ETEINT
+CONTOUR_ECLAIR_ETEINT = theme.ECLAIR_ETEINT_CONTOUR
+COULEUR_ECLAIR_ETEINT_A11Y = theme.ECLAIR_ETEINT_A11Y
+CONTOUR_ECLAIR_ETEINT_A11Y = theme.ECLAIR_ETEINT_A11Y_CONTOUR
+COULEUR_ECLAIR_ALLUME = theme.ECLAIR_ALLUME
+CONTOUR_ECLAIR_ALLUME = theme.ECLAIR_ALLUME_CONTOUR
+COULEUR_ECLAIR_PULSE = theme.ECLAIR_PULSE
+CONTOUR_ECLAIR_PULSE = theme.ECLAIR_PULSE_CONTOUR
 # Appel à un harnais (Codex, Claude) : violet, distinct du jaune distant (25/09).
-COULEUR_ECLAIR_HARNAIS = "#b48cff"
-CONTOUR_ECLAIR_HARNAIS = "#e2d4ff"
-COULEUR_ECLAIR_HARNAIS_PULSE = "#e8dcff"
+COULEUR_ECLAIR_HARNAIS = theme.ECLAIR_HARNAIS
+CONTOUR_ECLAIR_HARNAIS = theme.ECLAIR_HARNAIS_CONTOUR
+COULEUR_ECLAIR_HARNAIS_PULSE = theme.ECLAIR_HARNAIS_PULSE
 
 
 @dataclass(frozen=True)
