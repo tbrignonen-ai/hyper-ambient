@@ -181,8 +181,11 @@ au code.
 
 - **macOS** : voir plus haut. Le cœur reste volontairement sur le GPU NVIDIA.
 - **Espagnol** : annoncé puis repoussé. Le français et l'anglais sont livrés.
-- **Accueil guidé** : l'accueil assisté par le modèle local est spécifié, mais remplacé
-  aujourd'hui par des menus classiques.
+- **Accueil guidé** : une première version est livrée (bouton « Accueil guidé (modèles) »
+  ou `--onboarding-llm`) : déclarer le modèle distant, cocher la liste proposée, armer
+  chaque harnais par une vraie sonde, puis essayer un tour. Rien n'est « connecté » sans
+  preuve. Le wizard classique reste l'accueil par défaut. Pas encore éprouvée sur une
+  machine réelle.
 - **Interface** : vidéo optionnelle, zone de notification, raccourci global, et certains
   contrôles d'accessibilité en parcours réel restent à livrer ou à vérifier.
 - **Continuité** : mémoire vocale longue, reprise après redémarrage du serveur, et sonde

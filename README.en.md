@@ -174,8 +174,10 @@ touching code.
 
 - **macOS**: see above. The core deliberately stays on the NVIDIA GPU.
 - **Spanish**: announced, then postponed. French and English ship today.
-- **Guided setup**: onboarding assisted by the local model is specified, but replaced for
-  now by plain menus.
+- **Guided setup**: a first version ships (the "Guided setup (models)" button or
+  `--onboarding-llm`): declare the remote model, tick the proposed checklist, arm each
+  harness with a real probe, then try one turn. Nothing shows as connected without proof.
+  The classic wizard stays the default welcome. Not yet tried on a real machine.
 - **Interface**: optional video, notification area, a global shortcut, and some
   accessibility checks in real use remain to be shipped or verified.
 - **Continuity**: long voice memory, recovery after a server restart, and a suitable
