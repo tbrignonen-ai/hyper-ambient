@@ -16,26 +16,23 @@ from typing import Any, Callable, Mapping
 try:
     import onboarding
     import onboarding_llm as llm
+    import theme
 except ImportError:  # pragma: no cover - natif/presence non présent sur sys.path
     from native.presence import onboarding
     from native.presence import onboarding_llm as llm
+    from native.presence import theme
 
-# Couleurs recopiées de app.py (import circulaire impossible) ; un futur thème les centralisera.
-FOND = "#0c141c"
-FOND_VITRE = "#102028"
-BORD_VITRE = "#2a4a5c"
-ENCRE = "#d8e4ec"
-ENCRE_SOURDE = "#8aa0b0"
-ACTIVE_BOUTON = "#142028"
-VERT = "#3ccf7a"
-GRIS = "#6b7d88"
-ROUGE = "#e5484d"
+# Couleurs et polices viennent de theme.py.
+FOND = theme.FOND
+FOND_VITRE = theme.FOND_VITRE
+BORD_VITRE = theme.BORD
+ENCRE = theme.ENCRE
+ENCRE_SOURDE = theme.ENCRE_SOURDE
+ACTIVE_BOUTON = theme.FOND_SURVOL
+VERT = theme.COULEURS_HARNAIS["vert"]
+GRIS = theme.COULEURS_HARNAIS["gris"]
+ROUGE = theme.COULEURS_HARNAIS["rouge"]
 COULEUR_POINT = {llm.VERT: VERT, llm.ROUGE: ROUGE}
-
-POLICE = ("Segoe UI", 11)
-POLICE_GRAS = ("Segoe UI", 11, "bold")
-POLICE_TITRE = ("Segoe UI", 15, "bold")
-POLICE_PETITE = ("Segoe UI", 10)
 
 DUREE_TOUR_MS = 45_000
 INTERVALLE_FILE_MS = 100
@@ -100,23 +97,23 @@ def _executer_en_fil(fonction: Callable[[], None]) -> None:
 
 
 def _titre(parent: tk.Misc, texte: str) -> tk.Label:
-    etiquette = tk.Label(parent, text=texte, bg=FOND, fg=ENCRE, font=POLICE_TITRE, anchor="w")
-    etiquette.pack(fill=tk.X, pady=(0, 6))
+    etiquette = tk.Label(parent, text=texte, bg=FOND, fg=ENCRE, font=theme.police("titre"), anchor="w")
+    etiquette.pack(fill=tk.X, pady=(0, theme.ESPACE["s"]))
     return etiquette
 
 
 def _note(parent: tk.Misc, texte: str = "") -> tk.Label:
     etiquette = tk.Label(
-        parent, text=texte, bg=FOND, fg=ENCRE_SOURDE, font=POLICE_PETITE,
+        parent, text=texte, bg=FOND, fg=ENCRE_SOURDE, font=theme.police("petit"),
         anchor="w", justify="left", wraplength=440,
     )
-    etiquette.pack(fill=tk.X, pady=(0, 6))
+    etiquette.pack(fill=tk.X, pady=(0, theme.ESPACE["s"]))
     return etiquette
 
 
-def _etiquette(parent: tk.Misc, texte: str = "", police: tuple = POLICE) -> tk.Label:
+def _etiquette(parent: tk.Misc, texte: str = "", role: str = "texte") -> tk.Label:
     return tk.Label(
-        parent, text=texte, bg=FOND, fg=ENCRE, font=police,
+        parent, text=texte, bg=FOND, fg=ENCRE, font=theme.police(role),
         anchor="w", justify="left", wraplength=440,
     )
 
@@ -131,7 +128,7 @@ def _bouton(parent: tk.Misc, texte: str, commande: Callable[[], None] | None = N
         activebackground=ACTIVE_BOUTON,
         activeforeground=ENCRE,
         relief=tk.FLAT,
-        font=POLICE,
+        font=theme.police("texte"),
         takefocus=1,
         highlightthickness=2,
         highlightbackground=FOND,
@@ -146,7 +143,7 @@ def _entree(parent: tk.Misc, **options: Any) -> tk.Entry:
         fg=ENCRE,
         insertbackground=ENCRE,
         relief=tk.FLAT,
-        font=POLICE,
+        font=theme.police("texte"),
         takefocus=1,
         highlightthickness=2,
         highlightbackground=BORD_VITRE,
@@ -214,14 +211,14 @@ class FenetreOnboardingLLM(tk.Toplevel):
         self._textes_essai: dict[str, str] = {}
         self._etape_affichee: str | None = None
 
-        self.label_etape = tk.Label(self, text="", bg=FOND, fg=ENCRE_SOURDE, font=POLICE_PETITE, anchor="w")
-        self.label_etape.pack(side=tk.TOP, fill=tk.X, padx=16, pady=(12, 0))
+        self.label_etape = tk.Label(self, text="", bg=FOND, fg=ENCRE_SOURDE, font=theme.police("petit"), anchor="w")
+        self.label_etape.pack(side=tk.TOP, fill=tk.X, padx=theme.ESPACE["l"], pady=(theme.ESPACE["m"], 0))
         self.label_statut = tk.Label(
-            self, text="", bg=FOND, fg=ROUGE, font=POLICE_PETITE, anchor="w", wraplength=440
+            self, text="", bg=FOND, fg=theme.PASTILLE_KO, font=theme.police("petit"), anchor="w", wraplength=440
         )
-        self.label_statut.pack(side=tk.BOTTOM, fill=tk.X, padx=16, pady=(0, 8))
+        self.label_statut.pack(side=tk.BOTTOM, fill=tk.X, padx=theme.ESPACE["l"], pady=(0, theme.ESPACE["s"]))
         self._corps = tk.Frame(self, bg=FOND)
-        self._corps.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
+        self._corps.pack(fill=tk.BOTH, expand=True, padx=theme.ESPACE["l"], pady=theme.ESPACE["m"])
 
         self.label_verification: tk.Label | None = None
         self.entree_nom: tk.Entry | None = None
@@ -273,9 +270,9 @@ class FenetreOnboardingLLM(tk.Toplevel):
 
     def _pied(self, cadre: tk.Frame, boutons: list[tuple[str, Callable[[], None]]]) -> tk.Frame:
         pied = tk.Frame(cadre, bg=FOND)
-        pied.pack(side=tk.BOTTOM, fill=tk.X, pady=(12, 0))
+        pied.pack(side=tk.BOTTOM, fill=tk.X, pady=(theme.ESPACE["m"], 0))
         for texte, commande in reversed(boutons):
-            _bouton(pied, texte, commande).pack(side=tk.RIGHT, padx=(8, 0))
+            _bouton(pied, texte, commande).pack(side=tk.RIGHT, padx=(theme.ESPACE["s"], 0))
         return pied
 
     def _construire_declarer(self) -> tk.Frame:
@@ -291,18 +288,18 @@ class FenetreOnboardingLLM(tk.Toplevel):
             (LIBELLE_ADRESSE, "entree_url", {}),
             (LIBELLE_CLE, "entree_cle", {"show": "•"}),
         ):
-            _etiquette(cadre, libelle, POLICE_GRAS).pack(fill=tk.X, pady=(6, 2))
+            _etiquette(cadre, libelle, "texte_fort").pack(fill=tk.X, pady=(theme.ESPACE["s"], theme.ESPACE["xs"]))
             entree = _entree(cadre, **options)
-            entree.pack(fill=tk.X, ipady=4)
+            entree.pack(fill=tk.X, ipady=theme.ESPACE["xs"])
             setattr(self, attribut, entree)
         self._premier["declarer"] = self.entree_nom
 
         ligne = tk.Frame(cadre, bg=FOND)
-        ligne.pack(fill=tk.X, pady=(12, 4))
+        ligne.pack(fill=tk.X, pady=(theme.ESPACE["m"], theme.ESPACE["xs"]))
         self._bouton_verifier = _bouton(ligne, BOUTON_VERIFIER, self.verifier)
         self._bouton_verifier.pack(side=tk.LEFT)
         self.label_verification = _etiquette(cadre, NON_VERIFIE)
-        self.label_verification.pack(fill=tk.X, pady=(4, 0))
+        self.label_verification.pack(fill=tk.X, pady=(theme.ESPACE["xs"], 0))
         return cadre
 
     def _construire_guider(self) -> tk.Frame:
@@ -330,10 +327,10 @@ class FenetreOnboardingLLM(tk.Toplevel):
                 anchor="w",
                 justify="left",
                 wraplength=440,
-                font=POLICE,
+                font=theme.police("texte"),
                 takefocus=1,
             )
-            case.pack(fill=tk.X, pady=6)
+            case.pack(fill=tk.X, pady=theme.ESPACE["s"])
             self._cases_guide[cle] = case
         self._premier["guider"] = self._cases_guide[llm.HARNAIS[0]]
         return cadre
@@ -348,13 +345,13 @@ class FenetreOnboardingLLM(tk.Toplevel):
         _note(cadre, TEXTE_ARMER_NOTE)
         for cle in llm.HARNAIS:
             rangee = tk.Frame(cadre, bg=FOND)
-            rangee.pack(fill=tk.X, pady=6)
+            rangee.pack(fill=tk.X, pady=theme.ESPACE["s"])
             haut = tk.Frame(rangee, bg=FOND)
             haut.pack(fill=tk.X)
             point = tk.Canvas(haut, width=14, height=14, bg=FOND, highlightthickness=0, bd=0)
-            point.pack(side=tk.LEFT, padx=(0, 8))
+            point.pack(side=tk.LEFT, padx=(0, theme.ESPACE["s"]))
             self.points[cle] = point
-            _etiquette(haut, llm.NOMS_HARNAIS[cle], POLICE_GRAS).pack(side=tk.LEFT)
+            _etiquette(haut, llm.NOMS_HARNAIS[cle], "texte_fort").pack(side=tk.LEFT)
             bouton = _bouton(haut, BOUTON_ACTIVER, lambda c=cle: self.activer(c))
             bouton.pack(side=tk.RIGHT)
             self.boutons_activer[cle] = bouton
@@ -371,27 +368,27 @@ class FenetreOnboardingLLM(tk.Toplevel):
         _note(cadre, TEXTE_ESSAYER_NOTE)
         for cle in llm.HARNAIS:
             rangee = tk.Frame(cadre, bg=FOND)
-            rangee.pack(fill=tk.X, pady=6)
+            rangee.pack(fill=tk.X, pady=theme.ESPACE["s"])
             haut = tk.Frame(rangee, bg=FOND)
             haut.pack(fill=tk.X)
-            _etiquette(haut, llm.NOMS_HARNAIS[cle], POLICE_GRAS).pack(side=tk.LEFT)
+            _etiquette(haut, llm.NOMS_HARNAIS[cle], "texte_fort").pack(side=tk.LEFT)
             badge = tk.Canvas(haut, width=TAILLE_BADGE, height=TAILLE_BADGE, bg=FOND, highlightthickness=0, bd=0)
             badge.pack(side=tk.RIGHT)
             self.badges[cle] = badge
             self.labels_badge[cle] = tk.Label(
-                haut, text=TEXTE_BADGE_REPOS, bg=FOND, fg=ENCRE_SOURDE, font=POLICE_PETITE
+                haut, text=TEXTE_BADGE_REPOS, bg=FOND, fg=ENCRE_SOURDE, font=theme.police("petit")
             )
-            self.labels_badge[cle].pack(side=tk.RIGHT, padx=6)
+            self.labels_badge[cle].pack(side=tk.RIGHT, padx=theme.ESPACE["s"])
             self._dessiner_badge(cle, "repos")
 
             self.label_essai[cle] = _etiquette(rangee, "")
-            self.label_essai[cle].pack(fill=tk.X, pady=(4, 0))
+            self.label_essai[cle].pack(fill=tk.X, pady=(theme.ESPACE["xs"], 0))
             zone = tk.Frame(rangee, bg=FOND)
             self._zones_essai[cle] = zone
             self.labels_phrase[cle] = _etiquette(zone, PHRASES_ESSAI[cle])
             self.labels_phrase[cle].pack(fill=tk.X)
             bouton = _bouton(zone, BOUTON_MAINTENIR)
-            bouton.pack(anchor="w", pady=4)
+            bouton.pack(anchor="w", pady=theme.ESPACE["xs"])
             bouton.bind("<ButtonPress-1>", lambda _event, c=cle: self._appuyer_essai(c))
             bouton.bind("<ButtonRelease-1>", lambda _event, c=cle: self._relacher_essai(c))
             self.boutons_essai[cle] = bouton

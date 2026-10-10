@@ -37,6 +37,7 @@ for _chemin in (str(_ROOT), str(_ICI)):
         sys.path.insert(0, _chemin)
 
 import overlay as visuel
+import theme
 import sante as etat_sante
 from onboarding import (
     ETAPES_WIZARD,
@@ -60,13 +61,13 @@ from src.i18n import t
 
 # Champ sombre plein : le bureau ne perce plus la fenêtre app.
 # L'overlay flottant, lui, garde le chroma-key (COULEUR_TRANSPARENTE).
-FOND = visuel.FOND_CHAMP
-FOND_VITRE = "#102028"
+FOND = theme.FOND
+FOND_VITRE = theme.FOND_VITRE
 MARGE_NAPPE = 28
-BORD_VITRE = "#2a4a5c"
-ENCRE = "#d8e4ec"
-ENCRE_SOURDE = "#8aa0b0"
-ENCRE_FONCEE = "#0c141c"
+BORD_VITRE = theme.BORD
+ENCRE = theme.ENCRE
+ENCRE_SOURDE = theme.ENCRE_SOURDE
+ENCRE_FONCEE = theme.ENCRE_FONCEE
 TAILLE_BULLE = 260
 URL_DEFAUT = "ws://127.0.0.1:8001/hostagent"
 moteur: Any | None = None
@@ -1286,7 +1287,7 @@ class Application:
         )
         cadre.pack(fill=tk.BOTH, expand=True)
         inner = tk.Frame(cadre, bg=FOND_VITRE)
-        inner.pack(fill=tk.BOTH, expand=True, padx=26, pady=22)
+        inner.pack(fill=tk.BOTH, expand=True, padx=theme.MARGE_CADRE, pady=theme.MARGE_CADRE)
         pied = tk.Frame(inner, bg=FOND_VITRE)
         pied.pack(side=tk.BOTTOM, fill=tk.X)
         toile_orbe = tk.Canvas(
@@ -1307,7 +1308,7 @@ class Application:
             ),
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 10),
+            font=theme.police("petit"),
             anchor="w",
         ).pack(fill=tk.X, pady=(0, 16))
         tk.Label(
@@ -1315,7 +1316,7 @@ class Application:
             text=titre,
             bg=FOND_VITRE,
             fg=ENCRE,
-            font=("Segoe UI", 24, "bold"),
+            font=theme.police("affiche"),
             anchor="w",
             justify="left",
         ).pack(fill=tk.X)
@@ -1324,7 +1325,7 @@ class Application:
             text=description,
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 12),
+            font=theme.police("corps"),
             anchor="w",
             justify="left",
             wraplength=400,
@@ -1355,7 +1356,7 @@ class Application:
             parent,
             text=texte,
             command=commande,
-            font=("Segoe UI", 12, "bold"),
+            font=theme.police("corps_fort"),
             bg=visuel.PALETTES["ecoute"]["coeur"],
             fg=ENCRE_FONCEE,
             activebackground=visuel.PALETTES["ecoute"]["lueur"],
@@ -1376,10 +1377,10 @@ class Application:
             parent,
             text=texte,
             command=commande,
-            font=("Segoe UI", 10),
+            font=theme.police("petit"),
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            activebackground="#142028",
+            activebackground=theme.FOND_SURVOL,
             activeforeground=ENCRE,
             relief=tk.FLAT,
             takefocus=1,
@@ -1410,7 +1411,7 @@ class Application:
             text=u["no_recording"],
             bg=FOND_VITRE,
             fg=ENCRE,
-            font=("Segoe UI", 10),
+            font=theme.police("petit"),
             anchor="w",
             justify="left",
             wraplength=400,
@@ -1420,7 +1421,7 @@ class Application:
             text=u["a11y"],
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 10),
+            font=theme.police("petit"),
             anchor="w",
             justify="left",
             wraplength=400,
@@ -1430,7 +1431,7 @@ class Application:
             text=u["hands_free"],
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 10),
+            font=theme.police("petit"),
             anchor="w",
             justify="left",
             wraplength=400,
@@ -1449,7 +1450,7 @@ class Application:
             text=u["a11y"],
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 10),
+            font=theme.police("petit"),
             anchor="w",
             justify="left",
             wraplength=400,
@@ -1473,7 +1474,7 @@ class Application:
             text=u["shortcut_in_app"],
             bg=FOND_VITRE,
             fg=ENCRE,
-            font=("Segoe UI", 11, "bold"),
+            font=theme.police("texte_fort"),
             anchor="w",
         ).pack(fill=tk.X, pady=(0, 8))
         choix = tk.StringVar(value=self.raccourci_en_cours)
@@ -1492,8 +1493,8 @@ class Application:
                 fg=ENCRE,
                 activebackground=FOND_VITRE,
                 activeforeground=ENCRE,
-                selectcolor="#142028",
-                font=("Segoe UI", 11),
+                selectcolor=theme.FOND_SURVOL,
+                font=theme.police("texte"),
                 anchor="w",
                 takefocus=1,
             )
@@ -1512,7 +1513,7 @@ class Application:
         bouton = tk.Button(
             parent,
             text=ui_presence()["try_hold"],
-            font=("Segoe UI", 11, "bold"),
+            font=theme.police("texte_fort"),
             bg=visuel.PALETTES["repos"]["anneau"],
             fg=ENCRE,
             activebackground=visuel.PALETTES["ecoute"]["coeur"],
@@ -1565,7 +1566,7 @@ class Application:
             ),
             bg=FOND_VITRE,
             fg=ENCRE,
-            font=("Segoe UI", 11),
+            font=theme.police("texte"),
             anchor="w",
             justify="left",
             wraplength=400,
@@ -1575,7 +1576,7 @@ class Application:
             text=u["a11y"],
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 10),
+            font=theme.police("petit"),
             anchor="w",
             justify="left",
             wraplength=400,
@@ -1602,7 +1603,7 @@ class Application:
                 text=u["language"],
                 bg=FOND_VITRE,
                 fg=ENCRE,
-                font=("Segoe UI", 11, "bold"),
+                font=theme.police("texte_fort"),
                 anchor="w",
             ).pack(fill=tk.X, pady=(16, 4))
             choix = tk.StringVar(value=self.configuration.langue)
@@ -1621,8 +1622,8 @@ class Application:
                     fg=ENCRE,
                     activebackground=FOND_VITRE,
                     activeforeground=ENCRE,
-                    selectcolor="#142028",
-                    font=("Segoe UI", 11),
+                    selectcolor=theme.FOND_SURVOL,
+                    font=theme.police("texte"),
                     anchor="w",
                     takefocus=1,
                 )
@@ -1642,8 +1643,8 @@ class Application:
             fg=ENCRE,
             activebackground=FOND_VITRE,
             activeforeground=ENCRE,
-            selectcolor="#142028",
-            font=("Segoe UI", 11),
+            selectcolor=theme.FOND_SURVOL,
+            font=theme.police("texte"),
             anchor="w",
             takefocus=1,
         )
@@ -1706,7 +1707,7 @@ class Application:
             text=u["hands_free_on"] if actif else u["hands_free_off"],
             bg=visuel.PALETTES["ecoute"]["coeur"] if actif else FOND_VITRE,
             fg=ENCRE_FONCEE if actif else ENCRE_SOURDE,
-            activebackground=visuel.PALETTES["ecoute"]["lueur"] if actif else "#142028",
+            activebackground=visuel.PALETTES["ecoute"]["lueur"] if actif else theme.FOND_SURVOL,
             activeforeground=ENCRE_FONCEE if actif else ENCRE,
         )
 
@@ -1776,7 +1777,7 @@ class Application:
                 relief=tk.SUNKEN if self._touche_parler_enfoncee else tk.RAISED,
                 text=texte,
                 bg=visuel.PALETTES["ecoute"]["coeur"],
-                fg="#0c141c",
+                fg=ENCRE_FONCEE,
             )
             return
         if self.enfonce:
@@ -1784,7 +1785,7 @@ class Application:
                 relief=tk.SUNKEN,
                 text=texte,
                 bg=visuel.PALETTES["ecoute"]["coeur"],
-                fg="#0c141c",
+                fg=ENCRE_FONCEE,
             )
             return
         bouton.configure(
@@ -1864,7 +1865,7 @@ class Application:
             text="",
             bg=etat_sante.BANDEAU_BG,
             fg=etat_sante.BANDEAU_FG,
-            font=("Segoe UI", 12, "bold"),
+            font=theme.police("corps_fort"),
             anchor="w",
             justify="left",
             wraplength=440,
@@ -1912,7 +1913,7 @@ class Application:
             text=libelle_eclair("repos"),
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 10),
+            font=theme.police("petit"),
             wraplength=120,
             justify="center",
         )
@@ -1930,11 +1931,11 @@ class Application:
         self.bouton = tk.Button(
             rang_voix,
             text=u["speak"],
-            font=("Segoe UI", 18, "bold"),
+            font=theme.police("titre"),
             bg=visuel.PALETTES["repos"]["anneau"],
             fg=ENCRE,
             activebackground=visuel.PALETTES["ecoute"]["coeur"],
-            activeforeground="#0c141c",
+            activeforeground=ENCRE_FONCEE,
             relief=tk.RAISED,
             bd=3,
             padx=28,
@@ -1958,10 +1959,10 @@ class Application:
             rang_voix,
             text=u["stop"],
             command=self.couper_voix,
-            font=("Segoe UI", 16, "bold"),
-            bg="#3a1c1c",
+            font=theme.police("titre"),
+            bg=theme.ALERTE_FOND,
             fg=ENCRE,
-            activebackground="#5a2828",
+            activebackground=theme.ALERTE_BORD,
             activeforeground=ENCRE,
             relief=tk.RAISED,
             bd=3,
@@ -1978,10 +1979,10 @@ class Application:
             cadre,
             text=u["hands_free_off"],
             command=self._basculer_mains_libres,
-            font=("Segoe UI", 11, "bold"),
+            font=theme.police("texte_fort"),
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            activebackground="#142028",
+            activebackground=theme.FOND_SURVOL,
             activeforeground=ENCRE,
             relief=tk.FLAT,
             takefocus=1,
@@ -1995,7 +1996,7 @@ class Application:
             text=u["hands_free_hint"].format(raccourci=raccourci_hint),
             bg=FOND,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 9),
+            font=theme.police("legende"),
             anchor="w",
             justify="left",
             wraplength=440,
@@ -2017,7 +2018,7 @@ class Application:
             text="",
             bg=FOND,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 10),
+            font=theme.police("petit"),
             anchor="w",
             justify="left",
             wraplength=420,
@@ -2031,7 +2032,7 @@ class Application:
             command=self.ouvrir_reglages,
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            activebackground="#142028",
+            activebackground=theme.FOND_SURVOL,
             activeforeground=ENCRE,
             relief=tk.FLAT,
             takefocus=1,
@@ -2045,7 +2046,7 @@ class Application:
             command=self.ouvrir_onboarding_llm,
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            activebackground="#142028",
+            activebackground=theme.FOND_SURVOL,
             activeforeground=ENCRE,
             relief=tk.FLAT,
             takefocus=1,
@@ -2059,7 +2060,7 @@ class Application:
             command=self.masquer_configuration,
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            activebackground="#142028",
+            activebackground=theme.FOND_SURVOL,
             activeforeground=ENCRE,
             relief=tk.FLAT,
             takefocus=1,
@@ -2086,7 +2087,7 @@ class Application:
             text=f"{raccourci}  ·  {u['hide_body']}",
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 9),
+            font=theme.police("legende"),
             anchor="w",
             justify="left",
             wraplength=440,
@@ -2097,7 +2098,7 @@ class Application:
             text=u["understood"],
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 9),
+            font=theme.police("legende"),
             anchor="w",
         ).pack(fill=tk.X, pady=(8, 0))
         self.zone_compris = self._zone_texte(panneau)
@@ -2107,7 +2108,7 @@ class Application:
             text=u["reply"],
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 9),
+            font=theme.police("legende"),
             anchor="w",
         ).pack(fill=tk.X, pady=(8, 0))
         self.zone_reponse = self._zone_texte(panneau)
@@ -2117,7 +2118,7 @@ class Application:
             text=self._composer_statut(),
             bg=FOND_VITRE,
             fg=ENCRE_SOURDE,
-            font=("Segoe UI", 9),
+            font=theme.police("legende"),
             anchor="w",
             justify="left",
             wraplength=440,
@@ -2238,10 +2239,10 @@ class Application:
             parent,
             height=3,
             wrap=tk.WORD,
-            bg="#142028",
+            bg=theme.FOND_SURVOL,
             fg=ENCRE,
             insertbackground=ENCRE,
-            font=("Segoe UI", 10),
+            font=theme.police("petit"),
             relief=tk.FLAT,
             padx=8,
             pady=6,
@@ -2287,7 +2288,7 @@ class Application:
             state="readonly",
             width=18,
             takefocus=1,
-            font=("Segoe UI", 9),
+            font=theme.police("legende"),
         )
         self.combo_cerveau.pack(pady=(4, 2), padx=4)
         self.combo_cerveau.bind("<<ComboboxSelected>>", lambda _e: self._basculer_cerveau())
@@ -2309,10 +2310,10 @@ class Application:
             command=self._basculer_harnais_devant,
             bg=fond,
             activebackground=fond,
-            fg="#c8c8d0",
-            activeforeground="#ffffff",
+            fg=ENCRE,
+            activeforeground=ENCRE,
             selectcolor=fond,
-            font=("Segoe UI", 9),
+            font=theme.police("legende"),
             takefocus=1,
         ).pack(pady=(0, 2))
 
@@ -2390,7 +2391,7 @@ class Application:
         self.ligne_eclair.configure(
             text=libelle_eclair(etat),
             fg=visuel.PALETTES[etat if etat in visuel.PALETTES else "escalade"]["lueur"] if allume else ENCRE_SOURDE,
-            font=("Segoe UI", 10, "bold") if allume else ("Segoe UI", 10),
+            font=theme.police("petit_fort") if allume else theme.police("petit"),
         )
 
     def enfoncer(self, _event: object | None = None) -> None:
