@@ -112,14 +112,26 @@ def charger_configuration(chemin: Path | None = None) -> ConfigurationPresence:
     return normaliser_configuration(brut)
 
 
+def lire_json_presence(chemin: Path) -> dict[str, Any]:
+    """Contenu brut de presence.json ; un fichier absent ou illisible vaut {}."""
+    try:
+        brut = json.loads(Path(chemin).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+    return brut if isinstance(brut, dict) else {}
+
+
 def enregistrer_configuration(
     configuration: ConfigurationPresence, chemin: Path | None = None
 ) -> Path:
     cible = chemin or chemin_configuration()
     cible.parent.mkdir(parents=True, exist_ok=True)
+    # Les clés que ce wizard ne connaît pas (onboarding_llm) restent en place.
+    contenu = lire_json_presence(cible)
+    contenu.update(asdict(configuration))
     temporaire = cible.with_suffix(cible.suffix + ".tmp")
     temporaire.write_text(
-        json.dumps(asdict(configuration), ensure_ascii=False, indent=2) + "\n",
+        json.dumps(contenu, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     temporaire.replace(cible)
