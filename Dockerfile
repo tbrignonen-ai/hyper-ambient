@@ -50,7 +50,9 @@ RUN apt-get update && apt-get install -y \
 # --- llama.cpp (CUDA, sm_89 = Ada Lovelace / RTX 4070) ---------------------
 # Provides llama-server: OpenAI-compatible /v1/chat/completions with SSE.
 # BRAIN talks the same protocol locally and remotely.
+# BUILD_JOBS empty means every core. A small builder passes --build-arg BUILD_JOBS=2.
 ARG CUDA_ARCH=89
+ARG BUILD_JOBS=
 RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp /opt/llama.cpp && \
     cmake -S /opt/llama.cpp -B /opt/llama.cpp/build \
         -DGGML_CUDA=ON \
@@ -58,7 +60,7 @@ RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp /opt/llama.cpp && 
         -DLLAMA_CURL=ON \
         -DLLAMA_BUILD_TESTS=OFF \
         -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build /opt/llama.cpp/build --config Release -j"$(nproc)" && \
+    cmake --build /opt/llama.cpp/build --config Release -j"${BUILD_JOBS:-$(nproc)}" && \
     cmake --install /opt/llama.cpp/build --prefix /usr/local && \
     rm -rf /opt/llama.cpp/build/CMakeFiles
 
@@ -70,7 +72,7 @@ RUN git clone --depth 1 https://github.com/ggml-org/whisper.cpp /opt/whisper.cpp
         -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} \
         -DWHISPER_BUILD_TESTS=OFF \
         -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build /opt/whisper.cpp/build --config Release -j"$(nproc)" && \
+    cmake --build /opt/whisper.cpp/build --config Release -j"${BUILD_JOBS:-$(nproc)}" && \
     cmake --install /opt/whisper.cpp/build --prefix /usr/local && \
     rm -rf /opt/whisper.cpp/build/CMakeFiles
 
