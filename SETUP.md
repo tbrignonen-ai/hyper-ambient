@@ -34,7 +34,7 @@ make build
 
 This invokes `docker-compose build`, which:
 - Downloads NVIDIA CUDA 12.4 + Ubuntu 22.04 base image
-- Installs Python 3.11, PyTorch (CUDA 12.4), dependencies from `requirements.txt`
+- Installs Python 3.12 (a pinned CPython build; Ubuntu 22.04 stops at 3.11), PyTorch (CUDA 12.4), dependencies from `requirements.txt`
 - **Compiles llama.cpp and whisper.cpp from source** (CUDA architecture `sm_89` = Ada Lovelace / RTX 4070)
 - Caches CUDA and torch layers for fast rebuilds
 - Adds `requirements-extra.txt` (faster-whisper, pocket-tts, etc.) after cache boundary

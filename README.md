@@ -37,6 +37,9 @@ abonnement.
 - **Presence** — une petite fenêtre qui affiche l'état, les transcriptions, les réponses,
   et signale les appels distants.
 
+Quelques demandes courtes ne passent pas par le modèle : répéter, le volume,
+l'heure, la date, et « tu fonctionnes ? ».
+
 Le modèle local tient les tours brefs. Un classifieur local décide à chaque tour, et
 n'envoie au modèle distant que ce qui le nécessite : une demande complexe, ou une demande
 qui nomme un outil de développement. Détail dans [DONNEES.md](DONNEES.md).
@@ -144,6 +147,8 @@ Ce que la première version macOS n'aura pas, et c'est su à l'avance :
 
 Le profil Mac de référence est `packaging/macos/mac-16g.env.example` (profil `mac-16g-voix-max`), distinct de la carte figée ci-dessus.
 
+Deux points déjà dans le code, couverts par des tests, et toujours **non exécutés sur un Mac** : la fenêtre MLX est bornée à 2048 jetons (le dépassement est refusé, pas tronqué), et « Appliquer » dans Réglages demande la relance au superviseur au lieu d'appeler Docker. Le métal, le micro et les haut-parleurs restent à éprouver sur la machine.
+
 ### Le processus de validation
 
 Le portage ne sera publié comme pris en charge qu'après ce parcours :
@@ -175,7 +180,8 @@ relevé. Ce n'est pas de l'inattention, c'est le rythme choisi.
 
 Le flux est dans `automation/n8n/`, avec ses réglages en clair : la périodicité, le nombre
 de sujets par passage et l'ancienneté retenue se changent dans l'interface, sans toucher
-au code.
+au code. La même sélection (fusion, ancienneté, libellés, plafond) est dans
+`automation/n8n/tri.py`. Sans n8n installé : `python dev/scripts/smoke_n8n.py`.
 
 ## Ce qui vient ensuite
 

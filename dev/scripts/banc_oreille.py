@@ -973,6 +973,8 @@ def _dossiers_libs_nvidia() -> list[Path]:
     racines = [
         asr_root() / "canary" / "lib" / "python3.11" / "site-packages" / "nvidia",
         Path("/usr/local/lib/python3.11/dist-packages/nvidia"),
+        Path("/usr/local/lib/python3.12/dist-packages/nvidia"),
+        Path("/usr/local/python/lib/python3.12/site-packages/nvidia"),
     ]
     extra: list[Path] = []
     for racine in racines:

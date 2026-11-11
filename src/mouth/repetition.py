@@ -9,7 +9,8 @@ de jugement : c'est une décision locale, instantanée, qui ne peut pas rater.
 from __future__ import annotations
 
 import re
-import unicodedata
+
+from src.parole import normaliser
 
 # Au-delà, la phrase porte une vraie demande (« répète après moi que… »).
 MAX_MOTS = 8
@@ -28,14 +29,8 @@ _MOTIFS = (
 )
 
 
-def _normaliser(texte: str) -> str:
-    decompose = unicodedata.normalize("NFKD", texte or "")
-    sans_accents = "".join(c for c in decompose if not unicodedata.combining(c))
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", sans_accents.lower()).split())
-
-
 def demande_de_repetition(transcript: str) -> bool:
-    normalise = _normaliser(transcript)
+    normalise = normaliser(transcript)
     if not normalise or len(normalise.split()) > MAX_MOTS:
         return False
     return any(re.search(motif, normalise) for motif in _MOTIFS)
@@ -69,7 +64,7 @@ _MOTIFS_HARNAIS = (
 
 
 def demande_resultat_harnais(transcript: str) -> bool:
-    normalise = _normaliser(transcript)
+    normalise = normaliser(transcript)
     if not normalise or len(normalise.split()) > MAX_MOTS:
         return False
     return any(re.search(motif, normalise) for motif in _MOTIFS_HARNAIS)

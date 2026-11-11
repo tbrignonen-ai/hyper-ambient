@@ -17,3 +17,5 @@ Ce flux relève en lecture seule les tickets GitHub ouverts, écarte les demande
 Le comportement tant que l’accès GitHub n’est pas activé, ou sans ticket éligible, est silencieux : aucun élément n’est produit en sortie.
 
 Le nœud **Déclenchement par un autre flux** est réservé à une exécution technique par un workflow parent ; la ronde hebdomadaire reste déclenchée par **Déclencheur planifié**.
+
+La sélection des sujets est aussi `automation/n8n/tri.py`. Sans n8n : `python dev/scripts/smoke_n8n.py`. L'exécution du flux dans n8n lui-même reste à faire sur la machine qui héberge n8n.

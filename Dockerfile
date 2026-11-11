@@ -4,25 +4,27 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
+# numpy 2.5, scipy 1.18 and librosa 1.0 require Python >= 3.12.
+# Jammy stops at 3.11, and the deadsnakes archive is not reachable from every
+# network, so this pins a CPython standalone build.
+ARG PYTHON_URL=https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.12.16+20261110-x86_64-unknown-linux-gnu-install_only.tar.gz
 RUN apt-get update && apt-get install -y \
-    python3.11 \
-    python3.11-venv \
-    python3.11-dev \
-    python3-pip \
-    python3-setuptools \
     git \
     wget \
     curl \
+    ca-certificates \
     build-essential \
     libsndfile1 \
     libsndfile1-dev \
     ffmpeg \
     sox \
+    && curl -fsSL "$PYTHON_URL" -o /tmp/python.tar.gz \
+    && tar -xzf /tmp/python.tar.gz -C /usr/local \
+    && rm /tmp/python.tar.gz \
+    && /usr/local/python/bin/python3 -m pip install --upgrade pip setuptools wheel \
     && rm -rf /var/lib/apt/lists/*
 
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 && \
-    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 && \
-    python3 -m pip install --upgrade pip setuptools wheel
+ENV PATH=/usr/local/python/bin:${PATH}
 
 WORKDIR /workspace
 
@@ -45,18 +47,31 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Link-time only. gcc reads LIBRARY_PATH; the runtime loader does not.
+# The stub supplies the driver API when the image is built without a GPU.
+# On a machine, the host driver is what llama-server loads.
+ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs
+
+# The stub file is libcuda.so. llama.cpp records a dependency on libcuda.so.1,
+# which is what the linker looks up for the next binary.
+RUN ln -sfn libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
+
 # --- llama.cpp (CUDA, sm_89 = Ada Lovelace / RTX 4070) ---------------------
 # Provides llama-server: OpenAI-compatible /v1/chat/completions with SSE.
 # BRAIN talks the same protocol locally and remotely.
+# BUILD_JOBS empty means every core. A small builder passes --build-arg BUILD_JOBS=2.
 ARG CUDA_ARCH=89
+ARG BUILD_JOBS=
 RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp /opt/llama.cpp && \
     cmake -S /opt/llama.cpp -B /opt/llama.cpp/build \
         -DGGML_CUDA=ON \
         -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} \
         -DLLAMA_CURL=ON \
         -DLLAMA_BUILD_TESTS=OFF \
-        -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build /opt/llama.cpp/build --config Release -j"$(nproc)" && \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" \
+        -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" && \
+    cmake --build /opt/llama.cpp/build --config Release -j"${BUILD_JOBS:-$(nproc)}" && \
     cmake --install /opt/llama.cpp/build --prefix /usr/local && \
     rm -rf /opt/llama.cpp/build/CMakeFiles
 
@@ -67,8 +82,10 @@ RUN git clone --depth 1 https://github.com/ggml-org/whisper.cpp /opt/whisper.cpp
         -DGGML_CUDA=ON \
         -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} \
         -DWHISPER_BUILD_TESTS=OFF \
-        -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build /opt/whisper.cpp/build --config Release -j"$(nproc)" && \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" \
+        -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" && \
+    cmake --build /opt/whisper.cpp/build --config Release -j"${BUILD_JOBS:-$(nproc)}" && \
     cmake --install /opt/whisper.cpp/build --prefix /usr/local && \
     rm -rf /opt/whisper.cpp/build/CMakeFiles
 

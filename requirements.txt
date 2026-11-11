@@ -1,37 +1,46 @@
+# Resolved on PyPI on 11 Nov 2026, Python 3.12.
+# numpy 2.5, scipy 1.18 and librosa 1.0 require 3.12, which is also the
+# image's Python (see the Dockerfile).
+# The default torch wheel is the CUDA 13.2 build (it imports on CPU; cuda is
+# just unavailable). The Docker image replaces it with the CUDA 12.4 wheel in
+# the next Dockerfile step. openai, anthropic and google-generativeai are not
+# imported by the current code; they stay so an image install does not drop them.
+
 # Core frameworks
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-websockets==12.0
-pydantic==2.5.0
+fastapi==0.162.4
+uvicorn[standard]==0.54.0
+websockets==17.4
+pydantic==2.14.3
 
 # Audio processing
-numpy==1.24.3
-scipy==1.11.4
-librosa==0.10.0
-soundfile==0.12.1
+numpy==2.5.4
+scipy==1.18.1
+librosa==1.0.0
+soundfile==0.14.0
 
 # ML inference
-torch==2.0.0
-transformers==4.36.2
-accelerate==0.25.0
+torch==2.15.0
+transformers==5.22.2
+accelerate==1.15.0
 
-# BRAIN: Distant services
-openai==1.6.1
-anthropic==0.7.8
-google-generativeai==0.3.0
+# BRAIN: distant SDKs (the live path is HTTP, src/brain/openai_compat.py)
+openai==3.49.0
+anthropic==2.8.0
+google-generativeai==0.8.6
+
+# The live brain path imports httpx. The other pins do not pull it
+# (Starlette 1.10 pulls httpx2 for its test client).
+httpx==0.28.1
 
 # Utilities
-python-dotenv==1.0.0
+python-dotenv==1.2.4
 pyyaml==6.0.1
-loguru==0.7.2
-click==8.1.7
+loguru==0.7.3
+click==8.5.1
 
 # Development (optional)
-pytest==7.4.3
-pytest-asyncio==0.21.1
-pytest-cov==4.1.0
-black==23.12.0
-ruff==0.1.8
-
-# Note: pipecat-ai, openai-whisper, pocket-tts, MOSS-TTS will be installed manually after build
-# (they have compilation issues; pre-built wheels will be used instead)
+pytest==9.2.0
+pytest-asyncio==1.4.1.post1
+pytest-cov==7.1.0
+black==26.10.1
+ruff==0.17.4

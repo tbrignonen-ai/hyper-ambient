@@ -384,7 +384,10 @@ def test_orbe_repos_reste_lisible():
     assert (r + g + b) / 3.0 >= 90
 
 
-@pytest.mark.skipif(sys.platform == "darwin", reason="Chroma-key Windows ; macOS utilise le mode alpha")
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Chroma-key Windows ; macOS utilise le mode alpha, Linux reste opaque",
+)
 def test_overlay_forme_opaque_sur_chroma_key():
     _ouvrir_tk()
     import tkinter as tk

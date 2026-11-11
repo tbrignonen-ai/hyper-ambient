@@ -1,16 +1,12 @@
 """
 hyper-ambient API — FastAPI server for HTTP and WebSocket.
 
-Endpoints:
-    POST /capabilities       — Negotiate which capabilities are available
-    POST /converse          — Start a conversation (returns session ID)
-    WS  /ws/{session_id}    — WebSocket stream for audio/events
-    GET /status             — Health check
-    GET /audit              — Audit log (GATE-controlled)
+GET /status annonce la carte. Les autres routes ne sont pas la boucle
+vivante : elles répondent 501 et indiquent le host-agent sur le port 8001.
 """
 import os
 import logging
-from fastapi import FastAPI, WebSocket, HTTPException
+from fastapi import FastAPI, WebSocket
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
@@ -21,22 +17,21 @@ app = FastAPI(
     version="0.1.0"
 )
 
+# Pas une session. Le client qui se trompe de port doit le voir.
+_HORS_SERVICE = {
+    "live": False,
+    "detail": "Le tour vivant est le host-agent, ws://127.0.0.1:8001/hostagent.",
+}
+
 
 @app.get("/status")
 async def status():
-    """Health check and capabilities summary."""
-    return {
-        "status": "ok",
-        "version": "0.1.0",
-        "capabilities": {
-            "ears": {"level": "L0"},  # Placeholder
-            "turn": {"level": "L0"},
-            "mouth": {"level": "L0"},
-            "brain": {"available": False},
-            "acoustic": {"level": "L0"},
-            "duplex": {"available": False}
-        }
-    }
+    """Carte configurée. Le tour vivant est le host-agent, port 8001."""
+    from src.core.statut import statut_public
+
+    etat = statut_public()
+    etat["version"] = "0.1.0"
+    return etat
 
 
 @app.post("/capabilities")
@@ -60,8 +55,7 @@ async def negotiate_capabilities(request: dict):
         }
     """
     logger.info(f"Capability negotiation: {request}")
-    # TODO: Implement via GATE
-    return {"available": [], "unavailable": [], "fallbacks": {}}
+    return JSONResponse(status_code=501, content=_HORS_SERVICE)
 
 
 @app.post("/converse")
@@ -83,11 +77,7 @@ async def start_conversation(request: dict):
         }
     """
     logger.info(f"Starting conversation: {request}")
-    # TODO: Create session, initialize capability chain
-    return {
-        "session_id": "sess_placeholder",
-        "ws_url": "ws://localhost:8001/ws/sess_placeholder"
-    }
+    return JSONResponse(status_code=501, content=_HORS_SERVICE)
 
 
 @app.websocket("/ws/{session_id}")
@@ -109,18 +99,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         {"type": "error", "message": "..."}
     """
     await websocket.accept()
-    logger.info(f"WebSocket connected: {session_id}")
-
-    try:
-        while True:
-            data = await websocket.receive_json()
-            logger.debug(f"Received: {data}")
-            # TODO: Route to capability chain
-            await websocket.send_json({"type": "ack", "message": "processing"})
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}")
-    finally:
-        logger.info(f"WebSocket closed: {session_id}")
+    logger.info(f"WebSocket refused: {session_id}")
+    await websocket.send_json({"type": "error", **_HORS_SERVICE})
+    await websocket.close()
 
 
 @app.get("/audit")
@@ -130,8 +111,7 @@ async def get_audit_log(limit: int = 100):
 
     Only accessible if GATE mode allows.
     """
-    # TODO: Implement via GATE + audit log reader
-    return {"entries": [], "total": 0}
+    return JSONResponse(status_code=501, content=_HORS_SERVICE)
 
 
 if __name__ == "__main__":
