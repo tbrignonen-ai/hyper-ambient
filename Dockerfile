@@ -52,6 +52,10 @@ RUN apt-get update && apt-get install -y \
 # On a machine, the host driver is what llama-server loads.
 ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs
 
+# The stub file is libcuda.so. llama.cpp records a dependency on libcuda.so.1,
+# which is what the linker looks up for the next binary.
+RUN ln -sfn libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
+
 # --- llama.cpp (CUDA, sm_89 = Ada Lovelace / RTX 4070) ---------------------
 # Provides llama-server: OpenAI-compatible /v1/chat/completions with SSE.
 # BRAIN talks the same protocol locally and remotely.
@@ -64,7 +68,9 @@ RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp /opt/llama.cpp && 
         -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} \
         -DLLAMA_CURL=ON \
         -DLLAMA_BUILD_TESTS=OFF \
-        -DCMAKE_BUILD_TYPE=Release && \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" \
+        -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" && \
     cmake --build /opt/llama.cpp/build --config Release -j"${BUILD_JOBS:-$(nproc)}" && \
     cmake --install /opt/llama.cpp/build --prefix /usr/local && \
     rm -rf /opt/llama.cpp/build/CMakeFiles
@@ -76,7 +82,9 @@ RUN git clone --depth 1 https://github.com/ggml-org/whisper.cpp /opt/whisper.cpp
         -DGGML_CUDA=ON \
         -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} \
         -DWHISPER_BUILD_TESTS=OFF \
-        -DCMAKE_BUILD_TYPE=Release && \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" \
+        -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64/stubs" && \
     cmake --build /opt/whisper.cpp/build --config Release -j"${BUILD_JOBS:-$(nproc)}" && \
     cmake --install /opt/whisper.cpp/build --prefix /usr/local && \
     rm -rf /opt/whisper.cpp/build/CMakeFiles
