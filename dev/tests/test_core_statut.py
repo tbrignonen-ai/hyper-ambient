@@ -33,3 +33,21 @@ def test_le_point_status_sert_cette_carte():
     corps = reponse.json()
     assert corps["live"] is False
     assert corps["card"]["mouth_backend"] == "magpie"
+
+
+def test_les_autres_routes_ne_inventent_pas_une_session():
+    client = TestClient(app)
+    reponses = (
+        client.post("/capabilities", json={}),
+        client.post("/converse", json={}),
+        client.get("/audit"),
+    )
+    for reponse in reponses:
+        assert reponse.status_code == 501, reponse.request.url.path
+        assert reponse.json()["live"] is False
+        assert "8001" in reponse.json()["detail"]
+        assert "sess_placeholder" not in reponse.text
+    with client.websocket_connect("/ws/essai") as socket:
+        message = socket.receive_json()
+    assert message["type"] == "error"
+    assert message["live"] is False
