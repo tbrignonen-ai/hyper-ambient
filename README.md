@@ -37,6 +37,9 @@ abonnement.
 - **Presence** — une petite fenêtre qui affiche l'état, les transcriptions, les réponses,
   et signale les appels distants.
 
+Quelques demandes courtes ne passent pas par le modèle : répéter, le volume,
+l'heure, la date, et « tu fonctionnes ? ».
+
 Le modèle local tient les tours brefs. Un classifieur local décide à chaque tour, et
 n'envoie au modèle distant que ce qui le nécessite : une demande complexe, ou une demande
 qui nomme un outil de développement. Détail dans [DONNEES.md](DONNEES.md).

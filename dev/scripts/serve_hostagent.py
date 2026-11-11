@@ -15,9 +15,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime, date, timedelta, tzinfo
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import numpy as np
 
@@ -67,6 +65,9 @@ from src.mouth.volume import (
     resoudre_gain,
 )
 from src.mouth.etat_vocal import demande_d_etat, lire_etat, phrase_d_etat
+from src.mouth.calendrier import demande_de_date, phrase_date
+from src.mouth.horloge import demande_d_heure, phrase_heure
+from src.temps import maintenant_local
 from src.brain.contexte import (
     MemoireConversation,
     TamponAmbiant,
@@ -666,55 +667,6 @@ def dossier_conversations(environ=None) -> Path:
     if local:
         return Path(local) / "hyper-ambient" / "conversations"
     return Path.home() / ".hyper-ambient" / "conversations"
-
-
-def _dernier_dimanche(annee: int, mois: int):
-    jour = date(annee, mois, 31)
-    return date.fromordinal(jour.toordinal() - ((jour.weekday() + 1) % 7))
-
-
-class _Paris(tzinfo):
-    """Repli Europe/Paris si tzdata n'est pas installé dans le conteneur."""
-
-    def utcoffset(self, dt):
-        if dt is None:
-            return timedelta(hours=1)
-        jour = dt.date() if hasattr(dt, "date") else dt
-        mars = _dernier_dimanche(jour.year, 3)
-        octo = _dernier_dimanche(jour.year, 10)
-        if mars <= jour < octo:
-            return timedelta(hours=2)
-        return timedelta(hours=1)
-
-    def tzname(self, dt):
-        return "CEST" if self.utcoffset(dt) == timedelta(hours=2) else "CET"
-
-    def dst(self, dt):
-        return (
-            timedelta(hours=1)
-            if self.utcoffset(dt) == timedelta(hours=2)
-            else timedelta(0)
-        )
-
-
-def _fuseau_paris():
-    """Europe/Paris, même sans la base tzdata du conteneur."""
-    try:
-        return ZoneInfo("Europe/Paris")
-    except Exception:
-        return _Paris()
-
-
-FUSEAU_CONVERSATION = _fuseau_paris()
-
-
-def maintenant_local(quand=None):
-    """Heure de la machine (Europe/Paris), jamais l'UTC du conteneur."""
-    if quand is None:
-        return datetime.now(FUSEAU_CONVERSATION)
-    if getattr(quand, "tzinfo", None) is None:
-        return quand
-    return quand.astimezone(FUSEAU_CONVERSATION)
 
 
 def nouveau_fichier_conversation(quand=None, dossier=None) -> Path:
@@ -2374,6 +2326,10 @@ class HostPipeline:
                     repetition = confirme
             if repetition is None and demande_d_etat(prompt):
                 repetition = phrase_d_etat(lire_etat(chemin_sante()), langue=langue_session())
+            if repetition is None and demande_d_heure(prompt):
+                repetition = phrase_heure(langue=langue_session())
+            if repetition is None and demande_de_date(prompt):
+                repetition = phrase_date(langue=langue_session())
             if repetition:
                 print(f"LOCAL : {repetition!r}", flush=True)
                 self._noter_conversation("Toi", prompt)

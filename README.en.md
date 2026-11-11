@@ -34,6 +34,9 @@ reason — an open session, a context already loaded, a subscription.
   It is the only component that touches audio hardware.
 - **Presence** — a small window showing state, transcripts, answers, and any remote call.
 
+A few short requests never reach the model: repeat, volume, the time, the date,
+and “are you up?”.
+
 The local model handles short turns. A local classifier decides on every turn, and sends
 to the remote model only what needs it: a complex request, or one that names a development
 tool. Details in [DONNEES.en.md](DONNEES.en.md).
