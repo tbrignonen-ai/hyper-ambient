@@ -4,12 +4,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
+# numpy 2.5, scipy 1.18 and librosa 1.0 require Python >= 3.12.
+# Jammy's own packages stop at 3.11, so 3.12 comes from deadsnakes.
 RUN apt-get update && apt-get install -y \
-    python3.11 \
-    python3.11-venv \
-    python3.11-dev \
-    python3-pip \
-    python3-setuptools \
+    software-properties-common \
     git \
     wget \
     curl \
@@ -18,10 +16,16 @@ RUN apt-get update && apt-get install -y \
     libsndfile1-dev \
     ffmpeg \
     sox \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 && \
-    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 && \
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 && \
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
+    python3 -m ensurepip --upgrade && \
     python3 -m pip install --upgrade pip setuptools wheel
 
 WORKDIR /workspace
