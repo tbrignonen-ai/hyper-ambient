@@ -47,6 +47,11 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Link-time only. gcc reads LIBRARY_PATH; the runtime loader does not.
+# The stub supplies the driver API when the image is built without a GPU.
+# On a machine, the host driver is what llama-server loads.
+ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs
+
 # --- llama.cpp (CUDA, sm_89 = Ada Lovelace / RTX 4070) ---------------------
 # Provides llama-server: OpenAI-compatible /v1/chat/completions with SSE.
 # BRAIN talks the same protocol locally and remotely.
