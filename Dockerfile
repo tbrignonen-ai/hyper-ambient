@@ -5,28 +5,26 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1
 
 # numpy 2.5, scipy 1.18 and librosa 1.0 require Python >= 3.12.
-# Jammy's own packages stop at 3.11, so 3.12 comes from deadsnakes.
+# Jammy stops at 3.11, and the deadsnakes archive is not reachable from every
+# network, so this pins a CPython standalone build.
+ARG PYTHON_URL=https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.12.16+20261110-x86_64-unknown-linux-gnu-install_only.tar.gz
 RUN apt-get update && apt-get install -y \
-    software-properties-common \
     git \
     wget \
     curl \
+    ca-certificates \
     build-essential \
     libsndfile1 \
     libsndfile1-dev \
     ffmpeg \
     sox \
-    && add-apt-repository -y ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y \
-    python3.12 \
-    python3.12-venv \
-    python3.12-dev \
+    && curl -fsSL "$PYTHON_URL" -o /tmp/python.tar.gz \
+    && tar -xzf /tmp/python.tar.gz -C /usr/local \
+    && rm /tmp/python.tar.gz \
+    && /usr/local/python/bin/python3 -m pip install --upgrade pip setuptools wheel \
     && rm -rf /var/lib/apt/lists/*
 
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 && \
-    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
-    python3 -m ensurepip --upgrade && \
-    python3 -m pip install --upgrade pip setuptools wheel
+ENV PATH=/usr/local/python/bin:${PATH}
 
 WORKDIR /workspace
 
