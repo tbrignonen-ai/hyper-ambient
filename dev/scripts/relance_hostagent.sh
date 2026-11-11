@@ -77,6 +77,18 @@ if [ -z "${MOUTH_LANGUAGE_FORCE:-}" ] && [ -n "$accent_locale" ]; then
 fi
 export MOUTH_LANGUAGE="${MOUTH_LANGUAGE_FORCE:-$(lire_carte MOUTH_LANGUAGE)}"
 export MOUTH_DEVICE="${MOUTH_DEVICE_FORCE:-$(lire_carte MOUTH_DEVICE)}"
+# « Plus fort » écrit data/mouth_gain_db. Ce fichier gagne sur la carte.
+gain_persiste=""
+if [ -f /workspace/data/mouth_gain_db ]; then
+  gain_persiste="$(head -1 /workspace/data/mouth_gain_db | tr -d ' \015')"
+fi
+case "$gain_persiste" in
+  ''|*[!0-9.-]*) gain_persiste="" ;;
+esac
+if [ -n "$gain_persiste" ]; then
+  export MOUTH_OUTPUT_GAIN_DB_FORCE="$gain_persiste"
+fi
+export MOUTH_OUTPUT_GAIN_DB="${MOUTH_OUTPUT_GAIN_DB_FORCE:-$(lire_carte MOUTH_OUTPUT_GAIN_DB)}"
 
 echo "carte figee: brain=$BRAIN_SERVICE model=$(basename "$MODEL") ears=$EARS_BACKEND/$EARS_MODEL mouth=$MOUTH_BACKEND/$MOUTH_VOICE_NAME/$MOUTH_DEVICE"
 echo "langue: ${HA_LANG:-${HYPER_AMBIENT_LANG:-fr}}"

@@ -60,6 +60,13 @@ from src.mouth.secours import (
 from src.ears.silence import jeter_tour_bruit
 from src.mouth.reveil import phrase_de_reveil, reveil_court_suffit
 from src.mouth.output_gain import appliquer_gain_doux
+from src.mouth.volume import (
+    interpreter_volume,
+    memoriser_gain,
+    regler_volume,
+    resoudre_gain,
+)
+from src.mouth.etat_vocal import demande_d_etat, lire_etat, phrase_d_etat
 from src.brain.contexte import (
     MemoireConversation,
     TamponAmbiant,
@@ -284,6 +291,28 @@ def _texte_configuration(cle: str, defaut: str) -> str:
     if not _valeur_utile(valeur):
         return defaut
     return str(valeur).replace("\r", "").strip()
+
+
+def chemin_gain() -> Path:
+    impose = os.getenv("HYPER_AMBIENT_GAIN", "").strip()
+    return Path(impose) if impose else _ROOT / "data" / "mouth_gain_db"
+
+
+def chemin_sante() -> Path:
+    impose = os.getenv("HYPER_AMBIENT_SANTE", "").strip()
+    return Path(impose) if impose else _ROOT / "data" / "sante.json"
+
+
+def gain_de_sortie(chemin: Path | None = None) -> float:
+    """Gain après la carte. Le fichier parlé, s'il existe, gagne."""
+    depuis = _nombre_configuration("MOUTH_OUTPUT_GAIN_DB", 0.0)
+    return resoudre_gain(depuis, lire_gain_persiste(chemin if chemin is not None else chemin_gain()))
+
+
+def lire_gain_persiste(chemin: Path) -> float | None:
+    from src.mouth.volume import lire_gain
+
+    return lire_gain(chemin)
 
 
 def _nombre_configuration(cle: str, defaut: float) -> float:
@@ -1093,6 +1122,7 @@ class HostPipeline:
         self._conversation_ouverte_emise = False
         self._lock = asyncio.Lock()
         self.output_gain_db = _nombre_configuration("MOUTH_OUTPUT_GAIN_DB", 0.0)
+        self._gain_carte = self.output_gain_db
         self._mandats = RegistreMandats()
         self._dernier_parole_a = time.monotonic()
         self._tache_mandats = None
@@ -1501,6 +1531,8 @@ class HostPipeline:
         )
         voix = _texte_configuration("MOUTH_VOICE", VOIX_PIPER)
 
+        self._gain_carte = _nombre_configuration("MOUTH_OUTPUT_GAIN_DB", 0.0)
+        self.output_gain_db = gain_de_sortie(chemin_gain())
         gain_lineaire = 10.0 ** (self.output_gain_db / 20.0)
         print(
             f"MOUTH : post-gain sortie {self.output_gain_db:+.1f} dB "
@@ -2323,6 +2355,25 @@ class HostPipeline:
                 repetition = dernier_resultat_harnais(self._historique)
             if repetition is None and demande_de_repetition(prompt):
                 repetition = derniere_reponse(self._historique)
+            from src.i18n import langue as langue_session
+
+            sens_volume = interpreter_volume(prompt)
+            if sens_volume is not None:
+                self.output_gain_db, confirme = regler_volume(
+                    self.output_gain_db,
+                    sens_volume,
+                    langue=langue_session(),
+                    carte=self._gain_carte,
+                )
+                if sens_volume != "annoncer":
+                    try:
+                        memoriser_gain(chemin_gain(), self.output_gain_db, self._gain_carte)
+                    except OSError as exc:
+                        print(f"GAIN  : mémoire non écrite ({exc.__class__.__name__})", flush=True)
+                if repetition is None:
+                    repetition = confirme
+            if repetition is None and demande_d_etat(prompt):
+                repetition = phrase_d_etat(lire_etat(chemin_sante()), langue=langue_session())
             if repetition:
                 print(f"LOCAL : {repetition!r}", flush=True)
                 self._noter_conversation("Toi", prompt)
