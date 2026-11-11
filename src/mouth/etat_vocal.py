@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import json
 import re
-import unicodedata
 from pathlib import Path
+
+from src.parole import normaliser
 
 MAX_MOTS = 7
 
@@ -73,14 +74,8 @@ _PHRASES: dict[str, dict[str, str]] = {
 }
 
 
-def _normaliser(texte: str) -> str:
-    decompose = unicodedata.normalize("NFKD", texte or "")
-    sans_accents = "".join(c for c in decompose if not unicodedata.combining(c))
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", sans_accents.lower()).split())
-
-
 def demande_d_etat(transcript: str) -> bool:
-    normalise = _normaliser(transcript)
+    normalise = normaliser(transcript)
     if not normalise or len(normalise.split()) > MAX_MOTS:
         return False
     if _PAS_UN_ETAT.intersection(normalise.split()):

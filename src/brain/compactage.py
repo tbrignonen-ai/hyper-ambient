@@ -8,6 +8,8 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
+from src.parole import normaliser
+
 
 MARQUE_RESUME = "compactage_resume"
 MAX_RESUME = 480
@@ -28,9 +30,7 @@ def _fait_personnel(message: dict) -> str:
 
 
 def est_nouvelle_conversation(texte: str) -> bool:
-    norme = "".join(c for c in unicodedata.normalize("NFKD", texte.lower()) if not unicodedata.combining(c))
-    norme = re.sub(r"[^a-z ]", " ", norme)
-    norme = " ".join(norme.split())
+    norme = " ".join(re.sub(r"[^a-z ]", " ", normaliser(texte)).split())
     return bool(re.fullmatch(
         r"(?:(?:ouvre|commence|demarre|lance|start|begin|inicia|empieza) (?:une |a |una )?)?"
         r"(?:nouvelle conversation|new conversation|nueva conversacion)", norme

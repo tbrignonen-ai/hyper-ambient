@@ -9,8 +9,7 @@ Décision pure et locale : aucun modèle, aucune latence.
 """
 from __future__ import annotations
 
-import re
-import unicodedata
+from src.parole import normaliser
 
 # Mots après lesquels une phrase française ne s'arrête pas.
 _MOTS_DE_SUITE = frozenset(
@@ -35,12 +34,6 @@ _FINS_OUVERTES = (
 )
 
 
-def _normaliser(texte: str) -> str:
-    decompose = unicodedata.normalize("NFKD", texte or "")
-    sans_accents = "".join(c for c in decompose if not unicodedata.combining(c))
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", sans_accents.lower()).split())
-
-
 def enonce_incomplet(texte: str) -> bool:
     brut = (texte or "").strip()
     if not brut:
@@ -51,7 +44,7 @@ def enonce_incomplet(texte: str) -> bool:
     # Points de suspension ou virgule finale : Whisper note une pensée ouverte.
     if brut.endswith(("...", "…", ",", ";", ":")):
         return True
-    normalise = _normaliser(brut)
+    normalise = normaliser(brut)
     if not normalise:
         return False
     if any(normalise.endswith(fin) for fin in _FINS_OUVERTES):

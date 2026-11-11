@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import os
 import re
-import unicodedata
 from pathlib import Path
+
+from src.parole import normaliser
 
 GAIN_MIN = -6.0
 GAIN_MAX = 18.0
@@ -68,12 +69,6 @@ _PHRASES: dict[str, dict[str, str]] = {
 }
 
 
-def _normaliser(texte: str) -> str:
-    decompose = unicodedata.normalize("NFKD", texte or "")
-    sans_accents = "".join(c for c in decompose if not unicodedata.combining(c))
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", sans_accents.lower()).split())
-
-
 def _formater(gain: float) -> str:
     if abs(gain - round(gain)) < 1e-6:
         return str(int(round(gain)))
@@ -86,7 +81,7 @@ def borner(valeur: float) -> float:
 
 def interpreter_volume(transcript: str) -> str | None:
     """``monter``, ``baisser``, ``normal``, ``annoncer``, ou ``None``."""
-    normalise = _normaliser(transcript)
+    normalise = normaliser(transcript)
     if not normalise or len(normalise.split()) > MAX_MOTS:
         return None
     if _PAS_UN_REGLAGE.intersection(normalise.split()):

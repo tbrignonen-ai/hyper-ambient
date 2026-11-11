@@ -1,8 +1,7 @@
 """Garde-fous déterministes pour les artefacts ASR produits sur du silence."""
 from __future__ import annotations
 
-import re
-import unicodedata
+from src.parole import normaliser
 
 
 # faster-whisper : mêmes seuils que le décodeur (no_speech_threshold / logprob_threshold).
@@ -26,12 +25,6 @@ _MOTIFS_HALLUCINATION = (
 )
 
 
-def _normaliser(texte: str) -> str:
-    decompose = unicodedata.normalize("NFKD", texte or "")
-    sans_accents = "".join(c for c in decompose if not unicodedata.combining(c))
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", sans_accents.lower()).split())
-
-
 def est_artefact_whisper_silencieux(texte: str) -> bool:
     """Reconnaît l'unique crédit fantôme mesuré sur le micro réel.
 
@@ -41,12 +34,12 @@ def est_artefact_whisper_silencieux(texte: str) -> bool:
     Il ne classe donc pas des phrases usuelles, seulement le crédit de
     sous-titrage récité par Whisper sur le silence.
     """
-    return _normaliser(texte) == "sous titrage st 501"
+    return normaliser(texte) == "sous titrage st 501"
 
 
 def est_hallucination_whisper(texte: str) -> bool:
     """Filet sur le texte normalisé. La défense principale est le signal du modèle."""
-    normalise = _normaliser(texte)
+    normalise = normaliser(texte)
     if not normalise:
         return False
     return any(motif in normalise for motif in _MOTIFS_HALLUCINATION)
@@ -85,7 +78,7 @@ def jeter_tour_bruit(texte, segments=None, *, mains_libres: bool) -> bool:
         # décodage (séance du 24 sept : « mains libres » entendu « ma lèvre »,
         # tout le tour perdu). Il faut alors que Whisper doute aussi que ce
         # soit de la parole. Un bruit court (« Merci. ») reste jeté.
-        if len(_normaliser(texte).split()) < MOTS_PHRASE_REELLE:
+        if len(normaliser(texte).split()) < MOTS_PHRASE_REELLE:
             return True
         # Règle du décodeur Whisper : non-parole probable ET décodage
         # incertain. Le no_speech_prob seul ment (séance du 24 sept, 20 h :
