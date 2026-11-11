@@ -138,6 +138,8 @@ What the first macOS version will not have, and we know it in advance:
 
 The reference Mac profile is `packaging/macos/mac-16g.env.example` (profile `mac-16g-voix-max`), separate from the frozen card above.
 
+Two points are already in the code, covered by tests, and still **not run on a Mac**: the MLX window is capped at 2048 tokens (overflow is rejected, not truncated), and Settings “Apply” asks the supervisor to relaunch the host-agent instead of calling Docker. Metal, the microphone and the speakers still have to be tried on the machine.
+
 ### The validation process
 
 The port will only be published as supported after this path:
@@ -168,7 +170,8 @@ not inattention, it is the chosen rhythm.
 
 The workflow lives in `automation/n8n/`, with its settings in plain sight: the schedule,
 the number of topics per run and the age window are changed in the interface, without
-touching code.
+touching code. The same selection (pull requests, age, labels, cap) lives in
+`automation/n8n/tri.py`. Without n8n installed: `python dev/scripts/smoke_n8n.py`.
 
 ## What comes next
 

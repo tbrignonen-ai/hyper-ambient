@@ -49,6 +49,16 @@ MOUTH is Chatterbox MLX. Its weights are pinned in
 `packaging/macos/models.lock.json`, and its install steps are in
 `packaging/macos/README.md`. The card above is the Windows/WSL2 RTX 4070 target.
 
+**Output gain.** The card sets `MOUTH_OUTPUT_GAIN_DB=9`. The host-agent
+re-reads it after the card is applied (`gain_de_sortie` in `load`). Before
+that re-read, a process started without the variable in its environment kept
+0 dB for the whole session: the card had updated `os.environ` only. A spoken
+“plus fort” / “moins fort” stores the new gain in `data/mouth_gain_db`
+(gitignored). That file wins over the card until “volume normal”. The
+container relaunch exports it as `MOUTH_OUTPUT_GAIN_DB_FORCE`. Loudness on
+the target machine remains `[À VÉRIFIER]`. The Mac profile turns the card
+off and keeps its own gain (0 dB unless `MOTHER_MAC_OUTPUT_GAIN_DB` is set).
+
 **Superseded (history and fallbacks only, not current).** LFM2.5-2.6B (local
 BRAIN from 2026-09-02 until the card; still the fallback GGUF in
 `serve_llama.sh`), Luth-2-2B (earlier default, fallback), Ministral-3-8B and
@@ -188,6 +198,29 @@ all three axes that matter here:
   CUDA kernels compiled for `sm_89`.
 
 Built here with `-DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=89` (Ada Lovelace).
+
+### Candidate not adopted: LFM3-Audio-2B
+
+[LiquidAI/LFM3-Audio-2B](https://huggingface.co/LiquidAI/LFM3-Audio-2B)
+(speech in, text and speech out, GGUF / ONNX / MLX, 18 speech languages
+including French) was reviewed on 11 Nov 2026 and **not** swapped onto the
+card.
+
+- Its model card says spoken chat is currently English-only. Multilingual
+  ASR/TTS does not make it the French voice of this product.
+- It would collapse EARS, the local reflex and MOUTH into one model. Sofia
+  was chosen by blind listening; replacing her without a new listening pass
+  throws that decision away.
+- The GGUF path wants llama.cpp's realtime WebSocket (`llama serve`, v0.8 /
+  b11960 or newer). This image builds llama.cpp from a shallow clone and has
+  not been rebuilt against that API. Inference on the RTX 4070 is
+  `[À VÉRIFIER]` / NOT_RUN from this environment (no GPU here).
+- A 2B model is the size the router already refuses for multi-step answers.
+  The remote tier (MiniMax-M3, or the user's Claude/Codex subscription)
+  stays the place for those turns.
+
+Revisit only with a listening pass on Thomas's machine, French voice-chat
+quality included, and a VRAM figure next to large-v3 and Magpie.
 
 ---
 

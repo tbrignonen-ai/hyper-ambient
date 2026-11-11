@@ -24,19 +24,12 @@ app = FastAPI(
 
 @app.get("/status")
 async def status():
-    """Health check and capabilities summary."""
-    return {
-        "status": "ok",
-        "version": "0.1.0",
-        "capabilities": {
-            "ears": {"level": "L0"},  # Placeholder
-            "turn": {"level": "L0"},
-            "mouth": {"level": "L0"},
-            "brain": {"available": False},
-            "acoustic": {"level": "L0"},
-            "duplex": {"available": False}
-        }
-    }
+    """Carte configurée. Le tour vivant est le host-agent, port 8001."""
+    from src.core.statut import statut_public
+
+    etat = statut_public()
+    etat["version"] = "0.1.0"
+    return etat
 
 
 @app.post("/capabilities")

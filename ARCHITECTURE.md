@@ -74,6 +74,11 @@ hyper-ambient is a local ambient voice — French, English, and Spanish — that
 └─────────────────────────────────────────────────────────┘
 ```
 
+The live turn is the host-agent (`dev/scripts/serve_hostagent.py`, WebSocket
+`:8001`). `src/core/api.py` on `:8000` only reports the frozen card. It does
+not run EARS, BRAIN or MOUTH, and `live` is false until a real loop is wired
+there.
+
 ## Data Flow
 
 ### Normal Conversation
