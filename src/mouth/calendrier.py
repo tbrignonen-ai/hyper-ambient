@@ -21,7 +21,6 @@ _PAS_LA_DATE = frozenset(
         "dans",
         "sera",
         "serons",
-        "semaine",
         "prochaine",
         "prochain",
         "naissance",

@@ -11,6 +11,7 @@ from src.mouth.horloge import demande_d_heure
 def test_la_date_est_une_demande_courte():
     for phrase in (
         "On est quel jour ?",
+        "Quel jour de la semaine ?",
         "Quelle est la date ?",
         "On est le combien ?",
         "What day is it?",
